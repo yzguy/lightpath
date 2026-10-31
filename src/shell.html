@@ -7,18 +7,18 @@
 :root {
   --bg: #e9eeec; --panel: #f7f9f8; --raised: #ffffff; --ink: #13201c; --muted: #5a6b66; --line: #cbd5d1; --grid: #dde4e1;
   --accent: #b88400; --accent-ink: #1a1400; --jacket: #e2b100;
-  --sig: #087a72; --ase: #c2413a; --nli: #6b4fbf;
+  --sig: #087a72; --ase: #c2413a; --nli: #6b4fbf; --mpi: #a8742b;
   --good: #1d8048; --warn: #a86d00; --bad: #c0352b; --gap: rgba(8,122,114,.10);
   --f-ui: 'Archivo', 'Helvetica Neue', Arial, sans-serif; --f-mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0c1311; --panel: #121b19; --raised: #18231f; --ink: #e2ebe7; --muted: #8b9d97; --line: #26332f; --grid: #1b2622;
   --accent: #f0c23a; --accent-ink: #1a1400; --jacket: #f0c23a;
-  --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10); color-scheme: dark } }
+  --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --mpi: #e0a35c; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10); color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #0c1311; --panel: #121b19; --raised: #18231f; --ink: #e2ebe7; --muted: #8b9d97; --line: #26332f; --grid: #1b2622;
   --accent: #f0c23a; --accent-ink: #1a1400; --jacket: #f0c23a;
-  --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10); color-scheme: dark }
+  --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --mpi: #e0a35c; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10); color-scheme: dark }
 * { box-sizing: border-box }
 [hidden] { display: none !important }
 body { background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 14px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px 32px }
@@ -129,7 +129,7 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .budget { display: grid; gap: 6px }
 .bbar { display: flex; height: 12px; border-radius: 3px; overflow: hidden; background: var(--grid) }
 .bbar span { display: block; height: 100% }
-.b-ase { background: var(--ase) } .b-nli { background: var(--nli) } .b-trx { background: var(--muted) } .b-rx { background: var(--warn) }
+.b-mpi { background: var(--mpi) } .b-ase { background: var(--ase) } .b-nli { background: var(--nli) } .b-trx { background: var(--muted) } .b-rx { background: var(--warn) }
 .blegend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--muted) }
 .blegend i, .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px }
 .tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--line) }
@@ -144,6 +144,7 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .chart .node-ax { font-size: 10px }
 .pl { fill: none; stroke-width: 2.2; stroke-linejoin: round }
 .l-sig { stroke: var(--sig); background: var(--sig) } .l-ase { stroke: var(--ase); background: var(--ase) } .l-nli { stroke: var(--nli); background: var(--nli) }
+.sp-nrz { fill: var(--warn); fill-opacity: .4; stroke: var(--warn); stroke-width: 1 }
 .sp-ch { fill: var(--sig); fill-opacity: .35; stroke: var(--sig); stroke-width: 1 } .sp-me { fill: var(--accent); fill-opacity: .55; stroke: var(--accent) }
 .sp-slot { fill: none; stroke: var(--grid) } .sp-ase { fill: var(--ase); fill-opacity: .12 } .sp-sel { margin: 4px 0 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px }
 .clients { display: grid; gap: 4px; margin: 8px 0 } .clients h4 { font-size: 13px }
@@ -200,13 +201,19 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   .constwrap, .learn { grid-template-columns: minmax(0, 1fr) }
   .lnav { flex-direction: row; flex-wrap: wrap }
 }
+.planstrip { display: flex; flex-wrap: wrap; gap: 2px; margin: 8px 0 }
+.pcell { width: 18px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: var(--raised); cursor: pointer; font-size: 9px; color: var(--muted) }
+.pcell.coh { background: var(--sig); border-color: var(--sig); opacity: .75 } .pcell.nrz { background: var(--warn); border-color: var(--warn); opacity: .85 } .pcell.me { outline: 2px solid var(--accent); outline-offset: 1px }
+.planbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 }
+.plantbl input[type=number] { width: 64px } .plantbl td, .plantbl th { white-space: nowrap }
+.st-up { color: var(--good) } .st-degraded { color: var(--warn) } .st-down, .st-los { color: var(--bad) }
 </style>
 
 <header class="top">
   <div class="brand"><h1>Light<span>path</span></h1><small>C-band · GN-model physics</small></div>
   <div class="globals">
     <label class="g" for="preset">Lab
-      <select id="preset"><option value="">Load a scenario…</option><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="ring">ROADM triangle with restoration</option><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="dark">Dark fiber: unamplified ZR</option></select></label>
+      <select id="preset"><option value="">Load a scenario…</option><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="ring">ROADM triangle with restoration</option><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="mix">Mixed line: 10G beside 400G</option><option value="dark">Dark fiber: unamplified ZR</option></select></label>
     <label class="g" for="g-nch" title="How many channels are lit in each fiber. Affects amplifier power sharing and nonlinearity.">Channels <input type="range" id="g-nch" min="1" max="96" step="1"><output id="g-nch-v"></output></label>
     <label class="g" for="g-df">Grid <select id="g-df"><option value="50">50 GHz</option><option value="75">75 GHz</option><option value="100">100 GHz</option><option value="150">150 GHz</option></select></label>
     <label class="g" for="g-launch" title="Per-channel output target for every amplifier in Auto mode">Launch <input type="range" id="g-launch" min="-6" max="6" step="0.5"><output id="g-launch-v"></output><span style="text-transform:none">dBm/ch</span></label>
@@ -254,6 +261,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <button class="tab" data-tab="power" role="tab">Power map</button>
     <button class="tab" data-tab="hops" role="tab">Hop-by-hop PM</button>
     <button class="tab" data-tab="clients" role="tab">Clients</button>
+    <button class="tab" data-tab="plan" role="tab">Channels</button>
     <button class="tab" data-tab="spectrum" role="tab">Spectrum</button>
     <button class="tab" data-tab="const" role="tab">Constellation</button>
     <button class="tab" data-tab="sweep" role="tab">Launch sweep</button>

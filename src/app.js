@@ -369,8 +369,8 @@ function bindGlobals() {
   nch.value = S.g.nch; df.value = S.g.df; la.value = S.g.launch;
   $('#g-nch-v').textContent = S.g.nch; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch;
 }
-$('#g-nch').addEventListener('input', e => { S.g.nch = +e.target.value; $('#g-nch-v').textContent = S.g.nch; recompute(); });
-$('#g-df').addEventListener('change', e => { S.g.df = +e.target.value; recompute(); });
+$('#g-nch').addEventListener('input', e => { if (S.g.plan) { S.g.plan = null; toast('Channel plan reset to a uniform line'); } S.g.nch = +e.target.value; $('#g-nch-v').textContent = S.g.nch; renderAll(); });
+$('#g-df').addEventListener('change', e => { const old = +S.g.df; S.g.df = +e.target.value; if (S.g.plan) { S.g.plan = MODEL.remapPlan(S.g.plan, old, S.g.df); if (S.g.plan) S.g.nch = S.g.plan.length; } renderAll(); });
 $('#g-launch').addEventListener('input', e => { S.g.launch = +e.target.value; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch; recompute(); });
 $('#preset').addEventListener('change', e => { if (e.target.value) { applyPreset(e.target.value); e.target.value = ''; } });
 $('#btn-fit').addEventListener('click', () => { fitView(); applyView(); });
@@ -443,8 +443,8 @@ function renderResults() {
   renderTabBody();
 }
 function diagnose(r) {
-  const b = r.budget, tot = b.ase + b.nli + b.trx + b.rx;
-  const parts = [['ase', 'ASE (amplifier noise)', b.ase], ['nli', 'Fiber nonlinearity', b.nli], ['trx', 'Transceiver limit', b.trx], ['rx', 'Receiver noise', b.rx]];
+  const b = r.budget, tot = b.ase + b.nli + b.trx + b.rx + (b.mpi || 0);
+  const parts = [['ase', 'ASE (amplifier noise)', b.ase], ['nli', 'Fiber nonlinearity', b.nli], ['trx', 'Transceiver limit', b.trx], ['rx', 'Receiver noise', b.rx], ...(b.mpi > 0 ? [['mpi', 'Raman double Rayleigh', b.mpi]] : [])];
   const wrap = el('div', { class: 'budget' });
   const bar = el('div', { class: 'bbar', role: 'img', 'aria-label': 'Noise budget' });
   parts.forEach(([k, n, v]) => { if (v / tot > 0.005) bar.append(el('span', { class: 'b-' + k, style: `width:${(v / tot * 100).toFixed(1)}%`, title: `${n}: ${(v / tot * 100).toFixed(0)}%` })); });
@@ -455,6 +455,7 @@ function diagnose(r) {
     nli: 'Nonlinearity dominates: you are launching too hot. Lowering launch power will improve GSNR until ASE takes over.',
     trx: 'The line is clean. The transceiver itself is the limit, so more line tweaking will not help much.',
     rx: 'Too little light reaches the receiver. Add or re-target an amplifier before the Rx, or remove a pad.',
+    mpi: 'Double Rayleigh scattering from the Raman pump dominates. Lower the pump power (it grows with the square of the gain) or split the gain with an EDFA.',
   };
   const pen = r.filt + r.over + r.pmdPen;
   wrap.append(el('b', { text: 'What is eating the SNR' }), bar, leg, el('span', { text: tips[top] + (pen > 0.3 ? ` Plus ${f1(pen)} dB of penalties (${[r.filt > 0.05 ? `filtering ${f1(r.filt)}` : '', r.over > 0 ? `Rx overload ${f1(r.over)}` : '', r.pmdPen > 0.05 ? `PMD ${f1(r.pmdPen)}` : ''].filter(Boolean).join(', ')}).` : '') }));
@@ -470,6 +471,7 @@ function renderTabBody() {
   const b = $('#tabbody'); b.innerHTML = '';
   const r = view();
   if (tab === 'learn') return b.append(learnView());
+  if (tab === 'plan') return b.append(planView(r));
   if (!r || !r.hops) return b.append(el('p', { class: 'muted pad', text: r ? r.headline : '' }));
   if (tab === 'power') b.append(powerChart(r));
   else if (tab === 'hops') b.append(hopTable(r));
@@ -567,7 +569,8 @@ function spectrumView(r) {
   const keys = hops.map((x, i) => `${x.name}#${hops.slice(0, i).filter(y => y.name === x.name).length}`); // names repeat (every patch cord), so add an occurrence number
   let hi = specHop == null ? -1 : keys.indexOf(specHop);
   if (hi < 0) hi = hops.map(x => x.nch).lastIndexOf(maxN);
-  const h = hops[hi], df = +r.g.df * 1e9, slots = PHY.cBandSlots(df), lit = Math.min(h.nch, slots);
+  const h = hops[hi], df = +r.g.df * 1e9, slots = PHY.cBandSlots(df);
+  let lit = Math.min(h.nch, slots);
   const sel = el('select', { id: 'spec-hop', 'aria-label': 'Measurement point' });
   hops.forEach((x, i) => sel.append(el('option', { value: i, text: `After ${x.name}${x.kind === 'patch' ? ` (${keys[i].split('#')[1] * 1 + 1})` : ''}` })));
   sel.value = hi; sel.addEventListener('change', () => { specHop = keys[+sel.value]; renderTabBody(); });
@@ -575,8 +578,11 @@ function spectrumView(r) {
 
   const W = 900, H = 300, ml = 46, mr = 16, mt = 16, mb = 40, f0 = PHY.CBAND.f0 / 1e12, f1v = (PHY.CBAND.f0 + PHY.CBAND.width) / 1e12;
   const Rs = r.mode.Rs, dens = 10 * Math.log10(Rs / PHY.BREF); // channel power -> level seen in a 0.1 nm slice
+  const plan = r.channels && h.nch === r.channels.length ? r.channels : null; // a custom channel plan draws every channel as itself
+  const lvl = c => h.out.sig + c.off - 10 * Math.log10(PHY.MODES[c.modeKey].Rs / PHY.BREF);
   const sigD = h.out.sig - dens, aseD = h.out.ase, nliD = h.out.nli;
-  const top = Math.max(sigD, aseD) + 8, ymax = Math.ceil(top / 10) * 10, ymin = Math.floor((Math.min(aseD, nliD > -90 ? nliD : aseD) - 14) / 10) * 10;
+  const sigTop = plan ? Math.max(...plan.map(lvl)) : sigD;
+  const top = Math.max(sigTop, aseD) + 8, ymax = Math.ceil(top / 10) * 10, ymin = Math.floor((Math.min(aseD, nliD > -90 ? nliD : aseD) - 14) / 10) * 10;
   const X = f => ml + (f - f0) / (f1v - f0) * (W - ml - mr), Y = v => mt + (ymax - Math.min(ymax, Math.max(ymin, v))) / (ymax - ymin) * (H - mt - mb);
   const s = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Optical spectrum at the selected point' });
   for (let v = ymin; v <= ymax; v += 10) { s.append(sv('line', { x1: ml, x2: W - mr, y1: Y(v), y2: Y(v), class: 'grid' })); const t = sv('text', { x: ml - 6, y: Y(v) + 4, class: 'ax', 'text-anchor': 'end' }); t.textContent = v; s.append(t); }
@@ -586,15 +592,29 @@ function spectrumView(r) {
   // ASE fills the whole band (amplifiers amplify noise in unlit slots too)
   if (h.out.ase > -90) s.append(sv('rect', { x: X(f0), y: Y(aseD), width: X(f1v) - X(f0), height: Math.max(0, Y(ymin) - Y(aseD)), class: 'sp-ase' }));
   s.append(sv('line', { x1: X(f0), x2: X(f1v), y1: Y(aseD), y2: Y(aseD), class: 'pl l-ase' }));
-  // lit block centred in the band; the service channel sits in its middle
-  const first = Math.floor((slots - lit) / 2), me = first + Math.floor(lit / 2);
-  for (let k = first; k < first + lit; k++) {
-    const fc = f0 + (k + 0.5) * df / 1e12, half = Math.min(Rs, df * 0.92) / 2e12;
-    const sk = sigD + (lit > 1 && h.tilt ? h.tilt * (0.5 - (k - first) / (lit - 1)) : 0); // SRS: low-frequency channels gain, high-frequency lose
-    s.append(sv('rect', { x: X(fc - half), y: Y(sk), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sk)), class: k === me ? 'sp-me' : 'sp-ch' }));
+  let first;
+  if (plan) {
+    lit = plan.length; first = Math.min(...plan.map(c => c.slot));
+    const lo = first, hi = Math.max(...plan.map(c => c.slot));
+    for (const c of plan) {
+      const m = PHY.MODES[c.modeKey], fc = c.fTHz, half = Math.min(m.Rs, df * 0.98) / 2e12;
+      const sk = lvl(c) + (hi > lo && h.tilt ? h.tilt * (0.5 - (c.slot - lo) / (hi - lo)) : 0);
+      const rect = sv('rect', { x: X(fc - half), y: Y(sk), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sk)), class: c.svc ? 'sp-me' : m.coh === false ? 'sp-nrz' : 'sp-ch' });
+      const tt = sv('title', {}); tt.textContent = `Slot ${c.slot + 1}: ${m.short}, ${fc.toFixed(2)} THz`; rect.append(tt); s.append(rect);
+    }
+  } else {
+    // lit block centred in the band; the service channel sits in its middle
+    first = Math.floor((slots - lit) / 2);
+    const me = first + Math.floor(lit / 2);
+    for (let k = first; k < first + lit; k++) {
+      const fc = f0 + (k + 0.5) * df / 1e12, half = Math.min(Rs, df * 0.92) / 2e12;
+      const sk = sigD + (lit > 1 && h.tilt ? h.tilt * (0.5 - (k - first) / (lit - 1)) : 0); // SRS: low-frequency channels gain, high-frequency lose
+      s.append(sv('rect', { x: X(fc - half), y: Y(sk), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sk)), class: k === me ? 'sp-me' : 'sp-ch' }));
+    }
   }
   if (nliD > -90 && lit > 0) { // NLI is noise-like and sits under the lit channels
-    const a = f0 + first * df / 1e12, b = f0 + (first + lit) * df / 1e12;
+    const hiSlot = plan ? Math.max(...plan.map(c => c.slot)) + 1 : first + lit;
+    const a = f0 + first * df / 1e12, b = f0 + hiSlot * df / 1e12;
     s.append(sv('line', { x1: X(a), x2: X(b), y1: Y(nliD), y2: Y(nliD), class: 'pl l-nli' }));
   }
   const tn = sv('text', { x: W - mr, y: mt + 10, class: 'ax strong', 'text-anchor': 'end' }); tn.textContent = `${lit} ch lit of ${slots} slots (${r.g.df} GHz grid)`; s.append(tn);
@@ -633,6 +653,51 @@ function constView(r) {
     el('h4', { text: r.mode.coh === false ? `${r.mode.mod}: received level histogram (1 / 0)` : `DP-${r.mode.mod}, one polarization` }),
     specRow('Effective SNR', `${f1(r.effDb)} dB`), specRow('EVM (rms)', `${f1(evm)} %`), specRow('Pre-FEC BER', r.ber < 1e-15 ? '<1e-15' : r.ber.toExponential(2)), specRow('Needed at FEC limit', `${f1(PHY.requiredEffSnrDb(r.mode))} dB SNR`),
     el('p', { class: 'muted small', text: 'Each dot is a received symbol. Noise smears dots away from the ideal points (black). A dot that lands across a grid line is decoded as the wrong symbol: that is a bit error. FEC can fix errors up to its BER limit. Try raising the span length and watch the clouds merge.' })]));
+  return wrap;
+}
+
+// channel plan: which channels share the line (mode, grid slot, power offset) and how each one is doing
+function planView(r) {
+  const wrap = el('div', { class: 'planwrap pad' });
+  const svcNode = node(S.svc.a), svcMode = svcNode && isEnd(svcNode) ? svcNode.p.mode : 'zrp400';
+  const slots = PHY.cBandSlots(+S.g.df * 1e9), modes = Object.entries(PHY.MODES).map(([k, m]) => [k, m.short]);
+  if (!S.g.plan) {
+    wrap.append(el('p', { class: 'muted', text: `The line carries ${S.g.nch} identical ${PHY.MODES[svcMode].short} channels in the middle of the C-band. Customise the plan to mix 10G, 100G and 400G channels, put them anywhere on the ${S.g.df} GHz grid and give each a power offset. Every channel then gets its own Rx power, GSNR and margin, nonlinear noise depends on its real neighbours, and 10G channels feel cross-phase modulation from the channels around them.` }));
+    wrap.append(el('button', { class: 'btn', text: 'Customise channel plan', onclick: () => { S.g.plan = MODEL.planFromUniform(S.g, svcMode); S.g.nch = S.g.plan.length; renderAll(); } }));
+    return wrap;
+  }
+  const plan = S.g.plan, bySlot = new Map(plan.map(c => [c.slot, c]));
+  const commit = () => { plan.sort((a, b) => a.slot - b.slot); S.g.nch = plan.length; renderAll(); };
+  let brush = 'zrp400';
+  const brushSel = el('select', { 'aria-label': 'Mode for new channels' }); modes.forEach(([k, t]) => brushSel.append(el('option', { value: k, text: t }))); brushSel.value = brush; brushSel.addEventListener('change', () => { brush = brushSel.value; });
+  wrap.append(el('div', { class: 'planbar' }, [
+    el('b', { text: `${plan.length} channels on ${slots} slots` }), el('span', { class: 'muted small', text: 'New channels use' }), brushSel,
+    el('button', { class: 'btn', text: 'Reset to uniform', onclick: () => { S.g.plan = null; renderAll(); } })]));
+  const strip = el('div', { class: 'planstrip', role: 'group', 'aria-label': 'C-band slots' });
+  for (let k = 0; k < slots; k++) {
+    const c = bySlot.get(k), m = c && PHY.MODES[c.mode];
+    strip.append(el('button', { class: 'pcell' + (c ? (m.coh === false ? ' nrz' : ' coh') + (c.svc ? ' me' : '') : ''), title: c ? `Slot ${k + 1}: ${m.short}${c.svc ? ' (service)' : ''}. Click to remove` : `Slot ${k + 1}: empty. Click to add a ${PHY.MODES[brush].short} channel`, 'aria-label': `Slot ${k + 1}`, text: '',
+      onclick: () => { if (c) { if (c.svc) return toast('The service channel cannot be removed. Make another channel the service first.'); plan.splice(plan.indexOf(c), 1); } else plan.push({ slot: k, mode: brush, off: 0, svc: false }); commit(); } }));
+  }
+  wrap.append(strip, el('p', { class: 'muted small', text: 'Teal = coherent, amber = direct-detection (10G), outlined = the service channel. Click an empty slot to add a channel, an occupied one to remove it.' }));
+  const res = new Map((r && r.channels ? r.channels : []).map(c => [c.slot, c]));
+  const tbl = el('table', { class: 'tbl plantbl' }), th = el('tr'); ['', 'Slot', 'THz', 'Mode', 'Offset dB', 'Rx dBm', 'GSNR', 'Q margin', 'XPM', 'Status', ''].forEach(h => th.append(el('th', { text: h })));
+  tbl.append(el('thead', {}, [th]));
+  const tb = el('tbody');
+  for (const c of plan) {
+    const o = res.get(c.slot), m = PHY.MODES[c.mode];
+    const radio = el('input', { type: 'radio', name: 'svcch', 'aria-label': `Make slot ${c.slot + 1} the service channel` }); radio.checked = c.svc; radio.addEventListener('change', () => { plan.forEach(x => (x.svc = x === c)); commit(); });
+    const ms = el('select', {}); modes.forEach(([k, t]) => ms.append(el('option', { value: k, text: t }))); ms.value = svcNode && c.svc ? svcMode : c.mode; ms.disabled = !!c.svc; ms.title = c.svc ? 'The service channel always uses the transponder mode' : '';
+    ms.addEventListener('change', () => { c.mode = ms.value; commit(); });
+    const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, 'aria-label': `Power offset for slot ${c.slot + 1}` }); off.addEventListener('change', () => { if (isFinite(+off.value)) { c.off = Math.max(-10, Math.min(10, +off.value)); commit(); } });
+    const del = el('button', { class: 'btn', text: '×', title: 'Remove channel', disabled: c.svc, onclick: () => { plan.splice(plan.indexOf(c), 1); commit(); } });
+    tb.append(el('tr', { class: c.svc ? 'selrow' : '' }, [radio, c.slot + 1, (PHY.CBAND.f0 / 1e12 + (c.slot + 0.5) * +S.g.df / 1000).toFixed(2), ms, off,
+      o ? f1(o.prx) : '', o ? f1(o.gosnr) : '', o ? (o.qMargin > 0 ? '+' : '') + f1(o.qMargin) : '', o && m.coh === false ? f1(o.xpmPen) : '',
+      o ? el('span', { class: 'st-' + o.status, text: STATUS[o.status] + (o.notes.length ? ': ' + o.notes[0] : '') }) : '', del].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x })))));
+  }
+  tbl.append(tb);
+  wrap.append(el('div', { style: 'overflow:auto;max-height:420px' }, [tbl]));
+  wrap.append(el('p', { class: 'muted small', text: 'Offset = this channel\'s power relative to the service channel, set at the line mux (a 10G optic beside 400G usually wants a few dB less). The service channel (radio button) takes its mode from the transponder. Per-channel results ignore per-span channel counts.' }));
   return wrap;
 }
 
@@ -677,8 +742,9 @@ const LEARN = {
   filter: ['Filter narrowing', `<p>Every WSS pass rounds off the edges of the passband. A 60 GBd signal in a 75 GHz slot loses a little each pass; through many ROADMs it adds up. Squeezing a 64 GBd signal into a 50 GHz grid is a big penalty.</p>`],
   rx: ['Receiver power window', `<p>Coherent receivers mix the signal with a local oscillator laser. Too little light and receiver electronics noise takes over (Rx LOW). Too much and the photodiodes and ADCs saturate (Rx HIGH, overload). Far too little is LOS.</p><p>For amplified links the usual target is the middle of the window, set with the preamp or a pad.</p>`],
   client: ['Client ports and muxponders', `<p>A <b>transponder</b> carries one client signal over one coherent line port. A <b>muxponder</b> aggregates several client ports (for example 4 × 100GbE) into one line port (for example 400G ZR+). The line port is what the DWDM system sees. Everything upstream of it (host router, client optics) is a separate, short, grey-optics link.</p><p>Each client port has its own power budget: Tx power minus fiber and connector loss must land inside the module's Rx window. Too little and the client link is down. Too much (a long-reach optic on a short jumper) overloads the receiver and needs a pad. Running past rated reach adds dispersion penalty the model only flags.</p><p>The clients must also fit the line rate. 400ZR itself carries a single 400GbE client; OpenZR+ and OTN-based line modes can multiplex 100G and 200G clients.</p>`],
+  plan: ['Channel plan', `<p>A real line carries a <b>mix</b>: 10G legacy channels, 100G and 400G coherent channels at different baud rates, on different grid slots and at slightly different powers. The Channels tab lets you place each one. Everything then follows from who sits where:</p><ul><li><b>Nonlinear noise</b> on a channel comes from itself and from every other channel, weighted by their power spectral densities and how far away they are. Edge channels see fewer neighbours than the centre; a narrow 10G channel next to wide 400G ones sees a different mix than the rest.</li><li><b>XPM on 10G channels</b> counts the neighbours within about 400 GHz and what they are (coherent neighbours hurt more).</li><li><b>Raman gain</b> depends on frequency, so the channels at the edge of the band get more or less than the one in the middle.</li><li><b>Rx power and margin</b> are evaluated against each channel's own receiver, so a 10G channel can be past its overload point on a line where the 400G channels are fine. A power offset fixes that.</li></ul><p>The service channel (the one the headline describes) always uses the transponder mode. Everything else uses the mode you choose.</p>`],
   srs: ['SRS tilt', `<p><b>Stimulated Raman scattering</b>: light in the fiber acts as a weak Raman pump, so high-frequency (short-wavelength) channels give power to low-frequency ones. With a full C-band load at +1 dBm per channel it is worth roughly 1 dB of tilt per 80 km span, growing with total power, span length and occupied bandwidth.</p><p>Amplifiers with gain-tilt control (and ROADM WSSs) re-flatten the band, so tilt does not pile up. Switch tilt control off on the long-haul scenario to watch it accumulate. The service channel sits mid-band and barely moves, so the <i>worst channel</i> Q margin tracks the highest-frequency channel, which ends up weakest. The model is a first-order approximation, not a measurement.</p>`],
-  raman: ['Raman amplification', `<p>A <b>Raman pump</b> at the receiving end (about 1450 nm, backward) transfers power to the signal along the fiber itself. Unlike an EDFA, the gain is <i>distributed</i>: the signal is boosted before it has fallen as far, so less ASE-limited OSNR is lost. A 1 W pump gives roughly 15 dB of on-off gain on 80-110 km of SMF.</p><p>The trade-off: the signal stays stronger for longer, which raises nonlinear noise, and above ~1 W the pump is a Class 4 laser (eye safety, fiber fuse on a dirty connector). Here the benefit is modelled as a lumped amplifier sitting late in the span (about 40% of the on-off gain counts as OSNR benefit) with a 4.5 dB equivalent noise figure. The model includes pump depletion (small on lossy spans, where the signal near the pump is weak), gain ripple that falls with 1, 2 or 3 pump wavelengths, and forward or bidirectional pumping: a forward pump lifts the signal over the first ~20 km, so ASE improves but nonlinearity gets much worse, and bidirectional is usually best. Double Rayleigh scattering and a full pump-signal gain solver are not modelled.</p><p>Set it on a fiber span in the inspector. Try 110 km with 0, 500 and 1000 mW and watch ASE and NLI move in opposite directions in the "What is eating the SNR" bar.</p>`],
+  raman: ['Raman amplification', `<p>A <b>Raman pump</b> at the receiving end (about 1450 nm, backward) transfers power to the signal along the fiber itself. Unlike an EDFA, the gain is <i>distributed</i>: the signal is boosted before it has fallen as far, so less ASE-limited OSNR is lost. A 1 W pump gives roughly 15 dB of on-off gain on 80-110 km of SMF.</p><p>The trade-off: the signal stays stronger for longer, which raises nonlinear noise, and above ~1 W the pump is a Class 4 laser (eye safety, fiber fuse on a dirty connector). Here the benefit is modelled as a lumped amplifier sitting late in the span (about 40% of the on-off gain counts as OSNR benefit) with a 4.5 dB equivalent noise figure. The model includes pump depletion (small on lossy spans, where the signal near the pump is weak), a gain spectrum (a triangular Raman gain curve against pump detuning, so channels at different frequencies get different gain; the ripple falls from 1 to 2 to 3 pump wavelengths), double Rayleigh scattering (noise that grows with the square of the gain, so it only bites above roughly 15 to 18 dB), and forward or bidirectional pumping: a forward pump lifts the signal over the first ~20 km, so ASE improves but nonlinearity gets much worse, and bidirectional is usually best. Pump-to-pump power transfer and a full coupled-wave solver are not modelled.</p><p>Set it on a fiber span in the inspector. Try 110 km with 0, 500 and 1000 mW and watch ASE and NLI move in opposite directions in the "What is eating the SNR" bar.</p>`],
   bidi: ['Two directions', `<p>A DWDM line is really <b>two</b> fibers (or two wavelength bands on one) carrying traffic in opposite directions, with <b>one amplifier per direction</b>. A box labelled "BST-A" holds the booster for A to Z and the preamp for Z to A. The results panel shows both: pick the direction with the buttons by the status pill. The service status is the worse of the two.</p><p>Directions differ when one fiber has a dirtier connector, a different loss, a different Raman pump, or an amplifier that is set up for the other direction. Cable-wise a transmitter's launch and a receiver's input both depend on which role the amplifier plays, so an amp tuned as a booster is often wrong as a preamp: use the "return direction" fields on amplifiers and fibers.</p><p>A fiber can also be set to carry one direction only (inspector, "Carries light"). Then each direction routes separately: A to Z can take the short way round a ring while Z to A takes the long way, and a one-way fiber with no return path takes the service down. A DCM and an amplifier's gain range, noise figure and output limit also have return-direction fields.</p><p>Counter-propagating signals barely interact nonlinearly because they walk through each other too fast, so each direction is simulated independently.</p>`],
   xpm: ['Cross-phase modulation', `<p><b>XPM</b> is the nonlinear effect where the intensity of one channel changes the phase of its neighbours. A coherent receiver sorts out phase, but a <b>direct-detection</b> receiver (a 10G NRZ optic) turns phase wobble into amplitude errors after dispersion, so legacy 10G channels are the ones that suffer, especially beside wide, high-power coherent channels.</p><p>The penalty here grows with the number of neighbours inside about 400 GHz, with launch power and with effective fiber length, summed over spans. The "Neighbouring channels" setting (inspector, nothing selected) chooses between same-type and coherent neighbours. Real fixes: lower the launch power, leave a gap of empty slots around the 10G channels, or give them their own band. The numbers are representative, not a full XPM model.</p>`],
   aging: ['End-of-life margin', `<p>Links are planned for the day they are worst, not the day they are lit. <b>End of life</b> here adds extra loss on every fiber span (splices from repairs, connector wear, fiber ageing; 1.0 dB by default) and a transceiver ageing penalty (0.5 dB by default). Both are editable in the inspector when nothing is selected. It then re-runs the whole simulation.</p><p>A link with a few dB of margin today can have none left at end of life. The "works today but fails at end of life" alarm is the early warning. Typical planning margin is 2-3 dB.</p>`],

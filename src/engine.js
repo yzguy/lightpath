@@ -111,6 +111,32 @@ const PHY = (() => {
   // the new span's NLI and what has built up, as a function of the dispersion (ps/nm) accumulated before the span.
   const NLI_COH_CD = 400;
   const nliCorrelation = cdAcc => Math.max(0, 1 - Math.abs(cdAcc) / NLI_COH_CD);
+  // ---- Channel plan helpers ----
+  const slotFreqTHz = (slot, dfHz) => (CBAND.f0 + (slot + 0.5) * dfHz) / 1e12;
+  // Per-channel NLI relative to a reference: the same channel inside a contiguous, identical full band of refN channels at spacing df.
+  // Pairwise GN terms: self-channel asinh term plus an XPM log kernel from every other channel (PSD-weighted). chans: [{f (Hz), Rs, P (W)}].
+  // Normalising to the reference keeps the uniform case identical to etaNLI().
+  function nliPlanFactor(fiber, chans, i, df, refN) {
+    const ap = fiber.att / (10 * Math.LOG10E), Leffa = 1 / ap, b2 = beta2(fiber.D), ci = chans[i];
+    const self = Math.asinh((Math.PI ** 2 / 2) * b2 * Leffa * ci.Rs * ci.Rs);
+    const kern = (d, Rsj) => { const a = Math.abs(d), h = Rsj / 2; return Math.log((a + h) / Math.max(a - h, 0.1 * Rsj)); };
+    const Gi = ci.P / ci.Rs;
+    let num = self * Gi * Gi;
+    for (let j = 0; j < chans.length; j++) if (j !== i) { const Gj = chans[j].P / chans[j].Rs; num += Gj * Gj * kern(chans[j].f - ci.f, chans[j].Rs); }
+    let den = self * Gi * Gi;
+    const n = Math.max(1, refN) - 1, hi = Math.ceil(n / 2), lo = n - hi;
+    for (let k = 1; k <= hi; k++) den += Gi * Gi * kern(k * df, ci.Rs);
+    for (let k = 1; k <= lo; k++) den += Gi * Gi * kern(k * df, ci.Rs);
+    return num / den;
+  }
+  // Raman gain spectrum. Pump wavelengths (THz) for 1, 2 or 3 pumps; the gain coefficient vs pump-signal detuning is a triangle that
+  // peaks at 13.2 THz and falls to 20% at 25 THz. Gain of a channel relative to the service channel at the same pump power.
+  const RAMAN_PUMPS = { 1: [206.8], 2: [208.0, 204.8], 3: [209.6, 207.2, 204.4] };
+  const ramanShape = d => (d <= 0 ? 0 : d <= 13.2 ? d / 13.2 : d <= 25 ? 1 - ((d - 13.2) / 11.8) * 0.8 : Math.max(0, 0.2 * (1 - (d - 25) / 10)));
+  const ramanGainAt = (npump, fTHz) => RAMAN_PUMPS[npump].reduce((a, p) => a + ramanShape(p - fTHz), 0) / npump;
+  const ramanRel = (npump, fTHz, fSvcTHz) => ramanGainAt(npump, fTHz) / Math.max(1e-6, ramanGainAt(npump, fSvcTHz));
+  // Double Rayleigh scattering (multipath interference) as a noise-to-signal ratio, grows with the square of the on-off gain.
+  const drsRatio = (grDb, fiber, Lkm) => { const ap = fiber.att / 4.343, Leff = (1 - Math.exp(-ap * Lkm)) / ap; return lin(2 * grDb - 64 + 20 * Math.log10(Leff / 21.7)); };
   // Direct-detection optics have no DSP: dispersion closes the eye gradually (dB of SNR penalty, ~2 dB at the rated tolerance).
   const cdPenalty = (mode, cd) => (mode.coh === false ? 2 * (Math.abs(cd) / mode.cdTol) ** 2 : 0);
   // Backward-pumped distributed Raman. Effective gain coefficient (unpolarised pump, averaged over the C-band) scaled by gamma ~ 1/Aeff.
@@ -173,6 +199,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

@@ -108,7 +108,7 @@ test('sanitize: drops junk, fills defaults, keeps valid data', () => {
   assert.deepEqual([v.name, v.x, v.y, v.p.att], ['7', 0, 0, 5]);
   assert.equal(c.nodes[0].p.mode, 'zr400');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.fiber, 'smf');
-  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", eolSpan: 1, eolTrx: 0.5 });
+  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", plan: null, eolSpan: 1, eolTrx: 0.5 });
   assert.deepEqual(c.svc, { a: null, z: S.svc.z });
   assert.ok(M.simulate(c).status); // and the cleaned topology simulates without throwing
 });
@@ -443,8 +443,10 @@ test('Raman pump direction: forward lifts the signal early (better ASE) but pays
   assert.ok(back.gosnr > fwd.gosnr, 'forward is nonlinearity-limited');
   assert.ok(both.gosnr >= back.gosnr - 0.05 && both.gosnr > fwd.gosnr && both.gosnr > off.gosnr);
   // more pumps flatten the gain ripple across the band
-  assert.ok(run('back', 1).tilt > run('back', 3).tilt + 0.5);
-  assert.ok(run('back', 1).tilt > off.tilt);
+  const wide = pumps => { const S = build('dci'), f = S.links.find(l => l.kind === 'fiber'); f.p.len = 110; f.p.raman = 800; f.p.ramanPumps = pumps; S.g.nch = 64; S.g.df = 75; return M.simulate(S, undefined, { single: true }); };
+  assert.ok(wide(1).tilt > wide(3).tilt + 0.5, `ripple ${wide(1).tilt} vs ${wide(3).tilt}`);
+  assert.ok(wide(2).tilt < wide(1).tilt && wide(3).tilt < wide(2).tilt);
+  assert.ok(wide(1).tilt > run('back', 1).tilt, 'a wider lit band sees more ripple');
 });
 
 test('Raman pump depletion: a full band on a short span with a modest pump loses gain that a few channels keep', () => {
@@ -469,4 +471,102 @@ test('cross-phase modulation penalises direct-detection channels only, more besi
   assert.equal(c.g.neighbors, 'same');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.ramanDir, 'back');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.ramanPumps, 3);
+});
+
+// ---- channel plan ----
+const withPlan = (S, plan) => { S.g.plan = plan; return S; };
+const uniformPlan = S => M.planFromUniform(S.g, S.nodes.find(n => n.id === S.svc.a).p.mode);
+
+test('a plan that just spells out the uniform line gives the same service result', () => {
+  for (const k of ['dci', 'lh', 'ring', 'sfp10']) {
+    const S = build(k), base = M.simulate(S, undefined, { single: true });
+    const P2 = withPlan(clone(S), uniformPlan(S)), r = M.simulate(P2, undefined, { single: true });
+    assert.ok(r.channels && r.channels.length === S.g.nch, k);
+    // an even-sized block puts the service one slot off-centre, which the pairwise model sees as a few thousandths of a dB
+    assert.ok(Math.abs(r.qMargin - base.qMargin) < 0.02, `${k}: ${r.qMargin} vs ${base.qMargin}`);
+    assert.ok(Math.abs(r.osnr - base.osnr) < 1e-9, k);
+  }
+});
+
+test('the service channel row matches the headline numbers, and every channel gets its own result', () => {
+  const S = build('lh'), P2 = withPlan(clone(S), uniformPlan(S)), r = M.simulate(P2, undefined, { single: true });
+  const row = r.channels.find(c => c.svc);
+  assert.ok(Math.abs(row.qMargin - r.qMargin) < 1e-6, `${row.qMargin} vs ${r.qMargin}`);
+  assert.ok(Math.abs(row.prx - r.prx) < 1e-6);
+  assert.ok(Math.abs(row.osnr - r.osnr) < 1e-6 && Math.abs(row.gosnr - r.gosnr) < 1e-6);
+  // edge channels see less nonlinear noise than the centre, so margin is not identical across the band
+  assert.ok(r.channels.some(c => Math.abs(c.qMargin - row.qMargin) > 1e-3));
+});
+
+test('a mixed line: each channel has its own mode, and a 10G channel beside 400G gets an XPM penalty', () => {
+  const S = build('dci');
+  S.nodes.filter(isTrx => isTrx.type === 'trx').forEach(n => (n.p.mode = 'dwdm10f'));
+  S.g.df = 75;
+  const plan = [];
+  for (let s = 20; s < 32; s++) plan.push({ slot: s, mode: s === 25 || s === 27 ? 'dwdm10f' : 'zrp400', off: 0, svc: s === 26 });
+  const r = M.simulate(withPlan(S, plan), undefined, { single: true });
+  const by = s => r.channels.find(c => c.slot === s);
+  assert.equal(by(26).svc, true);
+  assert.equal(by(26).short, '10G+FEC');
+  assert.equal(by(30).short, '400G ZR+');
+  assert.ok(by(25).xpmPen > 0 && by(30).xpmPen === 0, 'only direct-detection channels carry XPM');
+  assert.ok(by(26).xpmPen > by(31).xpmPen);
+  // isolating the 10G channels away from the coherent ones reduces the penalty
+  const gap = []; for (let s = 20; s < 24; s++) gap.push({ slot: s, mode: 'dwdm10f', off: 0, svc: s === 22 });
+  for (let s = 40; s < 48; s++) gap.push({ slot: s, mode: 'zrp400', off: 0, svc: false });
+  const rg = M.simulate(withPlan(build('dci'), gap), undefined, { single: true });
+  assert.equal(rg.channels.find(c => c.svc).xpmPen, 0); // all 10G neighbours in reach are the same type, but there are 3 vs 11
+});
+
+test('plan sanitize: drops duplicates and out-of-range slots, keeps exactly one service channel', () => {
+  const dirty = [{ slot: 5, mode: 'zr400', svc: true }, { slot: 5, mode: 'm800' }, { slot: 999, mode: 'zr400' }, { slot: 'x', mode: 'zr400' }, { slot: 7, mode: 'nope', off: 99, svc: true }, null];
+  const p = M.sanitizePlan(dirty, 75);
+  assert.equal(p.length, 2);
+  assert.equal(p.filter(c => c.svc).length, 1);
+  assert.equal(p[1].mode, 'zrp400'); assert.equal(p[1].off, 10);
+  assert.equal(M.sanitizePlan([], 75), null);
+  assert.equal(M.sanitizePlan('x', 75), null);
+  const S = build('dci'); S.g.plan = dirty; assert.equal(M.sanitize(S).g.plan.length, 2);
+  // remapping keeps channel frequencies when the grid changes
+  const r = M.remapPlan([{ slot: 10, mode: 'zr400', off: 0, svc: true }, { slot: 11, mode: 'zr400', off: 0, svc: false }], 75, 50);
+  assert.ok(r.length >= 1 && r.every(c => c.slot >= 0));
+});
+
+test('Raman gain spectrum: channels across the band get different gain, and more pumps flatten it', () => {
+  const spread = pumps => {
+    const S = build('dark'); const f = S.links.find(l => l.kind === 'fiber'); f.p.len = 60; f.p.extra = 1; f.p.raman = 700; f.p.ramanPumps = pumps; f.p.nch = 6; // no mux on this bench: say how many channels are lit
+    S.g.df = 75; S.g.plan = [0, 12, 24, 36, 48, 63].map(s => ({ slot: s, mode: 'zr400', off: 0, svc: s === 24 }));
+    const r = M.simulate(S, undefined, { single: true }), rx = r.channels.map(c => c.prx);
+    return { spread: Math.max(...rx) - Math.min(...rx), svc: r.channels.find(c => c.svc).prx, r };
+  };
+  const one = spread(1), three = spread(3);
+  assert.ok(one.spread > 1, `1 pump spread ${one.spread}`);
+  assert.ok(three.spread < one.spread * 0.6, `3 pumps ${three.spread} vs ${one.spread}`);
+  // the service channel is the reference, so adding the plan does not move the headline
+  const S0 = build('dark'); const f0 = S0.links.find(l => l.kind === 'fiber'); f0.p.len = 60; f0.p.extra = 1; f0.p.raman = 700; f0.p.nch = 6;
+  assert.ok(Math.abs(M.simulate(S0, undefined, { single: true }).prx - one.svc) < 1e-6);
+});
+
+test('double Rayleigh scattering grows with the square of the Raman gain and eventually dominates', () => {
+  const run = mw => { const S = build('dci'); const f = S.links.find(l => l.kind === 'fiber'); f.p.len = 100; f.p.raman = mw; return M.simulate(S, undefined, { single: true }); };
+  const low = run(300), mid = run(900), hi = run(1500);
+  assert.equal(run(0).budget.mpi, 0);
+  assert.ok(mid.budget.mpi > low.budget.mpi * 4, 'about 2 dB of MPI per dB of gain');
+  assert.ok(hi.budget.mpi > mid.budget.mpi * 3);
+  assert.ok(hi.gosnr < mid.gosnr, 'pushing the pump too far costs GSNR');
+});
+
+test('mixed-line preset: 10G channels get their own results and the overload fix works through the power offset', () => {
+  const S = build('mix'), r = M.simulate(S);
+  assert.equal(r.status, 'up');
+  const tens = r.channels.filter(c => c.rate === 10), coh = r.channels.filter(c => c.rate === 400);
+  assert.equal(tens.length, 3); assert.ok(coh.length >= 10);
+  assert.ok(tens.every(c => c.prx < -7 && c.prx > -23 && c.xpmPen > 0));
+  // the -3 dB offsets lower the 10G channels' power at every receiver; without them they sit 3 dB higher
+  const flat = clone(S); flat.g.plan.forEach(c => (c.off = 0));
+  const rf = M.simulate(flat);
+  assert.ok(Math.abs(rf.channels.find(c => c.rate === 10).prx - (tens[0].prx + 3)) < 0.01);
+  assert.ok(Math.abs(rf.channels.find(c => c.rate === 400).prx - coh[0].prx) < 0.01, 'coherent channels do not move');
+  // both directions work in plan mode too
+  assert.ok(r.rev && r.rev.channels && r.rev.channels.length === r.channels.length);
 });
