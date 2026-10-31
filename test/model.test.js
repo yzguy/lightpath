@@ -191,3 +191,70 @@ test('sanitize keeps the amplifier tilt-control flag a boolean', () => {
   a.p.tiltCtl = false;
   assert.equal(M.sanitize(S).nodes.find(n => n.id === a.id).p.tiltCtl, false);
 });
+
+const mxpTopo = () => build('mxp');
+const mx = (S, which) => S.nodes.find(n => n.id === S.svc[which]);
+
+test('muxponder preset: 4x100G fills a 400G ZR+ line and the service is up', () => {
+  const S = mxpTopo(), r = M.simulate(S);
+  assert.equal(r.status, 'up');
+  assert.equal(r.clients.length, 2);
+  assert.equal(r.clients[0].total, 400);
+  assert.ok(r.clients[0].ports.every(p => p.status === 'ok'));
+});
+
+test('muxponder clients that exceed the line rate take the service down', () => {
+  const S = mxpTopo(); mx(S, 'a').p.clients.push(M.newClient('100g-lr4'));
+  const r = M.simulate(S);
+  assert.equal(r.status, 'down');
+  assert.match(r.headline, /500G/);
+});
+
+test('underfilled line is informational only', () => {
+  const S = mxpTopo(); mx(S, 'a').p.clients.pop(); mx(S, 'z').p.clients.pop();
+  const r = M.simulate(S);
+  assert.equal(r.status, 'up');
+  assert.ok(r.alarms.some(a => a.sev === 'info' && /300G of the 400G/.test(a.text)));
+});
+
+test('400ZR line cannot multiplex sub-rate clients; ZR+ can', () => {
+  const S = mxpTopo(); S.nodes.filter(n => n.type === 'mxp').forEach(n => (n.p.mode = 'zr400'));
+  assert.ok(M.simulate(S).alarms.some(a => /single 400GbE client/.test(a.text)));
+  S.nodes.filter(n => n.type === 'mxp').forEach(n => { n.p.mode = 'zrp400'; });
+  assert.ok(!M.simulate(S).alarms.some(a => /single 400GbE client/.test(a.text)));
+});
+
+test('a client port with a dead budget raises a bad alarm without taking the line down', () => {
+  const S = mxpTopo(); mx(S, 'z').p.clients[2].len = 40;
+  const r = M.simulate(S);
+  assert.ok(r.alarms.some(a => a.sev === 'bad' && /client 3/.test(a.text)));
+  assert.notEqual(r.status, 'down');
+});
+
+test('mismatched client totals between the ends are flagged', () => {
+  const S = mxpTopo(); mx(S, 'z').p.clients.pop();
+  assert.ok(M.simulate(S).alarms.some(a => /Client rates differ/.test(a.text)));
+});
+
+test('a muxponder can be one end and a transponder the other; light never passes through either', () => {
+  const S = mxpTopo(), z = mx(S, 'z'); z.type = 'trx'; z.p = { mode: 'zrp400', tx: null };
+  const r = M.simulate(S);
+  assert.equal(r.clients.length, 1);
+  assert.equal(r.status, 'up');
+  const T = mxpTopo(), third = { id: 'mxp3', type: 'mxp', name: 'MXP-3', x: 0, y: 0, p: { ...M.TYPES.mxp.def() } };
+  T.nodes.push(third); T.links.push({ id: 'lx3', a: third.id, b: T.nodes.find(n => n.name === 'MUX-A').id, kind: 'patch', p: { il: 0.5, cut: false } });
+  assert.ok(M.simulate(T).path.nodes.every(id => id !== 'mxp3'));
+});
+
+test('sanitize: muxponder client ports are validated and capped', () => {
+  const S = mxpTopo(), a = mx(S, 'a');
+  a.p.clients = [{ optic: 'warp-9', len: 'far', extra: -3 }, null, { optic: '400g-fr4', len: 2, extra: 0.5 }, ...Array(10).fill({ optic: '10g-lr', len: 1, extra: 1 })];
+  const c = M.sanitize(S).nodes.find(n => n.id === a.id).p.clients;
+  assert.equal(c.length, 8);
+  assert.deepEqual(c[0], { optic: '100g-lr4', len: 0.1, extra: 1 });
+  assert.deepEqual(c[1], { optic: '100g-lr4', len: 0.1, extra: 1 });
+  assert.deepEqual(c[2], { optic: '400g-fr4', len: 2, extra: 0.5 });
+  delete a.p.clients;
+  assert.equal(M.sanitize(S).nodes.find(n => n.id === a.id).p.clients.length, 4);
+  assert.ok(M.simulate(M.sanitize(S)).status);
+});

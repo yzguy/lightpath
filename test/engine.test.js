@@ -76,3 +76,16 @@ test('SRS tilt: zero for one channel, grows with power, channel count and span l
   assert.ok(P.srsTilt(f, 20, W, 64, 75e9) < base);
   assert.ok(P.srsTilt(P.FIBERS.ull, 80, W, 64, 75e9) < base, 'large-core fiber has less Raman tilt');
 });
+
+test('client optics: budget, overload, reach and LOS', () => {
+  const ok = P.clientBudget({ optic: '100g-lr4', len: 0.1, extra: 1 });
+  assert.equal(ok.status, 'ok');
+  near(ok.rx, -1.035, 0.01);
+  assert.equal(P.clientBudget({ optic: '100g-lr4', len: 30, extra: 1 }).status, 'down', 'LR4 over 30 km runs out of budget');
+  const er = P.clientBudget({ optic: '10g-er', len: 0.05, extra: 0.5 });
+  assert.equal(er.status, 'warn');
+  assert.match(er.notes[0], /overload/, 'ER optic on a short jumper overloads the receiver');
+  const far = P.clientBudget({ optic: '400g-dr4', len: 1.5, extra: 0.5 });
+  assert.ok(far.notes.some(n => /rated reach/.test(n)), 'DR4 beyond 500 m');
+  for (const k in P.CLIENT_OPTICS) for (const f of ['name', 'rate', 'reach', 'att', 'tx', 'rxMin', 'rxMax']) assert.ok(P.CLIENT_OPTICS[k][f] !== undefined, `${k}.${f}`);
+});

@@ -11,7 +11,7 @@ const el = (tag, attrs = {}, kids = []) => {
 const SVGNS = 'http://www.w3.org/2000/svg';
 const sv = (tag, attrs = {}) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
 const f1 = x => (isFinite(x) ? x.toFixed(1) : '—');
-const { TYPES, PREFIX, PRESETS, uid, linkDefaults } = MODEL;
+const { TYPES, PREFIX, PRESETS, uid, linkDefaults, isEnd } = MODEL;
 
 // ---------- state ----------
 let S;
@@ -57,6 +57,13 @@ function nodeShape(n) {
     g.append(sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' }));
     const t = sv('text', { x: -38, y: 4, class: 'glyph' }); t.textContent = PHY.MODES[n.p.mode].short; g.append(t);
     g.append(sv('circle', { cx: -36, cy: -12, r: 3, class: 'led' }));
+  } else if (n.type === 'mxp') {
+    g.append(sv('rect', { x: -46, y: -30, width: 92, height: 60, rx: 4, class: 'body' }));
+    const nc = n.p.clients.length;
+    n.p.clients.forEach((c, i) => { const y = nc > 1 ? -22 + i * (44 / (nc - 1)) : 0; g.append(sv('line', { x1: -56, y1: y, x2: -46, y2: y, class: 'thin' })); g.append(sv('circle', { cx: -56, cy: y, r: 2.2, class: 'led' })); });
+    g.append(sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' }));
+    const t = sv('text', { x: -38, y: -6, class: 'glyph' }); t.textContent = PHY.MODES[n.p.mode].short; g.append(t);
+    const t2 = sv('text', { x: -38, y: 10, class: 'glyph small' }); t2.textContent = `${nc} client${nc === 1 ? '' : 's'}`; g.append(t2);
   } else if (n.type === 'mux') {
     g.append(sv('path', { d: 'M-30,-30 L30,-14 L30,14 L-30,30 Z', class: 'body' }));
     for (let i = -2; i <= 2; i++) g.append(sv('line', { x1: -30, y1: i * 10, x2: -14, y2: i * 4, class: 'thin' }));
@@ -72,8 +79,8 @@ function nodeShape(n) {
     g.append(sv('path', { d: 'M-16,12 L16,-12 M8,-12 L16,-12 L16,-4', class: 'thin' }));
   }
   const lab = sv('text', { x: 0, y: n.type === 'roadm' ? 50 : 44, class: 'nlabel', 'text-anchor': 'middle' }); lab.textContent = n.name; g.append(lab);
-  if (n.type === 'trx' && (S.svc.a === n.id || S.svc.z === n.id)) {
-    const b = sv('text', { x: 0, y: -30, class: 'endtag', 'text-anchor': 'middle' }); b.textContent = S.svc.a === n.id ? 'A end' : 'Z end'; g.append(b);
+  if (isEnd(n) && (S.svc.a === n.id || S.svc.z === n.id)) {
+    const b = sv('text', { x: 0, y: n.type === 'mxp' ? -38 : -30, class: 'endtag', 'text-anchor': 'middle' }); b.textContent = S.svc.a === n.id ? 'A end' : 'Z end'; g.append(b);
   }
   return g;
 }
@@ -169,7 +176,7 @@ svg.addEventListener('wheel', e => {
   const r = svg.getBoundingClientRect();
   S.view = { k, x: w.x - (e.clientX - r.left) / k, y: w.y - (e.clientY - r.top) / k }; applyView();
 }, { passive: false });
-svg.addEventListener('dblclick', e => { const nEl = e.target.closest('.node'); if (nEl && node(nEl.dataset.id).type === 'trx') setEnd(nEl.dataset.id); });
+svg.addEventListener('dblclick', e => { const nEl = e.target.closest('.node'); if (nEl && isEnd(node(nEl.dataset.id))) setEnd(nEl.dataset.id); });
 
 function connect(a, b, kind) {
   if (S.links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return toast('Those two are already connected.');
@@ -182,7 +189,7 @@ function addNode(type, x, y) {
   let name = `${PREFIX[type]}-${count}`; while (S.nodes.some(n => n.name === name)) name += "'";
   const n = { id: uid('n'), type, name, x: Math.round(x / 10) * 10, y: Math.round(y / 10) * 10, p: TYPES[type].def() };
   S.nodes.push(n);
-  if (type === 'trx') { if (!node(S.svc.a)) S.svc.a = n.id; else if (!node(S.svc.z)) S.svc.z = n.id; }
+  if (type === 'trx' || type === 'mxp') { if (!node(S.svc.a)) S.svc.a = n.id; else if (!node(S.svc.z)) S.svc.z = n.id; }
   select({ kind: 'node', id: n.id });
 }
 function del() {
@@ -239,13 +246,14 @@ function renderInspector() {
     const nm = el('input', { value: n.name, id: 'f-name' }); nm.addEventListener('input', () => { n.name = nm.value; renderCanvas(); renderResults(); });
     box.append(el('h3', { text: TYPES[n.type].label }), field('Name', nm));
     const p = n.p;
-    if (n.type === 'trx') {
-      box.append(field('Mode', selIn(p, 'mode', Object.entries(PHY.MODES).map(([k, m]) => [k, m.name]))));
+    if (isEnd(n)) {
+      box.append(field(n.type === 'mxp' ? 'Line port mode' : 'Mode', selIn(p, 'mode', Object.entries(PHY.MODES).map(([k, m]) => [k, m.name]))));
       const m = PHY.MODES[p.mode];
       box.append(field('Tx power (dBm)', numIn(p, 'tx', 0.5, -15, 3, true, String(m.tx)), `Blank = module default ${m.tx} dBm`));
       box.append(el('div', { class: 'spec' }, [
         specRow('Baud rate', `${(m.Rs / 1e9).toFixed(2)} GBd`), specRow('Modulation', 'DP-' + m.mod), specRow('FEC / limit', `${m.fec} · BER ${m.berThr.toExponential(2)}`),
         specRow('Required OSNR', `${f1(reqOsnr(p.mode))} dB / 0.1 nm`), specRow('Rx window', `${m.rxMin} to ${m.rxMax} dBm`), specRow('CD tolerance', `±${m.cdTol} ps/nm`), specRow('PMD tol. (mean DGD)', `${m.dgdTol} ps`)]));
+      if (n.type === 'mxp') box.append(clientEditor(n));
       const b = el('div', { class: 'row' }, [
         el('button', { class: 'btn', text: S.svc.a === n.id ? 'This is the A end' : 'Set as A end', onclick: () => { if (S.svc.z === n.id) S.svc.z = S.svc.a; S.svc.a = n.id; renderAll(); } }),
         el('button', { class: 'btn', text: S.svc.z === n.id ? 'This is the Z end' : 'Set as Z end', onclick: () => { if (S.svc.a === n.id) S.svc.a = S.svc.z; S.svc.z = n.id; renderAll(); } })]);
@@ -291,6 +299,37 @@ function renderInspector() {
       el('button', { class: 'btn', text: 'Delete cable', onclick: del })]));
   }
 }
+// Client ports of a muxponder: optic type, distance to the host, connector loss, with a live budget line per port.
+function clientEditor(n) {
+  const wrap = el('div', { class: 'clients' }, [el('h4', { text: 'Client ports' })]);
+  const summary = el('p', { class: 'small' });
+  const upd = () => {
+    const total = n.p.clients.reduce((a, c) => a + PHY.CLIENT_OPTICS[c.optic].rate, 0), line = PHY.MODES[n.p.mode].rate;
+    summary.className = 'small ' + (total > line ? 'cs-down' : 'muted');
+    summary.textContent = `${n.p.clients.length} port${n.p.clients.length === 1 ? '' : 's'}: ${total}G into a ${line}G line` + (total > line ? '. Too much for the line port.' : '.');
+  };
+  wrap.append(summary);
+  n.p.clients.forEach((c, i) => {
+    const info = el('small', { class: 'cinfo' });
+    const refresh = () => { const b = PHY.clientBudget(c); info.textContent = `Rx ${f1(b.rx)} dBm, margin ${f1(b.margin)} dB${b.notes.length ? ': ' + b.notes[0] : ''}`; info.className = 'cinfo cs-' + b.status; upd(); };
+    const sel = el('select', { 'aria-label': `Client ${i + 1} optic` });
+    for (const k in PHY.CLIENT_OPTICS) sel.append(el('option', { value: k, text: PHY.CLIENT_OPTICS[k].name }));
+    sel.value = c.optic; sel.addEventListener('change', () => { c.optic = sel.value; renderAll(); });
+    const num = (key, label, step) => {
+      const inp = el('input', { type: 'number', step, min: 0, value: c[key], 'aria-label': `Client ${i + 1} ${label}` });
+      inp.addEventListener('input', () => { if (inp.value !== '' && isFinite(+inp.value) && +inp.value >= 0) { c[key] = +inp.value; refresh(); recompute(); } });
+      return inp;
+    };
+    const rm = el('button', { class: 'btn', text: '×', title: 'Remove client port', 'aria-label': `Remove client ${i + 1}`, onclick: () => { n.p.clients.splice(i, 1); renderAll(); } });
+    const unit = (inp, u) => el('label', { class: 'u' }, [inp, u]);
+    wrap.append(el('div', { class: 'crow' }, [sel, unit(num('len', 'length in km', 0.1), 'km'), unit(num('extra', 'connector loss in dB', 0.5), 'dB conn.'), rm]), info);
+    refresh();
+  });
+  const add = el('button', { class: 'btn', text: '+ Add client port', onclick: () => { const last = n.p.clients[n.p.clients.length - 1]; n.p.clients.push(MODEL.newClient(last ? last.optic : undefined)); renderAll(); } });
+  if (n.p.clients.length >= 8) add.disabled = true;
+  wrap.append(add);
+  return wrap;
+}
 function specRow(k, v) { return el('div', {}, [el('span', { text: k }), el('b', { text: v })]); }
 
 // ---------- globals bar ----------
@@ -326,7 +365,7 @@ function tile(label, val, unit, topic, cls = '') {
 function renderResults() {
   const r = lastRes; const box = $('#results');
   // service selectors
-  const trx = S.nodes.filter(n => n.type === 'trx');
+  const trx = S.nodes.filter(isEnd);
   for (const [id, key] of [['#svc-a', 'a'], ['#svc-z', 'z']]) {
     const s = $(id); s.innerHTML = ''; s.append(el('option', { value: '', text: '— pick —' }));
     trx.forEach(n => s.append(el('option', { value: n.id, text: n.name })));
@@ -385,9 +424,29 @@ function renderTabBody() {
   if (!r || !r.hops) return b.append(el('p', { class: 'muted pad', text: r ? r.headline : '' }));
   if (tab === 'power') b.append(powerChart(r));
   else if (tab === 'hops') b.append(hopTable(r));
+  else if (tab === 'clients') b.append(clientsView(r));
   else if (tab === 'spectrum') b.append(spectrumView(r));
   else if (tab === 'const') b.append(constView(r));
   else if (tab === 'sweep') b.append(sweepChart(r));
+}
+
+// client ports (muxponders)
+function clientsView(r) {
+  const wrap = el('div', { class: 'tablewrap' });
+  if (!r.clients || !r.clients.length) return el('p', { class: 'muted pad', text: 'Neither end of this service is a muxponder. Drag a Muxponder onto the bench to add client ports (100G, 400G and other grey optics) in front of the coherent line port.' });
+  for (const c of r.clients) {
+    const over = c.total > c.lineRate;
+    wrap.append(el('h4', { text: `${c.node.name}: ${c.ports.length} client port${c.ports.length === 1 ? '' : 's'} into ${PHY.MODES[c.node.p.mode].short}` }),
+      el('p', { class: 'small ' + (over ? 'cs-down' : 'muted'), text: `${c.total}G of clients on a ${c.lineRate}G line (${Math.round(100 * c.total / c.lineRate)}% full).${over ? ' The line port cannot carry this.' : ''}` }));
+    const t = el('table', { class: 'hops' });
+    t.append(el('thead', {}, el('tr', {}, ['Port', 'Optic', 'Rate', 'Rated reach', 'Length', 'Tx dBm', 'Loss dB', 'Rx dBm', 'Margin dB', 'Status'].map(h => el('th', { text: h })))));
+    const tb = el('tbody');
+    c.ports.forEach(p => tb.append(el('tr', {}, [p.idx, p.optic.name, p.optic.rate + 'G', p.optic.reach + ' km', p.len + ' km', f1(p.optic.tx), f1(p.loss), f1(p.rx), f1(p.margin),
+      p.status === 'ok' ? 'OK' : p.status === 'warn' ? 'WARN: ' + p.notes[0] : 'DOWN: ' + p.notes[0]].map((x, i) => el('td', { text: String(x), class: i === 9 ? 'cs-' + p.status : '' })))));
+    t.append(tb); wrap.append(t);
+  }
+  wrap.append(el('p', { class: 'muted small', text: 'Client optics are grey (non-DWDM) modules cabled to the host router or switch, so each port has its own short fiber budget, separate from the line system. Values are representative IEEE/MSA numbers; check your module datasheet.' }));
+  return wrap;
 }
 
 // power map
@@ -555,6 +614,7 @@ const LEARN = {
   pmd: ['PMD / DGD', `<p>The two polarizations travel at slightly different speeds because fiber is not perfectly round. Mean differential group delay grows with √length. New fiber is ~0.05 ps/√km; some 1990s fiber is 0.5 or worse.</p><p>Coherent DSP tracks it, with a penalty that grows as you approach the tolerance.</p>`],
   filter: ['Filter narrowing', `<p>Every WSS pass rounds off the edges of the passband. A 60 GBd signal in a 75 GHz slot loses a little each pass; through many ROADMs it adds up. Squeezing a 64 GBd signal into a 50 GHz grid is a big penalty.</p>`],
   rx: ['Receiver power window', `<p>Coherent receivers mix the signal with a local oscillator laser. Too little light and receiver electronics noise takes over (Rx LOW). Too much and the photodiodes and ADCs saturate (Rx HIGH, overload). Far too little is LOS.</p><p>For amplified links the usual target is the middle of the window, set with the preamp or a pad.</p>`],
+  client: ['Client ports and muxponders', `<p>A <b>transponder</b> carries one client signal over one coherent line port. A <b>muxponder</b> aggregates several client ports (for example 4 × 100GbE) into one line port (for example 400G ZR+). The line port is what the DWDM system sees. Everything upstream of it (host router, client optics) is a separate, short, grey-optics link.</p><p>Each client port has its own power budget: Tx power minus fiber and connector loss must land inside the module's Rx window. Too little and the client link is down. Too much (a long-reach optic on a short jumper) overloads the receiver and needs a pad. Running past rated reach adds dispersion penalty the model only flags.</p><p>The clients must also fit the line rate. 400ZR itself carries a single 400GbE client; OpenZR+ and OTN-based line modes can multiplex 100G and 200G clients.</p>`],
   srs: ['SRS tilt', `<p><b>Stimulated Raman scattering</b>: light in the fiber acts as a weak Raman pump, so high-frequency (short-wavelength) channels give power to low-frequency ones. With a full C-band load at +1 dBm per channel it is worth roughly 1 dB of tilt per 80 km span, growing with total power, span length and occupied bandwidth.</p><p>Amplifiers with gain-tilt control (and ROADM WSSs) re-flatten the band, so tilt does not pile up. Switch tilt control off on the long-haul scenario to watch it accumulate. The service channel sits mid-band and barely moves, so the <i>worst channel</i> Q margin tracks the highest-frequency channel, which ends up weakest. The model is a first-order approximation, not a measurement.</p>`],
   aging: ['End-of-life margin', `<p>Links are planned for the day they are worst, not the day they are lit. <b>End of life</b> here adds 1.0 dB of extra loss on every fiber span (splices from repairs, connector wear, fiber ageing) and 0.5 dB of transceiver ageing penalty, then re-runs the whole simulation.</p><p>A link with a few dB of margin today can have none left at end of life. The "works today but fails at end of life" alarm is the early warning. Typical planning margin is 2-3 dB.</p>`],
   launch: ['Launch power', `<p>The per-channel power put into each span. Too low: amplifier noise dominates. Too high: nonlinearity dominates. Somewhere in between (often 0 to +2 dBm/ch for 60 GBd on SMF) GSNR peaks. Open the Launch sweep tab to see your link's curve.</p>`],

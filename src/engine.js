@@ -42,6 +42,35 @@ const PHY = (() => {
       tx: -8, txOsnr: 34, rxMin: -12, rxMax: 0, cdTol: 20000, dgdTol: 10, snrTrx: 20, pen: 1.8 },
   };
 
+  // Client-side (grey) optics for muxponder client ports. Representative IEEE / MSA values: per-lane average launch and
+  // Rx sensitivity in dBm, rated reach in km, fiber loss at the optic's wavelength. Check the module datasheet for real designs.
+  const CLIENT_OPTICS = {
+    '10g-lr':    { name: '10GBASE-LR',        rate: 10,  reach: 10, nm: 1310, att: 0.35, tx: -3,  rxMin: -14.4, rxMax: 0.5 },
+    '10g-er':    { name: '10GBASE-ER',        rate: 10,  reach: 40, nm: 1550, att: 0.22, tx: 0,   rxMin: -15.8, rxMax: -1 },
+    '25g-lr':    { name: '25GBASE-LR',        rate: 25,  reach: 10, nm: 1310, att: 0.35, tx: -2.5, rxMin: -13,  rxMax: 2 },
+    '25g-er':    { name: '25GBASE-ER',        rate: 25,  reach: 40, nm: 1310, att: 0.35, tx: 0,   rxMin: -16,   rxMax: -3 },
+    '100g-dr':   { name: '100GBASE-DR (1 lane)', rate: 100, reach: 0.5, nm: 1310, att: 0.35, tx: 0, rxMin: -6,  rxMax: 4 },
+    '100g-fr':   { name: '100G-FR (1 lane)',  rate: 100, reach: 2,  nm: 1310, att: 0.35, tx: 1,   rxMin: -8,    rxMax: 4 },
+    '100g-lr4':  { name: '100GBASE-LR4',      rate: 100, reach: 10, nm: 1310, att: 0.35, tx: 0,   rxMin: -10,   rxMax: 4.5 },
+    '400g-dr4':  { name: '400GBASE-DR4',      rate: 400, reach: 0.5, nm: 1310, att: 0.35, tx: 0,  rxMin: -6,    rxMax: 4 },
+    '400g-fr4':  { name: '400GBASE-FR4',      rate: 400, reach: 2,  nm: 1310, att: 0.35, tx: 1,   rxMin: -8,    rxMax: 4 },
+    '400g-lr4':  { name: '400GBASE-LR4-10',   rate: 400, reach: 10, nm: 1310, att: 0.35, tx: 1,   rxMin: -9.5,  rxMax: 4 },
+    '800g-dr8':  { name: '800GBASE-DR8',      rate: 800, reach: 0.5, nm: 1310, att: 0.35, tx: 0,  rxMin: -6,    rxMax: 4 },
+    '800g-2fr4': { name: '800G 2xFR4',        rate: 800, reach: 2,  nm: 1310, att: 0.35, tx: 1,   rxMin: -8,    rxMax: 4 },
+  };
+  // One client port: Tx power - (fiber + connector loss) vs the module's Rx window and rated reach.
+  function clientBudget(port) {
+    const o = CLIENT_OPTICS[port.optic];
+    const loss = o.att * port.len + port.extra, rx = o.tx - loss, margin = rx - o.rxMin;
+    const notes = [];
+    let status = 'ok';
+    if (margin < 0) { status = 'down'; notes.push(`Rx ${rx.toFixed(1)} dBm is below the ${o.rxMin} dBm sensitivity: client link down`); }
+    else if (rx > o.rxMax) { status = 'warn'; notes.push(`Rx ${rx.toFixed(1)} dBm is above the ${o.rxMax} dBm overload point: add a ${Math.ceil(rx - o.rxMax + 1)} dB pad`); }
+    else if (margin < 1.5) { status = 'warn'; notes.push(`Only ${margin.toFixed(1)} dB of margin`); }
+    if (port.len > o.reach) { if (status === 'ok') status = 'warn'; notes.push(`${port.len} km is beyond the ${o.reach} km rated reach`); }
+    return { optic: o, loss, rx, margin, status, notes };
+  }
+
   function beta2(D) { // D ps/nm/km -> |beta2| s^2/km
     return Math.abs(D * 1e-6 * LAMBDA * LAMBDA / (2 * Math.PI * C)) * 1e3;
   }
@@ -96,6 +125,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, srsTilt, ampNfEff, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

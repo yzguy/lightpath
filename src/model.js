@@ -8,12 +8,16 @@ const MODEL = (() => {
 
   const TYPES = {
     trx: { label: 'Transponder', hint: 'Coherent line card / pluggable', maxLinks: 1, def: () => ({ mode: 'zr400', tx: null }) },
+    mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 1, def: () => ({ mode: 'zrp400', tx: null, clients: defaultClients() }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', gain: 20, nf: 5, gmin: 10, gmax: 30, pmax: 23, tiltCtl: true }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
     voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
   };
-  const PREFIX = { trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
+  const defaultClients = () => Array.from({ length: 4 }, () => newClient());
+  const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
+  const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
+  const PREFIX = { mxp: 'MXP', trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
   const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, nch: '', cut: false } : { il: 0.5, cut: false });
 
   // ---------- presets ----------
@@ -47,6 +51,14 @@ const MODEL = (() => {
           g: { nch: 48, df: 75, launch: 0 }, svc: { a: ta.id, z: tc.id } };
       }
     },
+    mxp: {
+      name: 'Muxponder: 4x100G over 400G ZR+', build() {
+        const a = N('mxp', 'MXP-A', 80, 220), ma = N('mux', 'MUX-A', 260, 220), ba = N('edfa', 'BST-A', 400, 220, { gmin: 5 });
+        const pb = N('edfa', 'PRE-B', 670, 220), mb = N('mux', 'MUX-B', 810, 220), z = N('mxp', 'MXP-B', 960, 220);
+        return { nodes: [a, ma, ba, pb, mb, z], links: [L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, z, 'patch')],
+          g: { nch: 16, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } };
+      }
+    },
     dark: {
       name: 'Dark fiber: unamplified ZR', build() {
         const a = N('trx', 'TRX-A', 150, 220), z = N('trx', 'TRX-Z', 800, 220);
@@ -74,9 +86,13 @@ const MODEL = (() => {
     for (const n of o.nodes) {
       if (!n || !TYPES[n.type] || typeof n.id !== 'string' || seen.has(n.id)) continue;
       const p = fill(TYPES[n.type].def(), n.p);
-      if (n.type === 'trx' && !PHY_.MODES[p.mode]) p.mode = 'zr400';
+      if (isEnd(n) && !PHY_.MODES[p.mode]) p.mode = TYPES[n.type].def().mode;
+      if (n.type === 'mxp') {
+        const cs = Array.isArray(n.p && n.p.clients) ? n.p.clients.slice(0, 8) : defaultClients();
+        p.clients = cs.map(c => { c = c && typeof c === 'object' ? c : {}; return { optic: PHY_.CLIENT_OPTICS[c.optic] ? c.optic : '100g-lr4', len: Number.isFinite(+c.len) && c.len !== '' && c.len !== null && +c.len >= 0 ? +c.len : 0.1, extra: Number.isFinite(+c.extra) && c.extra !== '' && c.extra !== null && +c.extra >= 0 ? +c.extra : 1 }; });
+      }
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
-      if (n.type === 'trx' && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
+      if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
       if (n.type === 'edfa' && !(p.target === '' || p.target === null || Number.isFinite(+p.target))) p.target = '';
       seen.add(n.id);
       nodes.push({ id: n.id, type: n.type, name: String(n.name ?? n.id), x: Number.isFinite(+n.x) ? +n.x : 0, y: Number.isFinite(+n.y) ? +n.y : 0, p });
@@ -118,7 +134,7 @@ const MODEL = (() => {
       if (u == null) return null;
       if (u === zId) break;
       done.add(u);
-      if (u !== aId && node(u).type === 'trx') continue;
+      if (u !== aId && isEnd(node(u))) continue;
       for (const l of linksOf(u)) {
         if (l.p.cut && !allowCut) continue;
         const v = other(l, u);
@@ -142,7 +158,7 @@ const MODEL = (() => {
     const { node, link, linkName } = mkGraph(S);
     const g = { ...S.g }; if (launchOverride != null) g.launch = launchOverride;
     const A = node(S.svc.a), Z = node(S.svc.z);
-    if (!A || !Z || A.type !== 'trx' || Z.type !== 'trx' || A === Z) return { status: 'none', headline: 'Pick two transponders as the A and Z ends of a service.' };
+    if (!isEnd(A) || !isEnd(Z) || A === Z) return { status: 'none', headline: 'Pick two transponders or muxponders as the A and Z ends of a service.' };
     const mode = PHY_.MODES[A.p.mode];
     let path = route(S, A.id, Z.id, false), rerouteCut = false;
     if (!path) { path = route(S, A.id, Z.id, true); rerouteCut = true; }
@@ -197,7 +213,7 @@ const MODEL = (() => {
       const t = nxt.type, nnext = node(path.nodes[i + 2]);
       const target = nxt.p.target === '' || nxt.p.target == null ? +g.launch : +nxt.p.target;
       if (t === 'mux') {
-        const joins = prv.type === 'trx', drops = nnext.type === 'trx';
+        const joins = isEnd(prv), drops = isEnd(nnext);
         const b = snap(); loss(+nxt.p.il);
         if (joins) nch = nchLine;
         if (drops) nch = 1;
@@ -205,7 +221,7 @@ const MODEL = (() => {
       } else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
       else if (t === 'edfa') { amp(nxt.name, nxt.p.nf, nxt.p.ctl, target, nxt.p.gain, +nxt.p.gmin, +nxt.p.gmax, +nxt.p.pmax, nxt.p.tiltCtl !== false); }
       else if (t === 'roadm') {
-        const add = prv.type === 'trx' || prv.type === 'mux', drop = nnext.type === 'trx' || nnext.type === 'mux';
+        const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
         if (add) nch = nchLine;
         if (p.amps && !add) amp(nxt.name + ' pre', p.nf, 'auto', +g.launch + (drop ? 4 : 0), 0, 0, 35, 24, true);
@@ -218,6 +234,25 @@ const MODEL = (() => {
     }
 
     const res = { mode, modeKey: A.p.mode, A, Z, path, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
+    // Muxponder client ports: per-port optical budget plus rate aggregation into the line port.
+    const clientFatal = [];
+    res.clients = [];
+    if (!eol) {
+      for (const n of [A, Z].filter(x => x.type === 'mxp')) {
+        const lm = PHY_.MODES[n.p.mode], ports = n.p.clients.map((c, i) => ({ idx: i + 1, ...c, ...PHY_.clientBudget(c) }));
+        const total = ports.reduce((a, p) => a + p.optic.rate, 0);
+        res.clients.push({ node: n, ports, total, lineRate: lm.rate });
+        if (!ports.length) alarms.push({ sev: 'warn', text: `${n.name} has no client ports configured.` });
+        if (total > lm.rate) clientFatal.push(`${n.name}: client ports add up to ${total}G, more than the ${lm.short} line port can carry (${lm.rate}G).`);
+        else if (ports.length && total < lm.rate) alarms.push({ sev: 'info', text: `${n.name}: clients fill ${total}G of the ${lm.rate}G line (${Math.round(100 * total / lm.rate)}%).` });
+        if (n.p.mode === 'zr400' && ports.length && (ports.length > 1 || total !== 400)) alarms.push({ sev: 'warn', text: `${n.name}: 400ZR carries a single 400GbE client. Use an OpenZR+ or OTN line mode to multiplex sub-rate clients.` });
+        for (const p of ports) {
+          if (p.status === 'ok') continue;
+          alarms.push({ sev: p.status === 'down' ? 'bad' : 'warn', text: `${n.name} client ${p.idx} (${p.optic.name}): ${p.notes.join('; ')}.` });
+        }
+      }
+      if (res.clients.length === 2 && res.clients[0].total !== res.clients[1].total) alarms.push({ sev: 'warn', text: `Client rates differ between the ends: ${A.name} carries ${res.clients[0].total}G, ${Z.name} carries ${res.clients[1].total}G.` });
+    }
     if (losAt) { res.status = 'los'; res.headline = `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}.`; res.prx = -Infinity; return res; }
     const prx = db(P * 1000); res.prx = prx;
     if (prx < mode.rxMin - 12) {
@@ -251,6 +286,7 @@ const MODEL = (() => {
     if (Z.p.mode !== A.p.mode) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
     if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} DSP range of ${mode.cdTol} ps/nm.`);
     if (ber > mode.berThr) bad.push(`Pre-FEC BER ${ber.toExponential(2)} is above the ${mode.fec} limit ${mode.berThr.toExponential(2)}: uncorrectable errors, link down.`);
+    bad.push(...clientFatal);
     bad.forEach(t => alarms.unshift({ sev: 'bad', text: t }));
     if (prx < mode.rxMin) alarms.push({ sev: 'warn', text: `Rx power ${f1(prx)} dBm is below the ${mode.rxMin} dBm sensitivity spec (Rx LOW alarm). Receiver noise is now eating SNR.` });
     if (prx > mode.rxMax) alarms.push({ sev: prx > mode.rxMax + 5 ? 'bad' : 'warn', text: `Rx power ${f1(prx)} dBm is above the ${mode.rxMax} dBm overload point (Rx HIGH alarm). Add a pad.` });
@@ -267,6 +303,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PRESETS, uid, linkDefaults, sanitize, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;
