@@ -24,7 +24,7 @@ jobs:
           node-version: 22
       - run: npm test
       - run: ./build.sh
-      - run: mkdir site && cp dist/optical-line-lab.html site/index.html
+      - run: mkdir site && cp dist/lightpath.html site/index.html
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site

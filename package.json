@@ -1,5 +1,5 @@
 {
-  "name": "optical-line-lab",
+  "name": "lightpath",
   "private": true,
   "description": "Drag-and-drop DWDM physical-layer simulator (single HTML page, no runtime dependencies)",
   "scripts": {

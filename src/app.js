@@ -16,10 +16,10 @@ const { TYPES, PREFIX, PRESETS, uid, linkDefaults, isEnd } = MODEL;
 // ---------- state ----------
 let S;
 let sel = null, tool = 'select';
-const KEY = 'optical-lab-v1';
+const KEY = 'lightpath-v1', OLD_KEY = 'optical-lab-v1'; // the app was called Optical Line Lab: still read its saved lab
 function load() {
   try {
-    const t = localStorage.getItem(KEY);
+    const t = localStorage.getItem(KEY) ?? localStorage.getItem(OLD_KEY);
     if (t) { const o = JSON.parse(t), v = o && o.view; S = { ...MODEL.sanitize(o), view: v && isFinite(v.k) && isFinite(v.x) && isFinite(v.y) && v.k > 0 ? { x: v.x, y: v.y, k: v.k } : { x: -40, y: -60, k: 1 } }; return; }
   } catch (e) { /* corrupt or outdated save: fall through to the default scenario */ }
   applyPreset('dci', true);

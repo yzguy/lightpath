@@ -1,6 +1,6 @@
-# Optical Line Lab
+# Lightpath
 
-Single-page browser app, no dependencies. Edit files in `src/`, then run `./build.sh` to produce `dist/optical-line-lab.html`. Run `npm test` (Node's built-in runner, no installs) before finishing any change.
+Single-page browser app, no dependencies. Edit files in `src/`, then run `./build.sh` to produce `dist/lightpath.html`. Run `npm test` (Node's built-in runner, no installs) before finishing any change.
 
 - `src/engine.js` is pure physics and must stay DOM-free so it can be tested in Node.
 - `src/model.js` is the topology model: device/preset definitions, `sanitize()` for untrusted JSON, `route()` and `simulate(S, launchOverride)`. Also DOM-free and unit-tested; uses global `PHY`. Keep simulation logic here, not in app.js.

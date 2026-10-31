@@ -1,4 +1,4 @@
-# Optical Line Lab
+# Lightpath
 
 A browser-based, drag-and-drop DWDM lab for building intuition about the optical physical layer, in the spirit of EVE-NG or Packet Tracer but for optics.
 
@@ -8,7 +8,7 @@ Drag transponders, muxponders, mux/demux, EDFAs, ROADMs and VOAs onto a bench, c
 
 ```sh
 ./build.sh
-open dist/optical-line-lab.html   # or xdg-open on Linux
+open dist/lightpath.html   # or xdg-open on Linux
 ```
 
 No dependencies, no bundler. (The page asks Google Fonts for Archivo and IBM Plex Mono and falls back to system fonts offline.) Run the tests with `npm test`. Topology is saved in the browser's localStorage and can be exported/imported as JSON.
@@ -22,7 +22,7 @@ No dependencies, no bundler. (The page asks Google Fonts for Archivo and IBM Ple
 | `src/app.js` | Canvas, palette, inspector, results views, Learn content. |
 | `test/` | Node unit tests for the engine and model (`npm test`). |
 | `src/shell.html` | Markup and CSS (light and dark themes). |
-| `build.sh` | Syntax-checks, then concatenates shell + engine + model + app into `dist/optical-line-lab.html`. |
+| `build.sh` | Syntax-checks, then concatenates shell + engine + model + app into `dist/lightpath.html`. |
 
 ## Physics model
 
