@@ -176,6 +176,11 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 #io .panel { width: min(640px, 100%); padding: 14px; display: grid; gap: 10px }
 #io textarea { width: 100%; height: 300px; font-family: var(--f-mono); font-size: 12px; background: var(--raised); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; padding: 8px }
 
+@media (pointer: coarse) {
+  .link .hit { stroke-width: 30 }
+  .pal-item { padding: 10px 8px } .tool, .canvas-tools .btn, .btn { min-height: 40px }
+  .tab, .chip { min-height: 40px }
+}
 @media (max-width: 900px) {
   .bench { grid-template-columns: minmax(0, 1fr); height: auto }
   .palette { flex-direction: row; flex-wrap: wrap }
@@ -183,6 +188,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   .pal-item { flex: 1 1 140px }
   .tools { grid-template-columns: repeat(3, 1fr); width: 100% }
   .canvaswrap { height: 56vh; min-height: 360px }
+  .canvaswrap { order: -2 } .insp { order: -1 } /* canvas first, then the inspector, then the palette */
   .globals { margin-left: 0 }
   .constwrap, .learn { grid-template-columns: minmax(0, 1fr) }
   .lnav { flex-direction: row; flex-wrap: wrap }

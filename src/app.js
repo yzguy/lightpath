@@ -44,7 +44,7 @@ function fitView() {
   const xs = S.nodes.map(n => n.x), ys = S.nodes.map(n => n.y);
   const r = svg.getBoundingClientRect();
   const w = Math.max(...xs) - Math.min(...xs) + 220, h = Math.max(...ys) - Math.min(...ys) + 200;
-  const k = Math.min(1.4, Math.max(0.35, Math.min(r.width / w, r.height / h)));
+  const k = Math.min(1.4, Math.max(0.15, Math.min(r.width / w, r.height / h)));
   S.view = { k, x: (Math.min(...xs) + Math.max(...xs)) / 2 - r.width / 2 / k, y: (Math.min(...ys) + Math.max(...ys)) / 2 - r.height / 2 / k };
 }
 function applyView() { gRoot.setAttribute('transform', `scale(${S.view.k}) translate(${-S.view.x},${-S.view.y})`); }
@@ -112,7 +112,18 @@ function renderCanvas() {
 
 // pointer interactions
 let drag = null;
+// Two-finger pinch: zoom about the midpoint and pan with it. Cancels any one-finger drag in progress.
+const ptrs = new Map();
+let pinch = null;
+const pinchGeom = () => { const [a, b] = [...ptrs.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; };
 svg.addEventListener('pointerdown', e => {
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 2) {
+    drag = null; $('#rubber').setAttribute('visibility', 'hidden');
+    const g = pinchGeom(); pinch = { d: g.d, k: S.view.k, w: toWorld(g.mx, g.my) };
+    svg.setPointerCapture(e.pointerId); return;
+  }
+  if (ptrs.size > 2) return;
   const nEl = e.target.closest('.node'), lEl = e.target.closest('.link');
   const w = toWorld(e.clientX, e.clientY);
   if (nEl) {
@@ -124,6 +135,11 @@ svg.addEventListener('pointerdown', e => {
   svg.setPointerCapture(e.pointerId);
 });
 svg.addEventListener('pointermove', e => {
+  if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pinch && ptrs.size === 2) {
+    const g = pinchGeom(), r = svg.getBoundingClientRect(), k = Math.min(2.5, Math.max(0.15, pinch.k * g.d / pinch.d));
+    S.view = { k, x: pinch.w.x - (g.mx - r.left) / k, y: pinch.w.y - (g.my - r.top) / k }; applyView(); return;
+  }
   if (!drag) return;
   const w = toWorld(e.clientX, e.clientY);
   drag.moved = true;
@@ -131,7 +147,11 @@ svg.addEventListener('pointermove', e => {
   else if (drag.kind === 'pan') { S.view.x = drag.vx - (e.clientX - drag.sx) / S.view.k; S.view.y = drag.vy - (e.clientY - drag.sy) / S.view.k; applyView(); }
   else if (drag.kind === 'cable') { const rb = $('#rubber'); rb.setAttribute('x2', w.x); rb.setAttribute('y2', w.y); }
 });
+const endPointer = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; };
+svg.addEventListener('pointercancel', e => { endPointer(e); drag = null; $('#rubber').setAttribute('visibility', 'hidden'); });
 svg.addEventListener('pointerup', e => {
+  const wasPinch = !!pinch; endPointer(e);
+  if (wasPinch) { drag = null; return; }
   if (!drag) return;
   const d = drag; drag = null;
   if (d.kind === 'cable') {
@@ -145,7 +165,7 @@ svg.addEventListener('pointerup', e => {
 let pendingCable = null;
 svg.addEventListener('wheel', e => {
   e.preventDefault();
-  const w = toWorld(e.clientX, e.clientY), k = Math.min(2.5, Math.max(0.25, S.view.k * Math.exp(-e.deltaY * 0.0015)));
+  const w = toWorld(e.clientX, e.clientY), k = Math.min(2.5, Math.max(0.15, S.view.k * Math.exp(-e.deltaY * 0.0015)));
   const r = svg.getBoundingClientRect();
   S.view = { k, x: w.x - (e.clientX - r.left) / k, y: w.y - (e.clientY - r.top) / k }; applyView();
 }, { passive: false });
@@ -395,7 +415,7 @@ function powerChart(r) {
     s.append(sv('line', { x1: cx, x2: cx, y1: mt, y2: H - mb, class: 'tick' }));
     const t = sv('text', { x: cx, y: H - mb + 30 + (i % 3) * 11, class: 'ax node-ax', 'text-anchor': 'middle' }); t.textContent = h.name.replace(/ (pre|boost|express|add|drop)$/, m => m); s.append(t);
   });
-  if (isFinite(r.prx)) { const t = sv('text', { x: W - mr, y: Y(r.prx) + 18, class: 'ax strong', 'text-anchor': 'end' }); t.textContent = `Rx ${f1(r.prx)} dBm`; s.append(t); }
+  if (isFinite(r.prx)) { const t = sv('text', { x: W - mr, y: mt - 4, class: 'ax strong', 'text-anchor': 'end' }); t.textContent = `Rx ${f1(r.prx)} dBm`; s.append(t); }
   const wrap = el('div', { class: 'chartwrap' }, [s]);
   wrap.append(el('div', { class: 'legend' }, [lg('l-sig', 'Signal power'), lg('l-ase', 'ASE noise in 0.1 nm'), lg('l-nli', 'NLI noise in 0.1 nm'), el('span', { class: 'muted', text: 'Shaded gap between signal and ASE = OSNR. Spans slope down (fiber loss), amplifiers step up.' })]));
   return wrap;
