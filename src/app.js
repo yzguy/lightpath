@@ -416,16 +416,19 @@ function hopTable(r) {
 }
 
 // spectrum (OSA-style view at any point along the path)
-let specHop = -1;
+let specHop = null; // name of the chosen measurement point; null = busiest point on the path
 function spectrumView(r) {
   const wrap = el('div', { class: 'chartwrap' });
   const hops = r.hops.filter(h => h.kind !== 'cut');
   if (!hops.length) return wrap;
-  if (specHop < 0 || specHop >= hops.length) specHop = hops.length - 1;
-  const h = hops[specHop], df = +r.g.df * 1e9, slots = PHY.cBandSlots(df), lit = Math.min(h.nch, slots);
+  const maxN = Math.max(...hops.map(x => x.nch));
+  const keys = hops.map((x, i) => `${x.name}#${hops.slice(0, i).filter(y => y.name === x.name).length}`); // names repeat (every patch cord), so add an occurrence number
+  let hi = specHop == null ? -1 : keys.indexOf(specHop);
+  if (hi < 0) hi = hops.map(x => x.nch).lastIndexOf(maxN);
+  const h = hops[hi], df = +r.g.df * 1e9, slots = PHY.cBandSlots(df), lit = Math.min(h.nch, slots);
   const sel = el('select', { id: 'spec-hop', 'aria-label': 'Measurement point' });
-  hops.forEach((x, i) => sel.append(el('option', { value: i, text: `After ${x.name}` })));
-  sel.value = specHop; sel.addEventListener('change', () => { specHop = +sel.value; renderTabBody(); });
+  hops.forEach((x, i) => sel.append(el('option', { value: i, text: `After ${x.name}${x.kind === 'patch' ? ` (${keys[i].split('#')[1] * 1 + 1})` : ''}` })));
+  sel.value = hi; sel.addEventListener('change', () => { specHop = keys[+sel.value]; renderTabBody(); });
   wrap.append(el('div', { class: 'sp-sel' }, [el('label', { for: 'spec-hop', text: 'Measure at' }), sel]));
 
   const W = 900, H = 300, ml = 46, mr = 16, mt = 16, mb = 40, f0 = PHY.CBAND.f0 / 1e12, f1v = (PHY.CBAND.f0 + PHY.CBAND.width) / 1e12;
