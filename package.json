@@ -4,6 +4,6 @@
   "description": "Drag-and-drop DWDM physical-layer simulator (single HTML page, no runtime dependencies)",
   "scripts": {
     "build": "./build.sh",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.js"
   }
 }
