@@ -108,7 +108,7 @@ test('sanitize: drops junk, fills defaults, keeps valid data', () => {
   assert.deepEqual([v.name, v.x, v.y, v.p.att], ['7', 0, 0, 5]);
   assert.equal(c.nodes[0].p.mode, 'zr400');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.fiber, 'smf');
-  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, eolSpan: 1, eolTrx: 0.5 });
+  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", eolSpan: 1, eolTrx: 0.5 });
   assert.deepEqual(c.svc, { a: null, z: S.svc.z });
   assert.ok(M.simulate(c).status); // and the cleaned topology simulates without throwing
 });
@@ -429,4 +429,44 @@ test('an inline DCM keeps dispersion low, so nonlinear noise from successive spa
   // NZ-DSF (low dispersion) is worse than SMF for the same line, on top of its higher gamma
   const leaf = mk(false); leaf.links.forEach(l => { if (l.kind === 'fiber') l.p.fiber = 'leaf'; });
   assert.ok(M.simulate(leaf, undefined, { single: true }).snrNli < plain.snrNli);
+});
+
+test('Raman pump direction: forward lifts the signal early (better ASE) but pays in nonlinearity; bidirectional is best overall', () => {
+  const run = (dir, pumps = 1) => {
+    const S = build('dci'), f = S.links.find(l => l.kind === 'fiber'); f.p.len = 110; f.p.raman = 800; f.p.ramanDir = dir; f.p.ramanPumps = pumps;
+    return M.simulate(S, undefined, { single: true });
+  };
+  const off = (() => { const S = build('dci'); S.links.find(l => l.kind === 'fiber').p.len = 110; return M.simulate(S, undefined, { single: true }); })();
+  const back = run('back'), fwd = run('fwd'), both = run('both');
+  assert.ok(fwd.snrAse > back.snrAse && both.snrAse > back.snrAse && both.snrAse < fwd.snrAse, 'ASE: back < both < forward');
+  assert.ok(fwd.snrNli < both.snrNli && both.snrNli < back.snrNli && back.snrNli < off.snrNli, 'NLI: forward worst, no pump best');
+  assert.ok(back.gosnr > fwd.gosnr, 'forward is nonlinearity-limited');
+  assert.ok(both.gosnr >= back.gosnr - 0.05 && both.gosnr > fwd.gosnr && both.gosnr > off.gosnr);
+  // more pumps flatten the gain ripple across the band
+  assert.ok(run('back', 1).tilt > run('back', 3).tilt + 0.5);
+  assert.ok(run('back', 1).tilt > off.tilt);
+});
+
+test('Raman pump depletion: a full band on a short span with a modest pump loses gain that a few channels keep', () => {
+  const gainFor = nch => {
+    const S = build('dci'), f = S.links.find(l => l.kind === 'fiber'); f.p.len = 50; f.p.raman = 300; S.g.nch = nch; S.g.launch = 3;
+    return M.simulate(S, undefined, { single: true }).hops.find(h => h.kind === 'span').raman;
+  };
+  assert.ok(gainFor(2) > gainFor(96) + 0.2, `${gainFor(2)} vs ${gainFor(96)}`);
+});
+
+test('cross-phase modulation penalises direct-detection channels only, more beside coherent neighbours', () => {
+  const S = build('sfp10'); S.g.nch = 40; S.g.launch = 3;
+  const same = M.simulate(S, undefined, { single: true });
+  assert.ok(same.xpmPen > 0);
+  const coh = clone(S); coh.g.neighbors = 'coh';
+  assert.ok(M.simulate(coh, undefined, { single: true }).xpmPen > same.xpmPen);
+  const one = clone(S); one.g.nch = 1;
+  assert.equal(M.simulate(one, undefined, { single: true }).xpmPen, 0);
+  assert.equal(M.simulate(build('dci'), undefined, { single: true }).xpmPen, 0); // coherent service: not applied
+  const bad = clone(S); bad.g.neighbors = 'x'; bad.links.find(l => l.kind === 'fiber').p.ramanDir = 'sideways'; bad.links.find(l => l.kind === 'fiber').p.ramanPumps = 9;
+  const c = M.sanitize(bad);
+  assert.equal(c.g.neighbors, 'same');
+  assert.equal(c.links.find(l => l.kind === 'fiber').p.ramanDir, 'back');
+  assert.equal(c.links.find(l => l.kind === 'fiber').p.ramanPumps, 3);
 });

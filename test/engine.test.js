@@ -112,3 +112,18 @@ test('NLI correlation is full for a flat dispersion map and gone once dispersion
   assert.equal(P.nliCorrelation(P.NLI_COH_CD), 0);
   assert.equal(P.nliCorrelation(-5000), 0);
 });
+
+test('Raman pump depletion: negligible for a weak signal, real for a heavy one', () => {
+  const light = P.ramanGainSat(P.FIBERS.smf, 80, 1000, 0.001, 17), heavy = P.ramanGainSat(P.FIBERS.smf, 80, 1000, 0.3, 17);
+  assert.ok(light.gain > light.g0 * 0.99);
+  assert.ok(heavy.gain < light.gain - 1, `${light.gain} vs ${heavy.gain}`);
+  assert.ok(heavy.depletion > light.depletion);
+  assert.equal(P.ramanGainSat(P.FIBERS.smf, 80, 0, 0.1, 17).gain, 0);
+});
+
+test('XPM penalty grows with neighbours and launch power', () => {
+  const f = P.FIBERS.smf, a = P.xpmSpanPenalty(f, 80, 4, 0.001, P.XPM.same);
+  assert.ok(P.xpmSpanPenalty(f, 80, 8, 0.001, P.XPM.same) > a);
+  assert.ok(P.xpmSpanPenalty(f, 80, 4, 0.002, P.XPM.same) > a);
+  assert.ok(P.xpmSpanPenalty(f, 80, 4, 0.001, P.XPM.coh) > a);
+});

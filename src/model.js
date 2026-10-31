@@ -19,7 +19,7 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', dir: 'both', cut: false } : { il: 0.5, dir: 'both', cut: false });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, dir: 'both', cut: false } : { il: 0.5, dir: 'both', cut: false });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -157,6 +157,7 @@ const MODEL = (() => {
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
       if (!['both', 'ab', 'ba'].includes(p.dir)) p.dir = 'both';
       if (kind === 'fiber') for (const k of ['extraRev', 'ramanRev']) if (!(p[k] === '' || (Number.isFinite(+p[k]) && p[k] !== null && +p[k] >= 0))) p[k] = '';
+      if (kind === 'fiber') { if (!['back', 'fwd', 'both'].includes(p.ramanDir)) p.ramanDir = 'back'; p.ramanPumps = Math.min(3, Math.max(1, Math.round(+p.ramanPumps || 1))); }
       if (kind === 'fiber') p.raman = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +p.raman || 0));
       if (kind === 'fiber' && !(p.nch === '' || (Number.isFinite(+p.nch) && +p.nch >= 1))) p.nch = '';
       lseen.add(l.id);
@@ -164,7 +165,7 @@ const MODEL = (() => {
     }
     const gi = o.g && typeof o.g === 'object' ? o.g : {};
     const num = (v, d) => (Number.isFinite(+v) && v !== '' && v !== null ? +v : d);
-    const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0),
+    const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same',
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))) };
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
     const svc = { a: seen.has(si.a) ? si.a : null, z: seen.has(si.z) ? si.z : null };
@@ -230,7 +231,7 @@ const MODEL = (() => {
     const eolTrx = Number.isFinite(+g.eolTrx) && g.eolTrx !== '' && g.eolTrx != null ? +g.eolTrx : PHY_.EOL.trxPen;
     const nchLine = Math.max(1, +g.nch), df = +g.df * 1e9, Rs = mode.Rs;
     const txDbm = A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx;
-    let P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
+    let xpmPen = 0, P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
     const tiltSeen = []; // tilt (dB, low- minus high-frequency channel) at every amplifier input and at the receiver
     const hops = [], alarms = [];
     const snap = () => ({ sig: db(P * 1000), ase: db(Pase * 1000), nli: Pnli > 0 ? db(Pnli * 1000 * PHY_.BREF / Rs) : -99 });
@@ -268,22 +269,33 @@ const MODEL = (() => {
         if (l.p.nch !== '' && l.p.nch != null) nch = Math.min(96, Math.max(1, Math.round(+l.p.nch)));
         maxNch = Math.max(maxNch, nch);
         const sl = fb.att * Lk + +pd(l.p, 'extra') + (eol ? eolSpan : 0);
-        const pump = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +pd(l.p, 'raman') || 0)), gr = PHY_.ramanGain(fb, Lk, pump);
-        // Raman lifts the power profile along the span, so the fiber looks less lossy to the nonlinearity.
+        const pump = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +pd(l.p, 'raman') || 0));
+        const rdir = ['back', 'fwd', 'both'].includes(l.p.ramanDir) ? l.p.ramanDir : 'back', npump = Math.min(3, Math.max(1, Math.round(+l.p.ramanPumps || 1)));
+        const pb = rdir === 'fwd' ? 0 : rdir === 'both' ? pump / 2 : pump, pf = rdir === 'back' ? 0 : rdir === 'both' ? pump / 2 : pump;
+        const sigW = nch * P; // total signal power entering the span; the backward pump sees the signal after the span loss
+        const sb = PHY_.ramanGainSat(fb, Lk, pb, sigW, sl), sf = PHY_.ramanGainSat(fb, Lk, pf, sigW, sl);
+        const gb = sb.gain, gf = sf.gain, gr = gb + gf, depl = Math.max(sb.depletion, sf.depletion);
+        // Raman lifts the power profile along the span, so the fiber looks less lossy to the nonlinearity (more so when pumped forward).
         const fbNl = gr > 0 ? { ...fb, att: Math.max(0.05, (fb.att * Lk - gr) / Lk) } : fb;
-        const nNew = PHY_.etaNLI(fbNl, Lk, Rs, nch, df) * P ** 3;
+        const nNew = PHY_.etaNLI(fbNl, Lk, Rs, nch, df) * P ** 3 * PHY_.ramanFwdNliFactor(gf);
+        if (mode.coh === false && nch > 1) { // cross-phase modulation from the other channels hits a direct-detection receiver
+          const nNeigh = Math.min(nch - 1, 2 * Math.floor(PHY_.XPM.reachGHz * 1e9 / df));
+          xpmPen = Math.min(PHY_.XPM.cap, xpmPen + PHY_.xpmSpanPenalty(fbNl, Lk, nNeigh, P, PHY_.XPM[g.neighbors === 'coh' ? 'coh' : 'same']));
+        }
         Pnli += nNew + 2 * PHY_.nliCorrelation(cd) * Math.sqrt(Pnli * nNew); // coherent cross term when the dispersion map is flat
-        tilt += PHY_.srsTilt(fb, Lk, P, nch, df);
+        tilt += PHY_.srsTilt(fb, Lk, P, nch, df) + PHY_.RAMAN.ripple[npump] * gr;
         if (gr > 0) {
-          // Equivalent lumped amplifier of gain gr with noiseFrac * gr dB of the span loss still ahead of the signal after it: noise
-          // enters late in the span, which is why distributed gain beats a lumped amp at the end by about noiseFrac * gr in OSNR.
-          const r = PHY_.RAMAN.noiseFrac * gr, before = Math.max(0, sl - r);
-          loss(before); P *= lin(gr); Pnli *= lin(gr);
-          Pase = Pase * lin(gr) + lin(PHY_.RAMAN.nf) * PHY_.H * PHY_.NU * lin(gr) * PHY_.BREF;
-          loss(sl - before);
+          // Equivalent lumped amplifiers. Backward pump: gain late in the span (noiseFrac * gain dB of loss still ahead of the signal),
+          // so most of the span loss is paid before the noise enters. Forward pump: gain early, noisier (pump RIN) and no OSNR benefit.
+          let c = 0;
+          const stage = (pos, gain, nf) => { loss(pos - c); c = pos; P *= lin(gain); Pnli *= lin(gain); Pase = Pase * lin(gain) + lin(nf) * PHY_.H * PHY_.NU * lin(gain) * PHY_.BREF; };
+          if (gf > 0) stage(Math.min(sl, PHY_.RAMAN.fwdPreLoss), gf, PHY_.RAMAN.fwdNf);
+          if (gb > 0) stage(Math.max(c, sl - PHY_.RAMAN.noiseFrac * gb), gb, PHY_.RAMAN.nf);
+          loss(sl - c);
         } else loss(sl);
         cd += fb.D * Lk; dgd2 += fb.pmd ** 2 * Lk; km += Lk;
-        rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: gr - sl, len: Lk, launch: b.sig, ...(gr > 0 ? { raman: gr, note: `Raman pump ${pump} mW: +${gr.toFixed(1)} dB on-off gain` } : {}) });
+        rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: gr - sl, len: Lk, launch: b.sig, ...(gr > 0 ? { raman: gr, note: `Raman ${rdir === 'both' ? 'bidirectional' : rdir === 'fwd' ? 'forward' : 'backward'} pump ${pump} mW (${npump}): +${gr.toFixed(1)} dB on-off gain` + (depl > 0.05 ? `, pump depletion cost ${(sb.g0 + sf.g0 - gr).toFixed(1)} dB` : '') } : {}) });
+        if (depl > 0.15 && !eol && !rv) alarms.push({ sev: 'info', text: `${linkName(l)}: signal power is depleting the Raman pump (${Math.round(depl * 100)}% of its photons): about ${f1(sb.g0 + sf.g0 - gr)} dB of gain lost. Add pump power or reduce channels.` });
         if (pump > PHY_.RAMAN.warnMw) alarms.push({ sev: 'warn', text: `${linkName(l)}: ${pump} mW Raman pump is a Class 4 laser. Check connector cleanliness (fiber-fuse risk) and eye safety.` });
         if (gr > 0 && !eol && !rv && +l.p.raman > PHY_.RAMAN.maxMw) alarms.push({ sev: 'info', text: `${linkName(l)}: pump limited to ${PHY_.RAMAN.maxMw} mW.` });
       }
@@ -347,14 +359,14 @@ const MODEL = (() => {
     const pmdPen = (res.dgd / mode.dgdTol) ** 2;
     tiltSeen.push(tilt);
     const peakTilt = Math.max(...tiltSeen), edgeTilt = tiltSeen.reduce((a, b) => a + b, 0) / tiltSeen.length;
-    const agePen = eol ? eolTrx : 0, cdPen = PHY_.cdPenalty(mode, cd), basePen = filt + over + pmdPen + cdPen + agePen;
+    const agePen = eol ? eolTrx : 0, cdPen = PHY_.cdPenalty(mode, cd), basePen = filt + over + pmdPen + cdPen + xpmPen + agePen;
     const eff = PHY_.effSnr(mode, line, basePen);
     const ber = PHY_.MODS[mode.mod].ber(eff);
     // The service channel sits mid-band. The highest-frequency channel gives up half the SRS tilt to the lowest, so it is the worst one.
     const effEdge = PHY_.effSnr(mode, line, basePen + edgeTilt / 2), berEdge = PHY_.MODS[mode.mod].ber(effEdge);
     Object.assign(res, {
       osnr: db(P / Pase), gosnr: db(1 / (1 / snrAse + 1 / snrNli) * Rs / PHY_.BREF), snrAse, snrNli, snrRx, snrTrx, effDb: db(eff),
-      ber, q: PHY_.qFromBer(ber), qThr: PHY_.qFromBer(mode.berThr), filt, over, pmdPen, cdPen, req: reqOsnr(A.p.mode),
+      ber, q: PHY_.qFromBer(ber), qThr: PHY_.qFromBer(mode.berThr), filt, over, pmdPen, cdPen, xpmPen, req: reqOsnr(A.p.mode),
       budget: { ase: 1 / snrAse, nli: 1 / snrNli, trx: 1 / snrTrx, rx: 1 / snrRx },
     });
     res.qMargin = res.q - res.qThr; res.osnrMargin = res.gosnr - res.req;
@@ -375,6 +387,7 @@ const MODEL = (() => {
     if (Rs > df) alarms.push({ sev: 'warn', text: `${mode.short} occupies ~${Math.round(Rs / 1e9 * 1.1)} GHz but the grid slot is ${g.df} GHz. Filters clip it and neighbours overlap.` });
     if (!eol && res.qMargin >= 0 && res.eol.qMargin < 0) alarms.push({ sev: 'warn', text: `Works today but fails at end of life: Q margin falls to ${f1(res.eol.qMargin)} dB with ${eolSpan} dB of extra loss per span and ${eolTrx} dB of transceiver ageing.` });
     if (res.qMargin >= 0 && res.worstQMargin < 0) alarms.push({ sev: 'warn', text: `SRS tilt of up to ${f1(peakTilt)} dB leaves the highest-frequency channel with ${f1(res.worstQMargin)} dB of Q margin while the middle channel still passes. Turn on amplifier tilt control or add a ROADM to re-equalise.` });
+    if (xpmPen > 1.5) alarms.push({ sev: 'warn', text: `Cross-phase modulation from neighbouring channels costs ${f1(xpmPen)} dB. Lower the launch power, space the ${mode.short} channels apart or move them away from the ${g.neighbors === 'coh' ? 'coherent ' : ''}neighbours.` });
     if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber.' });
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }
     else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. Aging or a dirty connector will take it down.` : 'Up, with alarms to look at.'; }

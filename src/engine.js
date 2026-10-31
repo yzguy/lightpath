@@ -116,11 +116,36 @@ const PHY = (() => {
   // Backward-pumped distributed Raman. Effective gain coefficient (unpolarised pump, averaged over the C-band) scaled by gamma ~ 1/Aeff.
   // On-off gain = 4.343 * CR * Ppump * Leff_pump. For noise the span is treated as a lumped amplifier of that gain placed
   // closer to the span end, so only (1 - NOISE_FRAC) of the on-off gain is not "seen" by the noise: OSNR benefit ~ NOISE_FRAC * gain.
-  const RAMAN = { cr: 0.2, pumpAtt: 0.25, noiseFrac: 0.4, nf: 4.5, maxMw: 1500, warnMw: 1000 };
+  // Refinements: pump depletion (signal photons are paid for by pump photons), gain ripple across the band falls with more pumps,
+  // forward pumping puts the gain at the start of the span where the signal is strong (noisier, more nonlinear, less OSNR benefit).
+  const RAMAN = { cr: 0.2, pumpAtt: 0.25, noiseFrac: 0.4, nf: 4.5, maxMw: 1500, warnMw: 1000,
+    photon: 0.935, ripple: { 1: 0.35, 2: 0.15, 3: 0.06 }, fwdNf: 7, fwdPreLoss: 3 };
+  // A forward pump lifts the signal power over the first ~20 km: peak rise ~ 0.45 * gain - 1 dB. NLI goes as power cubed over about
+  // half the effective length, so the span's NLI is scaled by 10^(1.5 * rise / 10).
+  const ramanFwdNliFactor = gfDb => lin(1.5 * Math.max(0, 0.45 * gfDb - 1));
   function ramanGain(fiber, Lkm, pumpMw) {
     if (!(pumpMw > 0)) return 0;
     const ap = RAMAN.pumpAtt / 4.343, Leffp = (1 - Math.exp(-ap * Lkm)) / ap;
     return 4.343 * RAMAN.cr * (fiber.gamma / 1.3) * (pumpMw / 1000) * Leffp;
+  }
+  // Gain with pump depletion. sigW = total signal power (all channels) at the pumped end of the span, slDb = span loss.
+  // Fixed point: gain shrinks as the signal takes power from the pump.
+  function ramanGainSat(fiber, Lkm, pumpMw, sigW, slDb) {
+    const g0 = ramanGain(fiber, Lkm, pumpMw);
+    if (g0 <= 0) return { gain: 0, g0: 0, depletion: 0 };
+    let g = g0, d = 0;
+    for (let i = 0; i < 40; i++) {
+      d = Math.min(0.9, RAMAN.photon * sigW * lin(g - slDb) / (pumpMw / 1000));
+      g = g0 * (1 - d / 2);
+    }
+    return { gain: g, g0, depletion: d };
+  }
+  // Cross-phase modulation penalty (dB of SNR) one span adds to a direct-detection channel from n neighbours. w is dB per neighbour
+  // per 80 km at 0 dBm/ch; scales with launch power and effective length. Representative, not derived from a full XPM model.
+  const XPM = { same: 0.02, coh: 0.06, reachGHz: 400, cap: 5 };
+  function xpmSpanPenalty(fiber, Lkm, nNeigh, pchW, w) {
+    const ap = fiber.att / 4.343, Leff = (1 - Math.exp(-ap * Lkm)) / ap;
+    return w * nNeigh * lin(db(pchW * 1000)) * (Leff / 21.7);
   }
   function ampNfEff(nf, g) { return nf + (g < 14 ? 0.35 * (14 - g) : 0) + (g > 30 ? 0.2 * (g - 30) : 0); }
 
@@ -148,6 +173,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, NLI_COH_CD, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;
