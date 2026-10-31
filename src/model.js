@@ -590,7 +590,7 @@ const MODEL = (() => {
         if (f.xp > 1.5) notes.push(`XPM costs ${f1(f.xp)} dB`);
         const lh = lohi[i], nm = k => (node(path.nodes[k]) || {}).name, route = path.nodes.slice(lh.lo, lh.hi + 1).map(id => (node(id) || {}).name);
         return { idx: i, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
-          from: c.from, to: c.to, fromName: nm(lh.lo), toName: nm(lh.hi), route, partial: !!W || lh.lo > 0 || lh.hi < lastPos };
+          from: c.from, to: c.to, fromName: nm(lh.lo), toName: nm(lh.hi), route, routeLinks: path.links.slice(lh.lo, lh.hi), routeNodes: path.nodes.slice(lh.lo, lh.hi + 1), partial: !!W || lh.lo > 0 || lh.hi < lastPos };
       });
       if (W) return res; // a mesh walk only reports its own channels
       res.sP = sP; res.Pend = fin[svcIdx].Pc;
@@ -600,7 +600,7 @@ const MODEL = (() => {
         for (const m of h.members) res.channels[m.k] = w.channels ? w.channels[m.k] : null;
       }
       res.channels = res.channels.map((c, i) => c || { idx: i, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
-        status: mesh.routes[i] ? 'los' : 'nopath', notes: [mesh.routes[i] ? 'the route crosses a cut fiber' : 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, route: [], partial: true });
+        status: mesh.routes[i] ? 'los' : 'nopath', notes: [mesh.routes[i] ? 'the route crosses a cut fiber' : 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, route: [], routeLinks: [], routeNodes: [], partial: true });
       res.linkLoad = [...mesh.loads].map(([id, set]) => ({ id, name: linkName(link(id)), n: set.size }));
       const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los' || c.status === 'nopath'));
       if (failing.length) alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${failing.slice(0, 3).map(c => `slot ${c.slot + 1} (${c.short}): ${c.notes[0]}`).join('; ')}${failing.length > 3 ? '…' : ''}.` });

@@ -91,6 +91,10 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .lightpath { stroke: var(--sig); stroke-width: 2.5; stroke-dasharray: 3 9; stroke-linecap: round; fill: none; pointer-events: none; animation: flow 0.9s linear infinite }
 .lightpath.down, .lightpath.los { stroke: var(--bad) }
 .lightpath.degraded { stroke: var(--warn) }
+.chroute { stroke: var(--mpi); stroke-width: 6; stroke-linecap: round; fill: none; opacity: 0.55; pointer-events: none }
+.node.chnode .body, .node.chnode circle:first-child { stroke: var(--mpi); stroke-width: 3 }
+.plantbl tr.hirow td { background: color-mix(in srgb, var(--mpi) 16%, transparent) }
+.plantbl tbody tr { cursor: pointer }
 @keyframes flow { to { stroke-dashoffset: -12 } }
 @media (prefers-reduced-motion: reduce) { .lightpath { animation: none } }
 .rubber { stroke: var(--jacket); stroke-width: 3; stroke-dasharray: 6 4; pointer-events: none }

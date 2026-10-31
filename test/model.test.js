@@ -694,3 +694,15 @@ test('mesh: the return direction routes every channel the other way round', () =
   assert.deepEqual(back.route.slice().sort(), fwd.route.slice().sort());
   assert.ok(Math.abs(fwd.gosnr - back.gosnr) < 1.5);
 });
+
+test('mesh: each channel reports the links and nodes of its route for the canvas highlight', () => {
+  const S = build('mesh'), r = M.simulate(S);
+  for (const c of r.channels) {
+    assert.equal(c.routeNodes.length, c.routeLinks.length + 1);
+    assert.equal(c.routeNodes.length, c.route.length);
+    assert.ok(c.routeLinks.every(id => S.links.some(l => l.id === id)));
+  }
+  const ab = r.channels.find(c => c.route.join('>') === 'ROADM-A>ROADM-B'), svc = r.channels.find(c => c.svc);
+  assert.equal(ab.routeLinks.length, 1); assert.deepEqual(svc.routeLinks, r.path.links);
+  assert.deepEqual(r.rev.channels.find(c => c.svc).routeNodes, r.rev.path.nodes, 'the return view highlights the return route');
+});

@@ -88,17 +88,20 @@ function nodeShape(n) {
   return g;
 }
 let lastRes = null;
+let hiSlot = null; // channel (by slot) whose route is highlighted on the canvas
 let dir = 'fwd'; // which direction the results panel shows: forward (A to Z) or return (Z to A)
 const view = () => (dir === 'rev' && lastRes && lastRes.rev && lastRes.rev.mode ? lastRes.rev : lastRes);
 function renderCanvas() {
   gRoot.innerHTML = '';
   const vr = view(), onPath = new Set(vr && vr.path ? vr.path.links : []);
   const lg = sv('g'), ng = sv('g'), og = sv('g');
+  const hc = hiSlot != null && S.g.plan && vr && vr.channels ? vr.channels.find(c => c.slot === hiSlot) : null, hiLinks = new Set(hc ? hc.routeLinks : []), hiNodes = new Set(hc ? hc.routeNodes : []);
   for (const l of S.links) {
     const a = node(l.a), b = node(l.b); if (!a || !b) continue;
     const g = sv('g', { class: 'link k-' + l.kind + (l.p.cut ? ' cut' : '') + (sel && sel.id === l.id ? ' sel' : ''), 'data-id': l.id });
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'hit' }));
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'wire' }));
+    if (hiLinks.has(l.id)) og.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'chroute' }));
     if (onPath.has(l.id)) {
       const ri = vr.path.links.indexOf(l.id), from = node(vr.path.nodes[ri]);
       const rev = from.id !== a.id;
@@ -115,7 +118,7 @@ function renderCanvas() {
     }
     lg.append(g);
   }
-  for (const n of S.nodes) ng.append(nodeShape(n));
+  for (const n of S.nodes) { const sh = nodeShape(n); if (hiNodes.has(n.id)) sh.classList.add('chnode'); ng.append(sh); }
   gRoot.append(lg, og, ng);
   const rb = sv('line', { id: 'rubber', class: 'rubber', x1: 0, y1: 0, x2: 0, y2: 0, visibility: 'hidden' });
   gRoot.append(rb);
@@ -672,7 +675,7 @@ function planView(r) {
   const brushSel = el('select', { 'aria-label': 'Mode for new channels' }); modes.forEach(([k, t]) => brushSel.append(el('option', { value: k, text: t }))); brushSel.value = brush; brushSel.addEventListener('change', () => { brush = brushSel.value; });
   wrap.append(el('div', { class: 'planbar' }, [
     el('b', { text: `${plan.length} channels on ${slots} slots` }), el('span', { class: 'muted small', text: 'New channels use' }), brushSel,
-    el('button', { class: 'btn', text: 'Reset to uniform', onclick: () => { S.g.plan = null; renderAll(); } })]));
+    el('button', { class: 'btn', text: 'Reset to uniform', onclick: () => { S.g.plan = null; hiSlot = null; renderAll(); } })]));
   const strip = el('div', { class: 'planstrip', role: 'group', 'aria-label': 'C-band slots' });
   for (let k = 0; k < slots; k++) {
     const c = bySlot.get(k), m = c && PHY.MODES[c.mode];
@@ -701,14 +704,14 @@ function planView(r) {
     };
     const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, 'aria-label': `Power offset for slot ${c.slot + 1}` }); off.addEventListener('change', () => { if (isFinite(+off.value)) { c.off = Math.max(-10, Math.min(10, +off.value)); commit(); } });
     const del = el('button', { class: 'btn', text: '×', title: 'Remove channel', disabled: c.svc, onclick: () => { plan.splice(plan.indexOf(c), 1); commit(); } });
-    tb.append(el('tr', { class: c.svc ? 'selrow' : '', title: o && o.route && o.route.length ? 'Route: ' + o.route.join(' → ') : '' }, [radio, c.slot + 1, (PHY.CBAND.f0 / 1e12 + (c.slot + 0.5) * +S.g.df / 1000).toFixed(2), ms, nodeSel('from', 'A end', 'Add at'), nodeSel('to', 'Z end', 'Drop at'), off,
+    tb.append(el('tr', { class: (c.svc ? 'selrow' : '') + (hiSlot === c.slot ? ' hirow' : ''), onclick: ev => { if (ev.target.closest('select,input,button')) return; hiSlot = hiSlot === c.slot ? null : c.slot; renderCanvas(); renderTabBody(); }, title: o && o.route && o.route.length ? 'Route: ' + o.route.join(' → ') : '' }, [radio, c.slot + 1, (PHY.CBAND.f0 / 1e12 + (c.slot + 0.5) * +S.g.df / 1000).toFixed(2), ms, nodeSel('from', 'A end', 'Add at'), nodeSel('to', 'Z end', 'Drop at'), off,
       o && o.prx != null ? f1(o.prx) : '', o && o.gosnr != null ? f1(o.gosnr) : '', o && o.qMargin != null ? (o.qMargin > 0 ? '+' : '') + f1(o.qMargin) : '', o && m.coh === false ? f1(o.xpmPen) : '',
       o ? el('span', { class: 'st-' + o.status, text: STATUS[o.status] + (o.notes.length ? ': ' + o.notes[0] : '') }) : '', del].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x })))));
   }
   tbl.append(tb);
   wrap.append(el('div', { style: 'overflow:auto;max-height:420px' }, [tbl]));
   if (r && r.linkLoad && r.linkLoad.length > 1) wrap.append(el('p', { class: 'muted small', text: 'Channels per fiber: ' + r.linkLoad.filter(l => node(S.links.find(x => x.id === l.id).a) && S.links.find(x => x.id === l.id).kind === 'fiber').map(l => `${l.name} ${l.n}`).join(', ') + '.' }));
-  wrap.append(el('p', { class: 'muted small', text: 'Offset = this channel\'s power relative to the service channel, set at the line mux (a 10G optic beside 400G usually wants a few dB less). The service channel (radio button) takes its mode from the transponder. "Add at" and "Drop at" pick the ROADMs or transponders between which a channel runs (blank = the A and Z ends of the service; the service channel always runs end to end). Each channel takes the shortest route over the cabled network, loads only the fibers on it and accumulates noise only along it; hover a row to see its route. Per-span channel counts on the fibers are ignored in plan mode.' }));
+  wrap.append(el('p', { class: 'muted small', text: 'Offset = this channel\'s power relative to the service channel, set at the line mux (a 10G optic beside 400G usually wants a few dB less). The service channel (radio button) takes its mode from the transponder. "Add at" and "Drop at" pick the ROADMs or transponders between which a channel runs (blank = the A and Z ends of the service; the service channel always runs end to end). Each channel takes the shortest route over the cabled network, loads only the fibers on it and accumulates noise only along it; click a row to highlight its route on the canvas. Per-span channel counts on the fibers are ignored in plan mode.' }));
   return wrap;
 }
 
