@@ -106,6 +106,11 @@ const PHY = (() => {
     const ap = fiber.att / (10 * Math.LOG10E), Leff = (1 - Math.exp(-ap * Lkm)) / ap;
     return 4.343 * 0.028 * (fiber.gamma / 1.3) * (PchW * nch) * Leff * ((nch - 1) * df / 1e12);
   }
+  // Nonlinear noise from successive spans adds incoherently when the signal has dispersed a lot between them (the GN model's
+  // assumption), but coherently when dispersion is cancelled (inline DCM) or tiny (NZ-DSF). Returns the correlation 0..1 between
+  // the new span's NLI and what has built up, as a function of the dispersion (ps/nm) accumulated before the span.
+  const NLI_COH_CD = 400;
+  const nliCorrelation = cdAcc => Math.max(0, 1 - Math.abs(cdAcc) / NLI_COH_CD);
   // Direct-detection optics have no DSP: dispersion closes the eye gradually (dB of SNR penalty, ~2 dB at the rated tolerance).
   const cdPenalty = (mode, cd) => (mode.coh === false ? 2 * (Math.abs(cd) / mode.cdTol) ** 2 : 0);
   // Backward-pumped distributed Raman. Effective gain coefficient (unpolarised pump, averaged over the C-band) scaled by gamma ~ 1/Aeff.
@@ -143,6 +148,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, NLI_COH_CD, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

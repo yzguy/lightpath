@@ -271,7 +271,8 @@ const MODEL = (() => {
         const pump = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +pd(l.p, 'raman') || 0)), gr = PHY_.ramanGain(fb, Lk, pump);
         // Raman lifts the power profile along the span, so the fiber looks less lossy to the nonlinearity.
         const fbNl = gr > 0 ? { ...fb, att: Math.max(0.05, (fb.att * Lk - gr) / Lk) } : fb;
-        Pnli += PHY_.etaNLI(fbNl, Lk, Rs, nch, df) * P ** 3;
+        const nNew = PHY_.etaNLI(fbNl, Lk, Rs, nch, df) * P ** 3;
+        Pnli += nNew + 2 * PHY_.nliCorrelation(cd) * Math.sqrt(Pnli * nNew); // coherent cross term when the dispersion map is flat
         tilt += PHY_.srsTilt(fb, Lk, P, nch, df);
         if (gr > 0) {
           // Equivalent lumped amplifier of gain gr with noiseFrac * gr dB of the span loss still ahead of the signal after it: noise

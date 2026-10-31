@@ -408,3 +408,25 @@ test('per-direction amplifier limits and DCM settings apply to the return direct
   assert.equal(d.status, 'down');
   assert.match(d.headline, /dispersion tolerance/);
 });
+
+test('an inline DCM keeps dispersion low, so nonlinear noise from successive spans adds coherently', () => {
+  const mk = withDcm => {
+    const S = M.sanitize(M.fromSpans('80\n80\n80', 'zrp400').topo);
+    if (withDcm) { // DCM after each ILA, loss-free so only the dispersion map changes
+      const fibers = S.links.filter(l => l.kind === 'fiber').slice(1);
+      fibers.forEach((f, i) => {
+        const id = 'dcm' + i;
+        S.nodes.push({ id, type: 'dcm', name: 'DCM' + i, x: 0, y: 0, p: { cd: -1360, cdRev: '', il: 0, ilRev: '' } });
+        S.links.push({ id: 'lp' + i, a: f.a, b: id, kind: 'patch', p: { il: 0, dir: 'both', cut: false } });
+        f.a = id;
+      });
+    }
+    return S;
+  };
+  const plain = M.simulate(mk(false), undefined, { single: true }), comp = M.simulate(mk(true), undefined, { single: true });
+  assert.ok(Math.abs(plain.cd - 3 * 1360) < 1e-6 && Math.abs(comp.cd - 1360) < 1e-6);
+  assert.ok(comp.snrNli < plain.snrNli * 0.8, `NLI SNR ${10 * Math.log10(plain.snrNli)} -> ${10 * Math.log10(comp.snrNli)} dB`);
+  // NZ-DSF (low dispersion) is worse than SMF for the same line, on top of its higher gamma
+  const leaf = mk(false); leaf.links.forEach(l => { if (l.kind === 'fiber') l.p.fiber = 'leaf'; });
+  assert.ok(M.simulate(leaf, undefined, { single: true }).snrNli < plain.snrNli);
+});

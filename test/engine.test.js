@@ -105,3 +105,10 @@ test('Raman gain: zero when off, grows with pump, smaller on large-core fiber', 
   assert.ok(g2 > g1 && g2 > 10 && g2 < 22, `1 W ${g2}`);
   assert.ok(P.ramanGain(P.FIBERS.ull, 80, 1000) < g2);
 });
+
+test('NLI correlation is full for a flat dispersion map and gone once dispersion has built up', () => {
+  assert.equal(P.nliCorrelation(0), 1);
+  assert.ok(P.nliCorrelation(200) > 0 && P.nliCorrelation(200) < 1);
+  assert.equal(P.nliCorrelation(P.NLI_COH_CD), 0);
+  assert.equal(P.nliCorrelation(-5000), 0);
+});
