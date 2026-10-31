@@ -45,6 +45,8 @@ const PHY = (() => {
     // so chromatic dispersion eats margin gradually (coh:false) and there is usually no FEC (the host may add one).
     dwdm10: { name: '10G DWDM (NRZ, 10.3 GBd, no FEC, tunable SFP+)', short: '10G DWDM', rate: 10, Rs: 10.3125e9, mod: 'NRZ', fec: 'none', berThr: 1e-12, coh: false,
       tx: 1, txOsnr: 35, rxMin: -23, rxMax: -7, cdTol: 1600, dgdTol: 20, snrTrx: 25, pen: 2.0 },
+    dwdm10f: { name: '10G DWDM + host FEC (NRZ, 11.1 GBd, EFEC)', short: '10G+FEC', rate: 10, Rs: 11.1e9, mod: 'NRZ', fec: 'EFEC (host)', berThr: 4e-3, coh: false,
+      tx: 1, txOsnr: 35, rxMin: -23, rxMax: -7, cdTol: 1600, dgdTol: 20, snrTrx: 25, pen: 2.0 },
   };
 
   // Client-side (grey) optics for muxponder client ports. Representative IEEE / MSA values: per-lane average launch and

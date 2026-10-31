@@ -12,12 +12,13 @@ const MODEL = (() => {
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', gain: 20, nf: 5, gmin: 10, gmax: 30, pmax: 23, tiltCtl: true }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
+    dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, il: 7 }) },
     voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
   };
   const defaultClients = () => Array.from({ length: 4 }, () => newClient());
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
-  const PREFIX = { mxp: 'MXP', trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
+  const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
   const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, nch: '', cut: false } : { il: 0.5, cut: false });
 
   // ---------- presets ----------
@@ -66,6 +67,14 @@ const MODEL = (() => {
         const pb = N('edfa', 'PRE-B', 650, 220, { target: -4, gmin: 3 }), mb = N('mux', 'MUX-B', 790, 220);
         const b1 = N('trx', 'SW-B1', 940, 150, { mode: 'dwdm10' }), b2 = N('trx', 'SW-B2', 940, 290, { mode: 'dwdm10' });
         return { nodes: [a1, a2, ma, ba, pb, mb, b1, b2], links: [L(a1, ma, 'patch'), L(a2, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 60 }), L(pb, mb, 'patch'), L(mb, b1, 'patch'), L(mb, b2, 'patch')],
+          g: { nch: 8, df: 100, launch: 0 }, svc: { a: a1.id, z: b1.id } };
+      }
+    },
+    sfp10dcm: {
+      name: 'Switch 10G over 120 km with a DCM', build() {
+        const a1 = N('trx', 'SW-A1', 80, 220, { mode: 'dwdm10f' }), ma = N('mux', 'MUX-A', 230, 220), ba = N('edfa', 'BST-A', 370, 220, { gmin: 3 });
+        const pb = N('edfa', 'PRE-B', 640, 220, { target: 2, gmin: 3 }), dc = N('dcm', 'DCM-B', 780, 220, { cd: -1360, il: 7 }), mb = N('mux', 'MUX-B', 920, 220), b1 = N('trx', 'SW-B1', 1060, 220, { mode: 'dwdm10f' });
+        return { nodes: [a1, ma, ba, pb, dc, mb, b1], links: [L(a1, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 120 }), L(pb, dc, 'patch'), L(dc, mb, 'patch'), L(mb, b1, 'patch')],
           g: { nch: 8, df: 100, launch: 0 }, svc: { a: a1.id, z: b1.id } };
       }
     },
@@ -261,7 +270,8 @@ const MODEL = (() => {
         if (joins) nch = nchLine;
         if (drops) nch = 1;
         rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
-      } else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
+      } else if (t === 'dcm') { const b = snap(); loss(+nxt.p.il); cd += +nxt.p.cd; dgd2 += 1; rec(nxt.name, 'dcm', b, { gain: -nxt.p.il, note: `${+nxt.p.cd} ps/nm` }); }
+      else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
       else if (t === 'edfa') { amp(nxt.name, nxt.p.nf, nxt.p.ctl, target, nxt.p.gain, +nxt.p.gmin, +nxt.p.gmax, +nxt.p.pmax, nxt.p.tiltCtl !== false); }
       else if (t === 'roadm') {
         const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';

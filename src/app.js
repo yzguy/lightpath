@@ -74,6 +74,9 @@ function nodeShape(n) {
   } else if (n.type === 'roadm') {
     g.append(sv('circle', { r: 32, class: 'body' }));
     g.append(sv('path', { d: 'M-18,-8 L18,-8 M12,-14 L18,-8 L12,-2 M18,8 L-18,8 M-12,2 L-18,8 L-12,14', class: 'thin' }));
+  } else if (n.type === 'dcm') {
+    g.append(sv('rect', { x: -26, y: -18, width: 52, height: 36, rx: 3, class: 'body' }));
+    g.append(sv('path', { d: 'M-16,8 C-8,8 -8,-8 0,-8 S8,8 16,8', class: 'thin' }));
   } else if (n.type === 'voa') {
     g.append(sv('rect', { x: -26, y: -18, width: 52, height: 36, rx: 3, class: 'body' }));
     g.append(sv('path', { d: 'M-16,12 L16,-12 M8,-12 L16,-12 L16,-4', class: 'thin' }));
@@ -274,6 +277,10 @@ function renderInspector() {
       box.append(field('Integrated amplifiers', selIn(p, 'amps', [['true', 'Yes: preamp + booster'], ['false', 'No (passive)']])));
       box.append(field('Amp noise figure (dB)', numIn(p, 'nf', 0.1, 3, 12)));
       box.append(el('p', { class: 'muted small', text: 'Express traffic passes two WSSs (route and select). Add or drop passes one WSS plus the add/drop structure. Each WSS pass narrows the passband a little.' }));
+    } else if (n.type === 'dcm') {
+      box.append(field('Dispersion (ps/nm)', numIn(p, 'cd', 10, -8000, 8000)));
+      box.append(field('Insertion loss (dB)', numIn(p, 'il', 0.5, 0, 20)));
+      box.append(el('p', { class: 'muted small', text: 'Negative dispersion cancels the fiber\'s positive dispersion: about -1360 ps/nm for 80 km of SMF (17 ps/nm/km). A DCF module costs ~7 dB, a fibre Bragg grating ~3 dB. Put it between amplifier stages so the loss does not hurt OSNR.' }));
     } else if (n.type === 'voa') {
       box.append(field('Attenuation (dB)', numIn(p, 'att', 0.5, 0, 30)));
     }
@@ -623,7 +630,7 @@ const LEARN = {
   edfa: ['EDFA gain and noise figure', `<p>An EDFA gives gain but adds amplified spontaneous emission (ASE). <b>Noise figure</b> is how much it degrades the SNR passing through; 3 dB is the physical floor and 5 dB is typical.</p><p>Real amps have a gain range. At low gain the NF gets worse (modelled here), and if the span is shorter than the minimum gain the output runs hot: field fix is a pad (VOA) before the amp. Total output power is shared by every channel, so adding channels lowers per-channel power once you hit the limit.</p>`],
   span: ['Span loss and power budget', `<p>Span loss = length × attenuation (≈0.2 dB/km on SMF at 1550 nm) + connectors and splices. An 80 km span is ~17 dB.</p><p>An unamplified link only works if <code>Tx power − all losses ≥ Rx sensitivity</code>. 400ZR launches −10 dBm and needs about −12 dBm, so a passive mux pair plus fiber eats the budget fast. Amplified links trade the power budget for an OSNR budget.</p>`],
   nli: ['Nonlinear effects', `<p>Glass's refractive index shifts slightly with light intensity (Kerr effect). Channels modulate each other's phase: self-phase modulation, cross-phase modulation, four-wave mixing. Coherent DSP cannot undo most of it, so it acts like noise.</p><p>It grows with launch power cubed, with more channels, and with low dispersion (old NZ-DSF is worse than SMF). Large-core fiber (G.654.E) lowers γ and helps.</p>`],
-  cd: ['Chromatic dispersion', `<p>Different wavelengths inside one channel travel at slightly different speeds (17 ps/nm/km on SMF). Coherent DSP undoes it digitally, so it costs no margin until you exceed the module's range: 400ZR handles ±2,400 ps/nm (~140 km SMF), ZR+ about 20,000.</p><p>Past that range the receiver cannot lock: link down, regardless of OSNR.</p><p><b>Direct-detection optics</b> (a 10G tunable SFP+ in a switch) have no DSP. Dispersion closes the eye gradually, so it costs SNR long before the rated limit (about 1600 ps/nm, ~95 km of SMF) and the link drops past it. Beyond about 80 km you need dispersion compensation or a coherent optic.</p>`],
+  cd: ['Chromatic dispersion', `<p>Different wavelengths inside one channel travel at slightly different speeds (17 ps/nm/km on SMF). Coherent DSP undoes it digitally, so it costs no margin until you exceed the module's range: 400ZR handles ±2,400 ps/nm (~140 km SMF), ZR+ about 20,000.</p><p>Past that range the receiver cannot lock: link down, regardless of OSNR.</p><p><b>Direct-detection optics</b> (a 10G tunable SFP+ in a switch) have no DSP. Dispersion closes the eye gradually, so it costs SNR long before the rated limit (about 1600 ps/nm, ~95 km of SMF) and the link drops past it. Beyond about 80 km you need a dispersion compensation module (DCF or fibre Bragg grating, which add loss) or a coherent optic.</p>`],
   pmd: ['PMD / DGD', `<p>The two polarizations travel at slightly different speeds because fiber is not perfectly round. Mean differential group delay grows with √length. New fiber is ~0.05 ps/√km; some 1990s fiber is 0.5 or worse.</p><p>Coherent DSP tracks it, with a penalty that grows as you approach the tolerance.</p>`],
   filter: ['Filter narrowing', `<p>Every WSS pass rounds off the edges of the passband. A 60 GBd signal in a 75 GHz slot loses a little each pass; through many ROADMs it adds up. Squeezing a 64 GBd signal into a 50 GHz grid is a big penalty.</p>`],
   rx: ['Receiver power window', `<p>Coherent receivers mix the signal with a local oscillator laser. Too little light and receiver electronics noise takes over (Rx LOW). Too much and the photodiodes and ADCs saturate (Rx HIGH, overload). Far too little is LOS.</p><p>For amplified links the usual target is the middle of the window, set with the preamp or a pad.</p>`],

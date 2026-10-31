@@ -285,3 +285,20 @@ test('fromSpans builds a working line from CSV and reports bad rows', () => {
   assert.equal(bad.errors.length, 4);
   assert.equal(M.fromSpans('').topo, null);
 });
+
+test('a DCM rescues a 10G optic past its dispersion limit; host FEC adds margin', () => {
+  const S = build('sfp10dcm'), r = M.simulate(S);
+  assert.equal(r.status, 'up', r.headline);
+  assert.ok(Math.abs(r.cd - (120 * 17 - 1360)) < 1e-6);
+  const nodcm = clone(S); nodcm.nodes.find(n => n.type === 'dcm').p.cd = 0;
+  const r2 = M.simulate(nodcm);
+  assert.equal(r2.status, 'down'); // 2040 ps/nm > 1600
+  assert.match(r2.headline, /dispersion tolerance/);
+  // same line, FEC-less optic needs more OSNR than the host-FEC variant
+  assert.ok(PHY.requiredOsnr(PHY.MODES.dwdm10f) < PHY.requiredOsnr(PHY.MODES.dwdm10) - 3);
+});
+
+test('sanitize keeps DCM devices and defaults bad values', () => {
+  const S = build('sfp10dcm'); S.nodes.find(n => n.type === 'dcm').p.cd = 'junk';
+  assert.equal(M.sanitize(S).nodes.find(n => n.type === 'dcm').p.cd, -1360);
+});
