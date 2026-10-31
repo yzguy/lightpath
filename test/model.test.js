@@ -268,3 +268,20 @@ test('10G DWDM preset works at 60 km and fails once dispersion passes the limit'
   assert.equal(r2.status, 'down');
   assert.match(r2.headline, /dispersion tolerance/);
 });
+
+test('fromSpans builds a working line from CSV and reports bad rows', () => {
+  const r = M.fromSpans('km,fiber,extra_db\n80,smf,1.5\n# comment\n95,G.654\n70,ull,1\n');
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.spans.length, 3);
+  assert.deepEqual(r.spans.map(s => s.fiber), ['smf', 'ull', 'ull']);
+  const S = M.sanitize(r.topo);
+  assert.equal(S.links.filter(l => l.kind === 'fiber').length, 3);
+  assert.equal(S.nodes.filter(n => n.type === 'edfa').length, 4); // booster, 2 ILAs, preamp
+  const sim = M.simulate(S);
+  assert.ok(['up', 'degraded'].includes(sim.status), sim.headline);
+  assert.ok(Math.abs(sim.km - 245) < 1);
+  const bad = M.fromSpans('80,smf\nabc,smf\n-5\n50,foo\n60,smf,99');
+  assert.equal(bad.spans.length, 1);
+  assert.equal(bad.errors.length, 4);
+  assert.equal(M.fromSpans('').topo, null);
+});

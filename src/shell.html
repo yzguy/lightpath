@@ -179,6 +179,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 #toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 20; max-width: calc(100% - 32px) }
 #io { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 30; padding: 16px }
 #io .panel { width: min(640px, 100%); padding: 14px; display: grid; gap: 10px }
+#io textarea.csv { height: 110px }
 #io textarea { width: 100%; height: 300px; font-family: var(--f-mono); font-size: 12px; background: var(--raised); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; padding: 8px }
 
 @media (pointer: coarse) {
@@ -259,4 +260,5 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 </section>
 
 <div id="toast" hidden></div>
-<div id="io" hidden><div class="panel"><h3>Export / import topology</h3><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div></div></div>
+<div id="io" hidden><div class="panel"><h3>Export / import topology</h3><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div>
+<h3>Build a line from a span list</h3><p class="muted small">One span per line: <code>km, fiber, extra loss dB</code> (fiber: smf, leaf, ull, legacy; the last two columns are optional). Replaces the canvas with TRX, mux, booster, an ILA between spans, preamp, mux, TRX.</p><textarea id="csv-text" class="csv" spellcheck="false" placeholder="km,fiber,extra_db\n80,smf,1.5\n95,smf,2\n70,ull,1"></textarea><div class="row"><select id="csv-mode"></select><button class="btn" id="csv-build">Build line</button></div></div></div>

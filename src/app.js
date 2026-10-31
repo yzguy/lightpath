@@ -356,6 +356,16 @@ $('#io-load').addEventListener('click', () => {
   catch (e) { toast('That text is not a topology export. Paste the JSON from Export.'); }
 });
 
+const csvMode = $('#csv-mode');
+Object.entries(PHY.MODES).forEach(([k, m]) => csvMode.append(el('option', { value: k, text: m.short })));
+csvMode.value = 'zrp400';
+$('#csv-build').addEventListener('click', () => {
+  const r = MODEL.fromSpans($('#csv-text').value, csvMode.value);
+  if (!r.topo) return toast(r.errors[0]);
+  S = { ...S, ...MODEL.sanitize(r.topo) }; sel = null; $('#io').hidden = true; fitView(); renderAll();
+  toast(`Built ${r.spans.length} span${r.spans.length === 1 ? '' : 's'}` + (r.errors.length ? `. ${r.errors.length} row${r.errors.length === 1 ? '' : 's'} skipped: ${r.errors[0]}` : ''));
+});
+
 // ---------- results ----------
 const STATUS = { up: 'UP', degraded: 'DEGRADED', down: 'DOWN', los: 'LOS', none: '—', nopath: 'NO PATH' };
 let tab = 'power';
