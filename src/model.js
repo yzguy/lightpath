@@ -68,6 +68,22 @@ const MODEL = (() => {
           g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
       }
     },
+    mesh: {
+      name: 'Mesh: channels on different routes', build() {
+        const ra = N('roadm', 'ROADM-A', 200, 300), rb = N('roadm', 'ROADM-B', 520, 110), rc = N('roadm', 'ROADM-C', 840, 300);
+        const ta = N('trx', 'TRX-A', 200, 440, { mode: 'zrp400' }), tc = N('trx', 'TRX-C', 840, 440, { mode: 'zrp400' });
+        // the service rides A to C directly; the others run A to B, B to C and A to C's ROADM only
+        const plan = [];
+        for (let s = 24; s < 40; s++) {
+          const k = s - 24, c = { slot: s, mode: 'zrp400', off: 0, svc: s === 31, from: '', to: '' };
+          if (!c.svc && k % 4 === 0) { c.from = ra.id; c.to = rb.id; } // A to B over the 100 km link
+          else if (!c.svc && k % 4 === 2) { c.from = rb.id; c.to = rc.id; } // B to C over the 110 km link
+          plan.push(c);
+        }
+        return { nodes: [ra, rb, rc, ta, tc], links: [L(ra, rc, 'fiber', { len: 70 }), L(ra, rb, 'fiber', { len: 100 }), L(rb, rc, 'fiber', { len: 110 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
+          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
+      }
+    },
     mxp: {
       name: 'Muxponder: 4x100G over 400G ZR+', build() {
         const a = N('mxp', 'MXP-A', 80, 220), ma = N('mux', 'MUX-A', 260, 220), ba = N('edfa', 'BST-A', 400, 220, { gmin: 5 });
@@ -293,19 +309,48 @@ const MODEL = (() => {
     return Math.max(0, 2 * u - 1) * edgeTilt / 2;
   }
 
+  // Mesh routing for a channel plan. Every channel runs between its own add and drop nodes ('' = the service's A / Z), routed over the
+  // cabled graph. loads: link id -> set of channel indices on it (the same channels light the link in both directions). hosts: the walks
+  // that have to be simulated: the service path first, then every route that is not a stretch of an earlier one. Each channel is a member
+  // of one host, with lo/hi the node positions along that host where it is added and dropped.
+  function planMesh(S, chans, path, rv) {
+    const svcA = S.svc.a, svcZ = S.svc.z, memo = new Map();
+    const routeFor = c => {
+      const ea = c.from || svcA, ez = c.to || svcZ;
+      if (c.svc || (ea === svcA && ez === svcZ)) return path;
+      const key = ea + '>' + ez;
+      if (!memo.has(key)) { const [x, y] = rv ? [ez, ea] : [ea, ez]; memo.set(key, ea === ez ? null : route(S, x, y, false) || route(S, x, y, true)); }
+      return memo.get(key);
+    };
+    const routes = chans.map(routeFor), loads = new Map();
+    routes.forEach((r, k) => { if (r) for (const id of r.links) { if (!loads.has(id)) loads.set(id, new Set()); loads.get(id).add(k); } });
+    const hosts = [{ path, members: [] }];
+    const place = (h, k) => {
+      const W = h.path.links, R = routes[k].links, find = L => { for (let t = 0; t + L.length <= W.length; t++) if (L.every((id, j) => W[t + j] === id)) return t; return -1; };
+      let t = find(R); if (t < 0) t = find(R.slice().reverse());
+      if (t < 0) return false;
+      h.members.push({ k, lo: t, hi: t + R.length }); return true;
+    };
+    routes.forEach((r, k) => { if (r === path) hosts[0].members.push({ k, lo: 0, hi: path.links.length }); });
+    routes.map((r, k) => k).filter(k => routes[k] && routes[k] !== path).sort((a, b) => routes[b].links.length - routes[a].links.length).forEach(k => {
+      if (!hosts.some(h => place(h, k))) { const h = { path: routes[k], members: [] }; hosts.push(h); place(h, k); }
+    });
+    return { routes, loads, hosts };
+  }
+
   // opts.eol: evaluate with end-of-life allowances (see PHY.EOL). The normal result carries the EoL outcome in res.eol.
   // opts.reverse: simulate Z -> A. Per-direction overrides (extraRev, ramanRev, targetRev, gainRev) apply; blank means "same as forward".
   // The forward result carries the reverse one in res.rev and its status is the worse of the two. opts.single skips the reverse run.
   const STATUS_RANK = { up: 0, degraded: 1, down: 2, nopath: 2, los: 3 };
   function simulate(S, launchOverride, opts = {}) {
-    const eol = !!opts.eol, rv = !!opts.reverse;
+    const eol = !!opts.eol, rv = !!opts.reverse, W = opts.walk || null; // W: a mesh walk, the simulation of a route other than the service's (see planMesh)
     const pd = (p, k) => (rv && p[k + 'Rev'] !== '' && p[k + 'Rev'] != null && Number.isFinite(+p[k + 'Rev']) ? p[k + 'Rev'] : p[k]);
     const { node, link, linkName } = mkGraph(S);
     const g = { ...S.g }; if (launchOverride != null) g.launch = launchOverride;
-    const A = node(rv ? S.svc.z : S.svc.a), Z = node(rv ? S.svc.a : S.svc.z);
-    if (!isEnd(A) || !isEnd(Z) || A === Z) return { status: 'none', headline: 'Pick two transponders or muxponders as the A and Z ends of a service.' };
-    const mode = PHY_.MODES[A.p.mode];
-    let path = route(S, A.id, Z.id, false), rerouteCut = false;
+    const A = node(W ? W.a : rv ? S.svc.z : S.svc.a), Z = node(W ? W.z : rv ? S.svc.a : S.svc.z);
+    if (!W && (!isEnd(A) || !isEnd(Z) || A === Z)) return { status: 'none', headline: 'Pick two transponders or muxponders as the A and Z ends of a service.' };
+    const modeKey = W ? W.svcMode : A.p.mode, mode = PHY_.MODES[modeKey];
+    let path = W ? W.path : route(S, A.id, Z.id, false), rerouteCut = false;
     if (!path) { path = route(S, A.id, Z.id, true); rerouteCut = true; }
     if (!path) return { status: 'nopath', headline: `No physical path from ${A.name} to ${Z.name}. Cable them together.` };
 
@@ -313,25 +358,21 @@ const MODEL = (() => {
     const eolTrx = Number.isFinite(+g.eolTrx) && g.eolTrx !== '' && g.eolTrx != null ? +g.eolTrx : PHY_.EOL.trxPen;
     // Channel table: the custom plan if there is one, else a contiguous block of identical channels centred in the band.
     const df = +g.df * 1e9, planOn = Array.isArray(g.plan) && g.plan.length > 0, slotsN = PHY_.cBandSlots(df);
-    const chans = buildChans(g, A.p.mode, planOn, slotsN, df);
+    const chans = buildChans(g, modeKey, planOn, slotsN, df);
     if (planOn) g.nch = chans.length;
     const svcIdx = Math.max(0, chans.findIndex(c => c.svc)), nChan = chans.length;
-    // Add/drop: each channel is lit between the path positions of its add and drop nodes ('' = the service ends). lo/hi are node indices on the path.
-    const lastPos = path.nodes.length - 1, posOf = (id, dflt) => path.nodes.indexOf(id || dflt);
-    for (const c of chans) {
-      let lo = c.svc ? 0 : posOf(c.from, path.nodes[0]), hi = c.svc ? lastPos : posOf(c.to, path.nodes[lastPos]);
-      if (lo < 0) lo = 0; if (hi < 0) hi = lastPos;
-      if (lo > hi) [lo, hi] = [hi, lo];
-      if (lo === hi) { lo = 0; hi = lastPos; }
-      c.lo = lo; c.hi = hi;
-    }
-    const maskAt = j => chans.map(c => c.lo <= j && j < c.hi), litCount = j => maskAt(j).filter(Boolean).length;
+    // Mesh: every channel has its own route; this walk follows `path`. Members are the channels that ride (a stretch of) this path,
+    // with lo/hi the node positions where they are added and dropped. Link loads count every channel on a fiber, member or not.
+    const lastPos = path.nodes.length - 1;
+    const mesh = planOn ? (W ? W.mesh : planMesh(S, chans, path, rv)) : null, members = planOn ? (W ? W.members : mesh.hosts[0].members) : [];
+    const lohi = chans.map(() => null); members.forEach(m => (lohi[m.k] = m));
+    const maskAt = j => { const set = mesh.loads.get(path.links[j]); return chans.map((_, k) => !!set && set.has(k)); }, litCount = j => maskAt(j).filter(Boolean).length;
     const nchLine = Math.max(1, +g.nch), Rs = mode.Rs;
     const reachHz = PHY_.XPM.reachGHz * 1e9, nbWeight = c => (planOn ? (c.m.coh === false ? PHY_.XPM.same : PHY_.XPM.coh) : (g.neighbors === 'coh' ? PHY_.XPM.coh : PHY_.XPM.same));
     const xpmWFor = (i, act) => (chans[i].m.coh === false ? chans.reduce((a, cj, j) => a + (j !== i && (!act || act[j]) && Math.abs(cj.f - chans[i].f) <= reachHz ? nbWeight(cj) * lin(cj.off - chans[i].off) : 0), 0) : 0);
     const ev = []; // event log replayed per channel after the loop (plan mode only)
     let curAct = planOn ? maskAt(0) : null; // channels lit at the current point of the path (plan mode)
-    const txDbm = A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx;
+    const txDbm = W && A.type === 'roadm' ? +g.launch : A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx; // a channel added at a ROADM starts at the launch level
     let mpi = 0, xpmPen = 0, P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
     const tiltSeen = []; // tilt (dB, low- minus high-frequency channel) at every amplifier input and at the receiver
     const hops = [], alarms = [];
@@ -383,7 +424,7 @@ const MODEL = (() => {
         const act = planOn ? curAct : null, full = planOn || nch === nChan, fwdF = PHY_.ramanFwdNliFactor(gf);
         // Plan mode: this channel's nonlinear noise depends on who its neighbours are (baud rate, power, distance).
         const actList = planOn ? chans.map((c, k) => (act[k] ? { f: c.f, Rs: c.Rs, P: lin(c.off), k } : null)).filter(Boolean) : null;
-        const nF = planOn ? PHY_.nliPlanFactor(fbNl, actList, actList.findIndex(c => c.k === svcIdx), df, actList.length) : 1;
+        const si = planOn ? actList.findIndex(c => c.k === svcIdx) : -1, nF = si >= 0 ? PHY_.nliPlanFactor(fbNl, actList, si, df, actList.length) : 1;
         const nNew = PHY_.etaNLI(fbNl, Lk, Rs, nch, df) * P ** 3 * fwdF * nF;
         if (mode.coh === false && nch > 1) { // cross-phase modulation from the other channels hits a direct-detection receiver
           xpmPen = Math.min(PHY_.XPM.cap, xpmPen + PHY_.xpmSpanPenalty(fbNl, Lk, 1, P, xpmWFor(svcIdx, act)));
@@ -430,7 +471,7 @@ const MODEL = (() => {
         const p = nxt.p, np = add || drop ? 1 : 2;
         if (add) nch = planOn ? litCount(i + 1) : nchLine;
         if (p.amps && !add) amp(nxt.name + ' pre', p.nf, 'auto', +g.launch + (drop ? 4 : 0), 0, 0, 35, 24, true);
-        const k = i + 1, leaving = planOn ? chans.map((c, j) => (c.hi === k && k < lastPos ? j : -1)).filter(j => j >= 0) : [], joining = planOn ? chans.map((c, j) => (c.lo === k ? j : -1)).filter(j => j >= 0) : [];
+        const k = i + 1, leaving = members.filter(m => m.hi === k && k < lastPos).map(m => m.k), joining = members.filter(m => m.lo === k).map(m => m.k);
         // Channels that leave here take the drop port (one WSS pass, the drop structure and a drop amplifier) instead of expressing through.
         if (leaving.length) { const dg = p.amps ? 4 : 0; ev.push({ k: 'D', idx: leaving, G: lin(dg), nfe: PHY_.ampNfEff(+p.nf, dg), f: lin(-(+p.wss + +p.ad)) }); }
         const b = snap(); const lo = np * +p.wss + (add || drop ? +p.ad : 0); loss(lo); passes += np; tiltSeen.push(tilt); tilt = 0;
@@ -443,11 +484,17 @@ const MODEL = (() => {
       // a transponder in the middle of a path is never traversed (route() forbids it)
     }
 
-    const res = { mode, modeKey: A.p.mode, A, Z, path, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
+    if (planOn && Z.type === 'roadm' && !losAt) { // the walk ends at a ROADM: the channels that arrive here take its drop port
+      const p = Z.p, b = snap();
+      if (p.amps) amp(Z.name + ' pre', p.nf, 'auto', +g.launch + 4, 0, 0, 35, 24, true);
+      ev.push({ k: 'D', idx: members.filter(m => m.hi === lastPos).map(m => m.k), G: 1, nfe: 0, f: lin(-(+p.wss + +p.ad)) });
+      rec(Z.name + ' drop', 'roadm', b, { gain: -(+p.wss + +p.ad), note: 'drop port' });
+    }
+    const res = { mode, modeKey, A, Z, path, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
     // Muxponder client ports: per-port optical budget plus rate aggregation into the line port.
     const clientFatal = [];
     res.clients = [];
-    if (!eol && !rv) {
+    if (!eol && !rv && !W) {
       for (const n of [A, Z].filter(x => x.type === 'mxp')) {
         const lm = PHY_.MODES[n.p.mode], ports = n.p.clients.map((c, i) => ({ idx: i + 1, ...c, ...PHY_.clientBudget(c) }));
         const total = ports.reduce((a, p) => a + p.optic.rate, 0);
@@ -465,7 +512,7 @@ const MODEL = (() => {
     }
     if (losAt) { res.status = 'los'; res.headline = `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}.`; res.prx = -Infinity; return res; }
     const prx = db(P * 1000); res.prx = prx;
-    if (prx < mode.rxMin - 12) {
+    if (prx < mode.rxMin - 12 && !W) {
       res.status = 'los'; res.headline = `LOS at ${Z.name}: ${f1(prx)} dBm is below what the receiver can detect.`;
       alarms.unshift({ sev: 'bad', text: `Rx power ${f1(prx)} dBm is far below the ${f1(mode.rxMin)} dBm sensitivity.` });
       return res;
@@ -485,7 +532,7 @@ const MODEL = (() => {
     const effEdge = PHY_.effSnr(mode, line, basePen + edgeTilt / 2), berEdge = PHY_.MODS[mode.mod].ber(effEdge);
     Object.assign(res, {
       osnr: db(P / Pase), gosnr: db(1 / (1 / snrAse + 1 / snrNli + mpi) * Rs / PHY_.BREF), snrAse, snrNli, snrRx, snrTrx, effDb: db(eff),
-      ber, q: PHY_.qFromBer(ber), qThr: PHY_.qFromBer(mode.berThr), filt, over, pmdPen, cdPen, xpmPen, req: reqOsnr(A.p.mode),
+      ber, q: PHY_.qFromBer(ber), qThr: PHY_.qFromBer(mode.berThr), filt, over, pmdPen, cdPen, xpmPen, req: reqOsnr(modeKey),
       budget: { ase: 1 / snrAse, nli: 1 / snrNli, trx: 1 / snrTrx, rx: 1 / snrRx, mpi },
     });
     res.qMargin = res.q - res.qThr; res.osnrMargin = res.gosnr - res.req;
@@ -495,7 +542,7 @@ const MODEL = (() => {
     if (planOn && !eol) {
       const N = nChan, hnb = PHY_.H * PHY_.NU * PHY_.BREF, P0 = lin(txDbm) / 1000;
       const Pc = new Array(N).fill(0), Pa = new Array(N).fill(0), Pn = new Array(N).fill(0), xp = new Array(N).fill(0), cdc = new Array(N).fill(0), dg2 = new Array(N).fill(0), psc = new Array(N).fill(0);
-      const alive = chans.map(c => c.lo === 0), fin = new Array(N).fill(null);
+      const alive = chans.map((_, i) => !!lohi[i] && lohi[i].lo === 0), fin = new Array(N).fill(null);
       chans.forEach((c, i) => { if (alive[i]) { Pc[i] = P0 * lin(c.off); Pa[i] = Pc[i] / lin(c.m.txOsnr); } });
       let sP = P0;
       const each = fn => { for (let i = 0; i < N; i++) if (alive[i]) fn(i); };
@@ -528,7 +575,8 @@ const MODEL = (() => {
       }
       for (let i = 0; i < N; i++) if (alive[i]) freeze(i);
       res.channels = chans.map((c, i) => {
-        const m = c.m, f = fin[i], prx = db(f.Pc * 1000), snrA = (f.Pc / f.Pa) * PHY_.BREF / m.Rs, snrN = f.Pn > 0 ? f.Pc / f.Pn : Infinity, snrR = lin(prx - m.rxMin + 25);
+        const m = c.m, f = fin[i]; if (!f || !lohi[i]) return null; // a member of another walk: filled in below
+        const prx = db(f.Pc * 1000), snrA = (f.Pc / f.Pa) * PHY_.BREF / m.Rs, snrN = f.Pn > 0 ? f.Pc / f.Pn : Infinity, snrR = lin(prx - m.rxMin + 25);
         const ln = 1 / (1 / snrA + 1 / snrN + 1 / snrR + mpi);
         const dgdC = Math.sqrt(f.dg2);
         const pen = f.ps * PHY_.filterPenaltyPerPass(m.Rs, df) + Math.max(0, prx - m.rxMax) * 1.5 + (dgdC / m.dgdTol) ** 2 + PHY_.cdPenalty(m, f.cd) + f.xp + tiltPenaltyFor(chans, i, edgeTilt) + agePen;
@@ -540,18 +588,27 @@ const MODEL = (() => {
         else if (bER > m.berThr) { status = 'down'; notes.push('pre-FEC BER above the FEC limit'); }
         else if (qm < 1 || prx < m.rxMin || prx > m.rxMax) { status = 'degraded'; notes.push(qm < 1 ? `only ${f1(qm)} dB of Q margin` : prx < m.rxMin ? 'Rx below the sensitivity spec' : 'Rx above the overload point'); }
         if (f.xp > 1.5) notes.push(`XPM costs ${f1(f.xp)} dB`);
-        const nm = k => (node(path.nodes[k]) || {}).name;
+        const lh = lohi[i], nm = k => (node(path.nodes[k]) || {}).name, route = path.nodes.slice(lh.lo, lh.hi + 1).map(id => (node(id) || {}).name);
         return { idx: i, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
-          from: c.from, to: c.to, fromName: nm(c.lo), toName: nm(c.hi), partial: c.lo > 0 || c.hi < lastPos };
+          from: c.from, to: c.to, fromName: nm(lh.lo), toName: nm(lh.hi), route, partial: !!W || lh.lo > 0 || lh.hi < lastPos };
       });
+      if (W) return res; // a mesh walk only reports its own channels
       res.sP = sP; res.Pend = fin[svcIdx].Pc;
-      const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los'));
+      // Channels on other routes get their own walk over the same link loads.
+      for (const h of mesh.hosts.slice(1)) {
+        const w = simulate(S, launchOverride, { single: true, reverse: rv, walk: { a: h.path.nodes[0], z: h.path.nodes[h.path.nodes.length - 1], path: h.path, members: h.members, mesh, svcMode: modeKey } });
+        for (const m of h.members) res.channels[m.k] = w.channels ? w.channels[m.k] : null;
+      }
+      res.channels = res.channels.map((c, i) => c || { idx: i, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
+        status: mesh.routes[i] ? 'los' : 'nopath', notes: [mesh.routes[i] ? 'the route crosses a cut fiber' : 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, route: [], partial: true });
+      res.linkLoad = [...mesh.loads].map(([id, set]) => ({ id, name: linkName(link(id)), n: set.size }));
+      const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los' || c.status === 'nopath'));
       if (failing.length) alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${failing.slice(0, 3).map(c => `slot ${c.slot + 1} (${c.short}): ${c.notes[0]}`).join('; ')}${failing.length > 3 ? '…' : ''}.` });
     }
-    if (!eol) { const e = simulate(S, launchOverride, { eol: true, reverse: rv }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
+    if (!eol && !W) { const e = simulate(S, launchOverride, { eol: true, reverse: rv }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
     // alarms & status
     const bad = [];
-    if (Z.p.mode !== A.p.mode) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
+    if (Z.p.mode !== modeKey) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
     if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} ${mode.coh === false ? 'dispersion tolerance' : 'DSP range'} of ${mode.cdTol} ps/nm.`);
     if (ber > mode.berThr) bad.push(`Pre-FEC BER ${ber.toExponential(2)} is above the ${mode.fec} limit ${mode.berThr.toExponential(2)}: uncorrectable errors, link down.`);
     bad.push(...clientFatal);

@@ -635,3 +635,62 @@ test('add/drop: a channel whose ROADM is not on the routed path falls back to en
   const c = M.sanitize(cut);
   assert.ok(c.g.plan.every(x => x.from === '' && x.to === ''), 'sanitize clears ids that no longer exist');
 });
+
+// ---- mesh routing: every channel has its own route ----
+test('mesh preset: channels run on their own routes and load only those fibers', () => {
+  const S = build('mesh'), r = M.simulate(S);
+  assert.equal(r.status, 'up');
+  const byRoute = k => r.channels.filter(c => c.route.join('>') === k);
+  assert.equal(byRoute('ROADM-A>ROADM-B').length, 4); assert.equal(byRoute('ROADM-B>ROADM-C').length, 4);
+  assert.equal(byRoute('TRX-A>ROADM-A>ROADM-C>TRX-C').length, 8);
+  assert.ok(r.channels.every(c => c.status === 'up' && c.prx != null));
+  const load = Object.fromEntries(r.linkLoad.map(l => [l.name, l.n]));
+  assert.deepEqual(load, { 'ROADM-A–ROADM-B': 4, 'TRX-A–ROADM-A': 8, 'ROADM-A–ROADM-C': 8, 'TRX-C–ROADM-C': 8, 'ROADM-B–ROADM-C': 4 });
+  assert.deepEqual(r.hops.filter(h => h.kind === 'span').map(h => h.nch), [8]);
+  const svc = r.channels.find(c => c.svc);
+  assert.ok(Math.abs(svc.qMargin - r.qMargin) < 1e-6 && Math.abs(svc.prx - r.prx) < 1e-6, 'the service row still equals the headline');
+  // the 110 km B to C channels have the weakest GSNR; each channel is judged on its own route
+  const g = k => byRoute(k)[0].gosnr;
+  assert.ok(g('ROADM-B>ROADM-C') < g('ROADM-A>ROADM-B') && g('ROADM-A>ROADM-B') < g('TRX-A>ROADM-A>ROADM-C>TRX-C'));
+  assert.ok(byRoute('ROADM-B>ROADM-C').every(c => c.partial));
+});
+
+test('mesh: channels elsewhere in the network lighten the service fiber, and it matters', () => {
+  const S = build('mesh'), all = clone(S);
+  all.g.plan.forEach(c => { c.from = ''; c.to = ''; }); // every channel end to end on the service route
+  const a = M.simulate(S, 3, { single: true }), b = M.simulate(all, 3, { single: true });
+  assert.deepEqual(b.hops.filter(h => h.kind === 'span').map(h => h.nch), [16]);
+  assert.ok(a.budget.nli < b.budget.nli && a.qMargin > b.qMargin);
+});
+
+test('mesh: a cut fiber reroutes the service and the other channels, and the loads pile up on the detour', () => {
+  const S = build('mesh'); S.links.find(l => l.kind === 'fiber' && l.p.len === 70).p.cut = true;
+  const r = M.simulate(S);
+  assert.deepEqual(r.path.nodes.map(id => S.nodes.find(n => n.id === id).name), ['TRX-A', 'ROADM-A', 'ROADM-B', 'ROADM-C', 'TRX-C']);
+  const load = Object.fromEntries(r.linkLoad.map(l => [l.name, l.n]));
+  assert.equal(load['ROADM-A–ROADM-B'], 12); assert.equal(load['ROADM-B–ROADM-C'], 12);
+  assert.ok(!('ROADM-A–ROADM-C' in load));
+  assert.equal(r.hops.filter(h => h.kind === 'span').length, 2);
+  assert.ok(r.channels.every(c => c.prx != null));
+});
+
+test('mesh: a channel with no route says so and does not disturb the others', () => {
+  const S = build('mesh'), ref = M.simulate(S);
+  const island = { id: 'island', type: 'roadm', name: 'ROADM-X', x: 10, y: 10, p: { wss: 6, ad: 4, amps: true, nf: 5.5 } };
+  S.nodes.push(island);
+  S.g.plan.find(c => !c.svc && !c.from).from = 'island';
+  const r = M.simulate(M.sanitize(S));
+  const lost = r.channels.filter(c => c.status === 'nopath');
+  assert.equal(lost.length, 1); assert.equal(lost[0].prx, null);
+  assert.ok(r.alarms.some(a => /failing/.test(a.text)));
+  assert.ok(Math.abs(r.qMargin - ref.qMargin) < 0.3, 'the service sees one channel less, nothing else changes');
+});
+
+test('mesh: the return direction routes every channel the other way round', () => {
+  const r = M.simulate(build('mesh'));
+  assert.ok(r.rev && r.rev.channels.length === r.channels.length);
+  assert.ok(r.rev.channels.every(c => c.status === 'up' && c.prx != null));
+  const fwd = r.channels.find(c => c.route.join('>') === 'ROADM-B>ROADM-C'), back = r.rev.channels.find(c => c.slot === fwd.slot);
+  assert.deepEqual(back.route.slice().sort(), fwd.route.slice().sort());
+  assert.ok(Math.abs(fwd.gosnr - back.gosnr) < 1.5);
+});
