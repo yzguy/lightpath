@@ -89,3 +89,11 @@ test('client optics: budget, overload, reach and LOS', () => {
   assert.ok(far.notes.some(n => /rated reach/.test(n)), 'DR4 beyond 500 m');
   for (const k in P.CLIENT_OPTICS) for (const f of ['name', 'rate', 'reach', 'att', 'tx', 'rxMin', 'rxMax']) assert.ok(P.CLIENT_OPTICS[k][f] !== undefined, `${k}.${f}`);
 });
+
+test('10G DWDM is a direct-detection mode: sane OSNR, dispersion penalty only without a DSP', () => {
+  const m = P.MODES.dwdm10, req = P.requiredOsnr(m);
+  assert.ok(req > 16 && req < 24, `required OSNR ${req}`);
+  assert.equal(m.coh, false);
+  assert.equal(P.cdPenalty(P.MODES.zr400, 2000), 0);
+  assert.ok(P.cdPenalty(m, 800) > 0 && P.cdPenalty(m, 1600) > P.cdPenalty(m, 800));
+});

@@ -16,6 +16,7 @@ const PHY = (() => {
   }
 
   const MODS = {
+    NRZ: { bits: 1, ber: s => 0.5 * erfc(Math.sqrt(s / 2)), M: 2 }, // OOK, direct detection: Q = sqrt(electrical SNR)
     QPSK: { bits: 2, ber: s => 0.5 * erfc(Math.sqrt(s / 2)), M: 4 },
     '16QAM': { bits: 4, ber: s => 0.375 * erfc(Math.sqrt(s / 10)), M: 16 },
     '64QAM': { bits: 6, ber: s => (7 / 24) * erfc(Math.sqrt(s / 42)), M: 64 },
@@ -40,6 +41,10 @@ const PHY = (() => {
       tx: 0, txOsnr: 38, rxMin: -18, rxMax: 0, cdTol: 50000, dgdTol: 30, snrTrx: 20, pen: 1.0 },
     m800: { name: '800G (DP-16QAM, 118 GBd, oFEC)', short: '800G', rate: 800, Rs: 118.2e9, mod: '16QAM', fec: 'oFEC', berThr: 2.0e-2,
       tx: -8, txOsnr: 34, rxMin: -12, rxMax: 0, cdTol: 20000, dgdTol: 10, snrTrx: 20, pen: 1.8 },
+    // Non-coherent line optic as plugged into a switch (tunable DWDM SFP+ ZR, 80 km). Direct detection with an APD: no DSP,
+    // so chromatic dispersion eats margin gradually (coh:false) and there is usually no FEC (the host may add one).
+    dwdm10: { name: '10G DWDM (NRZ, 10.3 GBd, no FEC, tunable SFP+)', short: '10G DWDM', rate: 10, Rs: 10.3125e9, mod: 'NRZ', fec: 'none', berThr: 1e-12, coh: false,
+      tx: 1, txOsnr: 35, rxMin: -23, rxMax: -7, cdTol: 1600, dgdTol: 20, snrTrx: 25, pen: 2.0 },
   };
 
   // Client-side (grey) optics for muxponder client ports. Representative IEEE / MSA values: per-lane average launch and
@@ -99,6 +104,8 @@ const PHY = (() => {
     const ap = fiber.att / (10 * Math.LOG10E), Leff = (1 - Math.exp(-ap * Lkm)) / ap;
     return 4.343 * 0.028 * (fiber.gamma / 1.3) * (PchW * nch) * Leff * ((nch - 1) * df / 1e12);
   }
+  // Direct-detection optics have no DSP: dispersion closes the eye gradually (dB of SNR penalty, ~2 dB at the rated tolerance).
+  const cdPenalty = (mode, cd) => (mode.coh === false ? 2 * (Math.abs(cd) / mode.cdTol) ** 2 : 0);
   function ampNfEff(nf, g) { return nf + (g < 14 ? 0.35 * (14 - g) : 0) + (g > 30 ? 0.2 * (g - 30) : 0); }
 
   function qFromBer(b) { b = Math.max(b, 1e-300); return 20 * Math.log10(Math.SQRT2 * erfcinv(2 * Math.min(b, 0.4999))); }
@@ -125,6 +132,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

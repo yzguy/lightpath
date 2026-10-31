@@ -7,7 +7,7 @@ const MODEL = (() => {
   const uid = p => p + Math.random().toString(36).slice(2, 7);
 
   const TYPES = {
-    trx: { label: 'Transponder', hint: 'Coherent line card / pluggable', maxLinks: 1, def: () => ({ mode: 'zr400', tx: null }) },
+    trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 1, def: () => ({ mode: 'zr400', tx: null }) },
     mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 1, def: () => ({ mode: 'zrp400', tx: null, clients: defaultClients() }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', gain: 20, nf: 5, gmin: 10, gmax: 30, pmax: 23, tiltCtl: true }) },
@@ -57,6 +57,16 @@ const MODEL = (() => {
         const pb = N('edfa', 'PRE-B', 670, 220), mb = N('mux', 'MUX-B', 810, 220), z = N('mxp', 'MXP-B', 960, 220);
         return { nodes: [a, ma, ba, pb, mb, z], links: [L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, z, 'patch')],
           g: { nch: 16, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } };
+      }
+    },
+    sfp10: {
+      name: 'Switch 10G DWDM optics over 60 km', build() {
+        const a1 = N('trx', 'SW-A1', 80, 150, { mode: 'dwdm10' }), a2 = N('trx', 'SW-A2', 80, 290, { mode: 'dwdm10' });
+        const ma = N('mux', 'MUX-A', 240, 220), ba = N('edfa', 'BST-A', 380, 220, { gmin: 3 });
+        const pb = N('edfa', 'PRE-B', 650, 220, { target: -4, gmin: 3 }), mb = N('mux', 'MUX-B', 790, 220);
+        const b1 = N('trx', 'SW-B1', 940, 150, { mode: 'dwdm10' }), b2 = N('trx', 'SW-B2', 940, 290, { mode: 'dwdm10' });
+        return { nodes: [a1, a2, ma, ba, pb, mb, b1, b2], links: [L(a1, ma, 'patch'), L(a2, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 60 }), L(pb, mb, 'patch'), L(mb, b1, 'patch'), L(mb, b2, 'patch')],
+          g: { nch: 8, df: 100, launch: 0 }, svc: { a: a1.id, z: b1.id } };
       }
     },
     dark: {
@@ -268,14 +278,14 @@ const MODEL = (() => {
     const pmdPen = (res.dgd / mode.dgdTol) ** 2;
     tiltSeen.push(tilt);
     const peakTilt = Math.max(...tiltSeen), edgeTilt = tiltSeen.reduce((a, b) => a + b, 0) / tiltSeen.length;
-    const agePen = eol ? PHY_.EOL.trxPen : 0, basePen = filt + over + pmdPen + agePen;
+    const agePen = eol ? PHY_.EOL.trxPen : 0, cdPen = PHY_.cdPenalty(mode, cd), basePen = filt + over + pmdPen + cdPen + agePen;
     const eff = PHY_.effSnr(mode, line, basePen);
     const ber = PHY_.MODS[mode.mod].ber(eff);
     // The service channel sits mid-band. The highest-frequency channel gives up half the SRS tilt to the lowest, so it is the worst one.
     const effEdge = PHY_.effSnr(mode, line, basePen + edgeTilt / 2), berEdge = PHY_.MODS[mode.mod].ber(effEdge);
     Object.assign(res, {
       osnr: db(P / Pase), gosnr: db(1 / (1 / snrAse + 1 / snrNli) * Rs / PHY_.BREF), snrAse, snrNli, snrRx, snrTrx, effDb: db(eff),
-      ber, q: PHY_.qFromBer(ber), qThr: PHY_.qFromBer(mode.berThr), filt, over, pmdPen, req: reqOsnr(A.p.mode),
+      ber, q: PHY_.qFromBer(ber), qThr: PHY_.qFromBer(mode.berThr), filt, over, pmdPen, cdPen, req: reqOsnr(A.p.mode),
       budget: { ase: 1 / snrAse, nli: 1 / snrNli, trx: 1 / snrTrx, rx: 1 / snrRx },
     });
     res.qMargin = res.q - res.qThr; res.osnrMargin = res.gosnr - res.req;
@@ -284,7 +294,7 @@ const MODEL = (() => {
     // alarms & status
     const bad = [];
     if (Z.p.mode !== A.p.mode) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
-    if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} DSP range of ${mode.cdTol} ps/nm.`);
+    if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} ${mode.coh === false ? 'dispersion tolerance' : 'DSP range'} of ${mode.cdTol} ps/nm.`);
     if (ber > mode.berThr) bad.push(`Pre-FEC BER ${ber.toExponential(2)} is above the ${mode.fec} limit ${mode.berThr.toExponential(2)}: uncorrectable errors, link down.`);
     bad.push(...clientFatal);
     bad.forEach(t => alarms.unshift({ sev: 'bad', text: t }));

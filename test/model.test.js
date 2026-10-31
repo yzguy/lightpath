@@ -258,3 +258,13 @@ test('sanitize: muxponder client ports are validated and capped', () => {
   assert.equal(M.sanitize(S).nodes.find(n => n.id === a.id).p.clients.length, 4);
   assert.ok(M.simulate(M.sanitize(S)).status);
 });
+
+test('10G DWDM preset works at 60 km and fails once dispersion passes the limit', () => {
+  const S = build('sfp10'), r = M.simulate(S);
+  assert.equal(r.status, 'up');
+  assert.ok(r.cdPen > 0 && r.cdPen < 1);
+  const L = clone(S); L.links.find(l => l.kind === 'fiber').p.len = 110; // 110 km * 17 = 1870 ps/nm > 1600
+  const r2 = M.simulate(L);
+  assert.equal(r2.status, 'down');
+  assert.match(r2.headline, /dispersion tolerance/);
+});

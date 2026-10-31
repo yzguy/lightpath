@@ -251,8 +251,8 @@ function renderInspector() {
       const m = PHY.MODES[p.mode];
       box.append(field('Tx power (dBm)', numIn(p, 'tx', 0.5, -15, 3, true, String(m.tx)), `Blank = module default ${m.tx} dBm`));
       box.append(el('div', { class: 'spec' }, [
-        specRow('Baud rate', `${(m.Rs / 1e9).toFixed(2)} GBd`), specRow('Modulation', 'DP-' + m.mod), specRow('FEC / limit', `${m.fec} · BER ${m.berThr.toExponential(2)}`),
-        specRow('Required OSNR', `${f1(reqOsnr(p.mode))} dB / 0.1 nm`), specRow('Rx window', `${m.rxMin} to ${m.rxMax} dBm`), specRow('CD tolerance', `±${m.cdTol} ps/nm`), specRow('PMD tol. (mean DGD)', `${m.dgdTol} ps`)]));
+        specRow('Baud rate', `${(m.Rs / 1e9).toFixed(2)} GBd`), specRow('Modulation', (m.coh === false ? '' : 'DP-') + m.mod), specRow('FEC / limit', `${m.fec} · BER ${m.berThr.toExponential(2)}`),
+        specRow('Required OSNR', `${f1(reqOsnr(p.mode))} dB / 0.1 nm`), specRow('Rx window', `${m.rxMin} to ${m.rxMax} dBm`), specRow('CD tolerance', `±${m.cdTol} ps/nm` + (m.coh === false ? ' (no DSP)' : '')), specRow('PMD tol. (mean DGD)', `${m.dgdTol} ps`)]));
       if (n.type === 'mxp') box.append(clientEditor(n));
       const b = el('div', { class: 'row' }, [
         el('button', { class: 'btn', text: S.svc.a === n.id ? 'This is the A end' : 'Set as A end', onclick: () => { if (S.svc.z === n.id) S.svc.z = S.svc.a; S.svc.a = n.id; renderAll(); } }),
@@ -552,23 +552,26 @@ function constView(r) {
   const wrap = el('div', { class: 'constwrap' });
   const c = el('canvas', { width: 640, height: 640, class: 'const', 'aria-label': 'Constellation diagram' });
   const m = PHY.MODS[r.mode.mod], M = m.M, side = Math.sqrt(M);
-  const pts = []; for (let i = 0; i < side; i++) for (let j = 0; j < side; j++) pts.push([(2 * i - side + 1), (2 * j - side + 1)]);
+  const ook = M === 2; // NRZ: two levels on one axis
+  const pts = []; if (ook) pts.push([-1, 0], [1, 0]); else for (let i = 0; i < side; i++) for (let j = 0; j < side; j++) pts.push([(2 * i - side + 1), (2 * j - side + 1)]);
   const Es = pts.reduce((a, p) => a + p[0] ** 2 + p[1] ** 2, 0) / M;
-  const snr = r.effDb != null ? lin(r.effDb) : 0.5, sigma = Math.sqrt(Es / snr / 2);
+  const snr = r.effDb != null ? lin(r.effDb) : 0.5, sigma = Math.sqrt(Es / snr / (ook ? 1 : 2));
   const ctx = c.getContext('2d'), cs = getComputedStyle(document.documentElement);
   const fg = cs.getPropertyValue('--ink').trim(), acc = cs.getPropertyValue('--sig').trim(), mut = cs.getPropertyValue('--line').trim();
-  const sc = 290 / side, cx = 320;
+  const sc = ook ? 150 : 290 / side, cx = 320;
   ctx.strokeStyle = mut; ctx.lineWidth = 1;
-  for (let i = 1; i < side; i++) { const v = (2 * i - side) * sc; /* decision boundaries */ ctx.beginPath(); ctx.moveTo(cx + v, 20); ctx.lineTo(cx + v, 620); ctx.moveTo(20, cx + v); ctx.lineTo(620, cx + v); ctx.stroke(); }
+  if (ook) { ctx.beginPath(); ctx.moveTo(cx, 20); ctx.lineTo(cx, 620); ctx.stroke(); }
+  else for (let i = 1; i < side; i++) { const v = (2 * i - side) * sc; /* decision boundaries */ ctx.beginPath(); ctx.moveTo(cx + v, 20); ctx.lineTo(cx + v, 620); ctx.moveTo(20, cx + v); ctx.lineTo(620, cx + v); ctx.stroke(); }
   constSeed = 7;
   ctx.fillStyle = acc; ctx.globalAlpha = 0.45;
   const n = 4000;
-  for (let k = 0; k < n; k++) { const p = pts[Math.floor(rand() * M)]; const x = cx + (p[0] + sigma * gauss()) * sc, y = cx - (p[1] + sigma * gauss()) * sc; ctx.fillRect(x - 1.6, y - 1.6, 3.2, 3.2); }
+  for (let k = 0; k < n; k++) { const p = pts[Math.floor(rand() * M)]; const x = cx + (p[0] + sigma * gauss()) * sc, y = ook ? cx + (rand() - 0.5) * 420 : cx - (p[1] + sigma * gauss()) * sc; ctx.fillRect(x - 1.6, y - 1.6, 3.2, 3.2); }
   ctx.globalAlpha = 1; ctx.fillStyle = fg;
-  pts.forEach(p => { ctx.beginPath(); ctx.arc(cx + p[0] * sc, cx - p[1] * sc, 6, 0, 7); ctx.fill(); });
+  if (!ook) pts.forEach(p => { ctx.beginPath(); ctx.arc(cx + p[0] * sc, cx - p[1] * sc, 6, 0, 7); ctx.fill(); });
+  else pts.forEach(p => ctx.fillRect(cx + p[0] * sc - 2, 20, 4, 600));
   const evm = 100 / Math.sqrt(snr);
   wrap.append(c, el('div', { class: 'constinfo' }, [
-    el('h4', { text: `DP-${r.mode.mod}, one polarization` }),
+    el('h4', { text: r.mode.coh === false ? `${r.mode.mod}: received level histogram (1 / 0)` : `DP-${r.mode.mod}, one polarization` }),
     specRow('Effective SNR', `${f1(r.effDb)} dB`), specRow('EVM (rms)', `${f1(evm)} %`), specRow('Pre-FEC BER', r.ber < 1e-15 ? '<1e-15' : r.ber.toExponential(2)), specRow('Needed at FEC limit', `${f1(PHY.requiredEffSnrDb(r.mode))} dB SNR`),
     el('p', { class: 'muted small', text: 'Each dot is a received symbol. Noise smears dots away from the ideal points (black). A dot that lands across a grid line is decoded as the wrong symbol: that is a bit error. FEC can fix errors up to its BER limit. Try raising the span length and watch the clouds merge.' })]));
   return wrap;
@@ -610,7 +613,7 @@ const LEARN = {
   edfa: ['EDFA gain and noise figure', `<p>An EDFA gives gain but adds amplified spontaneous emission (ASE). <b>Noise figure</b> is how much it degrades the SNR passing through; 3 dB is the physical floor and 5 dB is typical.</p><p>Real amps have a gain range. At low gain the NF gets worse (modelled here), and if the span is shorter than the minimum gain the output runs hot: field fix is a pad (VOA) before the amp. Total output power is shared by every channel, so adding channels lowers per-channel power once you hit the limit.</p>`],
   span: ['Span loss and power budget', `<p>Span loss = length × attenuation (≈0.2 dB/km on SMF at 1550 nm) + connectors and splices. An 80 km span is ~17 dB.</p><p>An unamplified link only works if <code>Tx power − all losses ≥ Rx sensitivity</code>. 400ZR launches −10 dBm and needs about −12 dBm, so a passive mux pair plus fiber eats the budget fast. Amplified links trade the power budget for an OSNR budget.</p>`],
   nli: ['Nonlinear effects', `<p>Glass's refractive index shifts slightly with light intensity (Kerr effect). Channels modulate each other's phase: self-phase modulation, cross-phase modulation, four-wave mixing. Coherent DSP cannot undo most of it, so it acts like noise.</p><p>It grows with launch power cubed, with more channels, and with low dispersion (old NZ-DSF is worse than SMF). Large-core fiber (G.654.E) lowers γ and helps.</p>`],
-  cd: ['Chromatic dispersion', `<p>Different wavelengths inside one channel travel at slightly different speeds (17 ps/nm/km on SMF). Coherent DSP undoes it digitally, so it costs no margin until you exceed the module's range: 400ZR handles ±2,400 ps/nm (~140 km SMF), ZR+ about 20,000.</p><p>Past that range the receiver cannot lock: link down, regardless of OSNR.</p>`],
+  cd: ['Chromatic dispersion', `<p>Different wavelengths inside one channel travel at slightly different speeds (17 ps/nm/km on SMF). Coherent DSP undoes it digitally, so it costs no margin until you exceed the module's range: 400ZR handles ±2,400 ps/nm (~140 km SMF), ZR+ about 20,000.</p><p>Past that range the receiver cannot lock: link down, regardless of OSNR.</p><p><b>Direct-detection optics</b> (a 10G tunable SFP+ in a switch) have no DSP. Dispersion closes the eye gradually, so it costs SNR long before the rated limit (about 1600 ps/nm, ~95 km of SMF) and the link drops past it. Beyond about 80 km you need dispersion compensation or a coherent optic.</p>`],
   pmd: ['PMD / DGD', `<p>The two polarizations travel at slightly different speeds because fiber is not perfectly round. Mean differential group delay grows with √length. New fiber is ~0.05 ps/√km; some 1990s fiber is 0.5 or worse.</p><p>Coherent DSP tracks it, with a penalty that grows as you approach the tolerance.</p>`],
   filter: ['Filter narrowing', `<p>Every WSS pass rounds off the edges of the passband. A 60 GBd signal in a 75 GHz slot loses a little each pass; through many ROADMs it adds up. Squeezing a 64 GBd signal into a 50 GHz grid is a big penalty.</p>`],
   rx: ['Receiver power window', `<p>Coherent receivers mix the signal with a local oscillator laser. Too little light and receiver electronics noise takes over (Rx LOW). Too much and the photodiodes and ADCs saturate (Rx HIGH, overload). Far too little is LOS.</p><p>For amplified links the usual target is the middle of the window, set with the preamp or a pad.</p>`],
