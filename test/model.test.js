@@ -642,22 +642,24 @@ test('mesh preset: channels run on their own routes and load only those fibers',
   assert.equal(r.status, 'up');
   const byRoute = k => r.channels.filter(c => c.route.join('>') === k);
   assert.equal(byRoute('ROADM-A>ROADM-B').length, 4); assert.equal(byRoute('ROADM-B>ROADM-C').length, 4);
-  assert.equal(byRoute('TRX-A>ROADM-A>ROADM-C>TRX-C').length, 8);
+  assert.equal(byRoute('ROADM-A>ROADM-B>ROADM-C').length, 3, 'forced the long way round');
+  assert.equal(byRoute('TRX-A>ROADM-A>ROADM-C>TRX-C').length, 5);
   assert.ok(r.channels.every(c => c.status === 'up' && c.prx != null));
   const load = Object.fromEntries(r.linkLoad.map(l => [l.name, l.n]));
-  assert.deepEqual(load, { 'ROADM-A–ROADM-B': 4, 'TRX-A–ROADM-A': 8, 'ROADM-A–ROADM-C': 8, 'TRX-C–ROADM-C': 8, 'ROADM-B–ROADM-C': 4 });
-  assert.deepEqual(r.hops.filter(h => h.kind === 'span').map(h => h.nch), [8]);
+  assert.deepEqual(load, { 'ROADM-A–ROADM-B': 7, 'TRX-A–ROADM-A': 5, 'ROADM-A–ROADM-C': 5, 'TRX-C–ROADM-C': 5, 'ROADM-B–ROADM-C': 7 });
+  assert.deepEqual(r.hops.filter(h => h.kind === 'span').map(h => h.nch), [5]);
   const svc = r.channels.find(c => c.svc);
   assert.ok(Math.abs(svc.qMargin - r.qMargin) < 1e-6 && Math.abs(svc.prx - r.prx) < 1e-6, 'the service row still equals the headline');
   // the 110 km B to C channels have the weakest GSNR; each channel is judged on its own route
   const g = k => byRoute(k)[0].gosnr;
   assert.ok(g('ROADM-B>ROADM-C') < g('ROADM-A>ROADM-B') && g('ROADM-A>ROADM-B') < g('TRX-A>ROADM-A>ROADM-C>TRX-C'));
+  assert.ok(g('ROADM-A>ROADM-B>ROADM-C') < g('ROADM-B>ROADM-C'), 'two spans and a ROADM in between: the worst GSNR');
   assert.ok(byRoute('ROADM-B>ROADM-C').every(c => c.partial));
 });
 
 test('mesh: channels elsewhere in the network lighten the service fiber, and it matters', () => {
   const S = build('mesh'), all = clone(S);
-  all.g.plan.forEach(c => { c.from = ''; c.to = ''; }); // every channel end to end on the service route
+  all.g.plan.forEach(c => { c.from = ''; c.to = ''; c.via = ''; }); // every channel end to end on the service route
   const a = M.simulate(S, 3, { single: true }), b = M.simulate(all, 3, { single: true });
   assert.deepEqual(b.hops.filter(h => h.kind === 'span').map(h => h.nch), [16]);
   assert.ok(a.budget.nli < b.budget.nli && a.qMargin > b.qMargin);
@@ -705,4 +707,37 @@ test('mesh: each channel reports the links and nodes of its route for the canvas
   const ab = r.channels.find(c => c.route.join('>') === 'ROADM-A>ROADM-B'), svc = r.channels.find(c => c.svc);
   assert.equal(ab.routeLinks.length, 1); assert.deepEqual(svc.routeLinks, r.path.links);
   assert.deepEqual(r.rev.channels.find(c => c.svc).routeNodes, r.rev.path.nodes, 'the return view highlights the return route');
+});
+
+test('explicit routing: a waypoint forces a channel onto a longer route and the numbers follow', () => {
+  const S = build('mesh'), ra = S.nodes.find(n => n.name === 'ROADM-A').id, rb = S.nodes.find(n => n.name === 'ROADM-B').id, rc = S.nodes.find(n => n.name === 'ROADM-C').id;
+  const mk = via => { const T = clone(S); const c = T.g.plan.find(x => x.via); c.via = via; return { T, slot: c.slot }; };
+  const direct = mk(''), around = mk(rb);
+  const d = M.simulate(direct.T).channels.find(c => c.slot === direct.slot), a = M.simulate(around.T).channels.find(c => c.slot === around.slot);
+  assert.deepEqual(d.route, ['ROADM-A', 'ROADM-C']); assert.deepEqual(a.route, ['ROADM-A', 'ROADM-B', 'ROADM-C']);
+  assert.equal(a.via, rb); assert.equal(a.routeLinks.length, 2);
+  assert.ok(a.gosnr < d.gosnr - 1.5, 'two longer spans cost GSNR');
+  // loads follow the explicit route
+  const load = Object.fromEntries(M.simulate(around.T).linkLoad.map(l => [l.name, l.n]));
+  assert.equal(load['ROADM-A–ROADM-B'], 7);
+  const loop = clone(S); const c2 = loop.g.plan.find(x => x.via); c2.via = ra; // a waypoint equal to the add node changes nothing
+  assert.deepEqual(M.simulate(loop).channels.find(c => c.slot === c2.slot).route, ['ROADM-A', 'ROADM-C']);
+  const back = clone(S); const c3 = back.g.plan.find(x => x.from === rb); c3.to = ra; c3.via = rc; // B to A the long way: B-C then C-A
+  const rr = M.simulate(M.sanitize(back)).channels.find(c => c.slot === c3.slot);
+  assert.deepEqual(rr.route, ['ROADM-B', 'ROADM-C', 'ROADM-A']);
+});
+
+test('explicit routing: sanitize keeps waypoints only on ROADMs and never on the service channel', () => {
+  const S = build('mesh'), rb = S.nodes.find(n => n.name === 'ROADM-B').id, trx = S.nodes.find(n => n.name === 'TRX-A').id;
+  const d = clone(S); d.g.plan[0].via = trx; d.g.plan[1].via = 'nope'; d.g.plan[2].via = rb; d.g.plan.find(c => c.svc).via = rb;
+  const p = M.sanitize(d).g.plan;
+  assert.equal(p[0].via, ''); assert.equal(p[1].via, ''); assert.equal(p[2].via, rb); assert.equal(p.find(c => c.svc).via, '');
+});
+
+test('explicit routing: a waypoint no route can reach says why', () => {
+  const S = build('mesh');
+  S.nodes.push({ id: 'island', type: 'roadm', name: 'ROADM-X', x: 0, y: 0, p: { wss: 6, ad: 4, amps: true, nf: 5.5 } });
+  const c = S.g.plan.find(x => !x.svc && !x.from); c.via = 'island';
+  const r = M.simulate(M.sanitize(S)), e = r.channels.find(x => x.slot === c.slot);
+  assert.equal(e.status, 'nopath'); assert.match(e.notes[0], /waypoint/);
 });

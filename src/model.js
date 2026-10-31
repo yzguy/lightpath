@@ -59,7 +59,7 @@ const MODEL = (() => {
         // slots 22..37: some run end to end, some drop at B, some are added at B
         const plan = [];
         for (let s = 22; s < 38; s++) {
-          const k = s - 22, c = { slot: s, mode: 'zrp400', off: 0, svc: s === 30, from: '', to: '' };
+          const k = s - 22, c = { slot: s, mode: 'zrp400', off: 0, svc: s === 30, from: '', to: '', via: '' };
           if (!c.svc && k % 4 === 1) c.to = rb.id; // A to B
           else if (!c.svc && k % 4 === 3) c.from = rb.id; // B to C
           plan.push(c);
@@ -72,12 +72,13 @@ const MODEL = (() => {
       name: 'Mesh: channels on different routes', build() {
         const ra = N('roadm', 'ROADM-A', 200, 300), rb = N('roadm', 'ROADM-B', 520, 110), rc = N('roadm', 'ROADM-C', 840, 300);
         const ta = N('trx', 'TRX-A', 200, 440, { mode: 'zrp400' }), tc = N('trx', 'TRX-C', 840, 440, { mode: 'zrp400' });
-        // the service rides A to C directly; the others run A to B, B to C and A to C's ROADM only
+        // the service rides A to C directly; others run A to B, B to C, or A to C the long way round via B (a diverse route)
         const plan = [];
         for (let s = 24; s < 40; s++) {
-          const k = s - 24, c = { slot: s, mode: 'zrp400', off: 0, svc: s === 31, from: '', to: '' };
+          const k = s - 24, c = { slot: s, mode: 'zrp400', off: 0, svc: s === 31, from: '', to: '', via: '' };
           if (!c.svc && k % 4 === 0) { c.from = ra.id; c.to = rb.id; } // A to B over the 100 km link
           else if (!c.svc && k % 4 === 2) { c.from = rb.id; c.to = rc.id; } // B to C over the 110 km link
+          else if (!c.svc && k % 4 === 3) { c.from = ra.id; c.to = rc.id; c.via = rb.id; } // A to C forced the long way round through B
           plan.push(c);
         }
         return { nodes: [ra, rb, rc, ta, tc], links: [L(ra, rc, 'fiber', { len: 70 }), L(ra, rb, 'fiber', { len: 100 }), L(rb, rc, 'fiber', { len: 110 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
@@ -173,19 +174,19 @@ const MODEL = (() => {
       const slot = Math.round(+c.slot);
       if (!Number.isFinite(slot) || slot < 0 || slot >= slots || seen.has(slot)) continue;
       seen.add(slot);
-      out.push({ slot, mode: PHY_.MODES[c.mode] ? c.mode : 'zrp400', off: Math.min(10, Math.max(-10, Number.isFinite(+c.off) && c.off !== '' && c.off !== null ? +c.off : 0)), svc: !!c.svc, from: nodeId(c.from), to: nodeId(c.to) });
+      out.push({ slot, mode: PHY_.MODES[c.mode] ? c.mode : 'zrp400', off: Math.min(10, Math.max(-10, Number.isFinite(+c.off) && c.off !== '' && c.off !== null ? +c.off : 0)), svc: !!c.svc, from: nodeId(c.from), to: nodeId(c.to), via: nodeId(c.via) });
       if (out.length >= 96) break;
     }
     if (!out.length) return null;
     out.sort((a, b) => a.slot - b.slot);
     const first = out.findIndex(c => c.svc);
-    out.forEach((c, i) => { c.svc = i === (first >= 0 ? first : Math.floor(out.length / 2)); if (c.svc || c.from === c.to) { if (c.svc) c.from = c.to = ''; else c.to = ''; } });
+    out.forEach((c, i) => { c.svc = i === (first >= 0 ? first : Math.floor(out.length / 2)); if (c.svc || c.from === c.to) { if (c.svc) c.from = c.to = ''; else c.to = ''; } if (c.svc) c.via = ''; });
     return out;
   }
   // Turn the uniform line into an editable plan: the same block of channels, service in the middle.
   function planFromUniform(g, svcMode) {
     const df = +g.df * 1e9, ch = buildChans(g, svcMode, false, PHY_.cBandSlots(df), df);
-    return ch.map(c => ({ slot: c.slot, mode: c.mode, off: 0, svc: c.svc, from: '', to: '' }));
+    return ch.map(c => ({ slot: c.slot, mode: c.mode, off: 0, svc: c.svc, from: '', to: '', via: '' }));
   }
   // The same plan on a different grid: each channel keeps its frequency, collisions drop.
   function remapPlan(plan, oldDf, newDf) {
@@ -244,7 +245,7 @@ const MODEL = (() => {
     const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', plan: null,
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))) };
     g.plan = sanitizePlan(gi.plan, g.df);
-    if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; }); }
+    if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)), roadms = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; if (!roadms.has(c.via)) c.via = ''; }); }
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
     const svc = { a: seen.has(si.a) ? si.a : null, z: seen.has(si.z) ? si.z : null };
     return { nodes, links, g, svc };
@@ -294,11 +295,11 @@ const MODEL = (() => {
   function buildChans(g, svcKey, planOn, slotsN, df) {
     let list;
     if (planOn) {
-      list = g.plan.map(c => ({ slot: +c.slot, mode: c.svc ? svcKey : c.mode, off: Number.isFinite(+c.off) ? +c.off : 0, svc: !!c.svc, from: c.svc ? '' : c.from || '', to: c.svc ? '' : c.to || '' }));
+      list = g.plan.map(c => ({ slot: +c.slot, mode: c.svc ? svcKey : c.mode, off: Number.isFinite(+c.off) ? +c.off : 0, svc: !!c.svc, from: c.svc ? '' : c.from || '', to: c.svc ? '' : c.to || '', via: c.svc ? '' : c.via || '' }));
       if (!list.some(c => c.svc)) list[Math.floor(list.length / 2)].svc = true;
     } else {
       const n = Math.max(1, Math.round(+g.nch)), start = Math.floor(Math.max(0, slotsN - n) / 2), mid = Math.floor(n / 2);
-      list = Array.from({ length: n }, (_, i) => ({ slot: start + i, mode: svcKey, off: 0, svc: i === mid, from: '', to: '' }));
+      list = Array.from({ length: n }, (_, i) => ({ slot: start + i, mode: svcKey, off: 0, svc: i === mid, from: '', to: '', via: '' }));
     }
     return list.map((c, i) => { const m = PHY_.MODES[c.mode] || PHY_.MODES[svcKey], fTHz = PHY_.slotFreqTHz(c.slot, df); return { ...c, idx: i, m, mode: PHY_.MODES[c.mode] ? c.mode : svcKey, Rs: m.Rs, fTHz, f: fTHz * 1e12 }; });
   }
@@ -316,12 +317,24 @@ const MODEL = (() => {
   function planMesh(S, chans, path, rv) {
     const svcA = S.svc.a, svcZ = S.svc.z, memo = new Map();
     const routeFor = c => {
-      const ea = c.from || svcA, ez = c.to || svcZ;
-      if (c.svc || (ea === svcA && ez === svcZ)) return path;
-      const key = ea + '>' + ez;
-      if (!memo.has(key)) { const [x, y] = rv ? [ez, ea] : [ea, ez]; memo.set(key, ea === ez ? null : route(S, x, y, false) || route(S, x, y, true)); }
-      return memo.get(key);
+      const ea = c.from || svcA, ez = c.to || svcZ, via = c.svc ? '' : c.via || '';
+      if (c.svc || (ea === svcA && ez === svcZ && !via)) return path;
+      const key = ea + '>' + via + '>' + ez;
+      if (!memo.has(key)) {
+        const [x, y] = rv ? [ez, ea] : [ea, ez], leg = (p, q) => route(S, p, q, false) || route(S, p, q, true);
+        let r = null, why = ea === ez ? 'its add and drop nodes are the same' : '';
+        if (!why) {
+          if (!via) r = leg(x, y);
+          else if (via === x || via === y) r = leg(x, y);
+          else { const r1 = leg(x, via), r2 = leg(via, y); if (r1 && r2) r = { nodes: [...r1.nodes, ...r2.nodes.slice(1)], links: [...r1.links, ...r2.links] }; }
+          if (r && (new Set(r.nodes).size !== r.nodes.length || new Set(r.links).size !== r.links.length)) { why = 'a route through that waypoint would revisit a node or fiber'; r = null; }
+          else if (!r) why = via ? 'no route through that waypoint' : 'no route between its add and drop nodes';
+        }
+        memo.set(key, { r, why });
+      }
+      const m = memo.get(key); why[c.idx] = m.why; return m.r;
     };
+    const why = [];
     const routes = chans.map(routeFor), loads = new Map();
     routes.forEach((r, k) => { if (r) for (const id of r.links) { if (!loads.has(id)) loads.set(id, new Set()); loads.get(id).add(k); } });
     const hosts = [{ path, members: [] }];
@@ -335,7 +348,7 @@ const MODEL = (() => {
     routes.map((r, k) => k).filter(k => routes[k] && routes[k] !== path).sort((a, b) => routes[b].links.length - routes[a].links.length).forEach(k => {
       if (!hosts.some(h => place(h, k))) { const h = { path: routes[k], members: [] }; hosts.push(h); place(h, k); }
     });
-    return { routes, loads, hosts };
+    return { routes, loads, hosts, why };
   }
 
   // opts.eol: evaluate with end-of-life allowances (see PHY.EOL). The normal result carries the EoL outcome in res.eol.
@@ -590,7 +603,7 @@ const MODEL = (() => {
         if (f.xp > 1.5) notes.push(`XPM costs ${f1(f.xp)} dB`);
         const lh = lohi[i], nm = k => (node(path.nodes[k]) || {}).name, route = path.nodes.slice(lh.lo, lh.hi + 1).map(id => (node(id) || {}).name);
         return { idx: i, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
-          from: c.from, to: c.to, fromName: nm(lh.lo), toName: nm(lh.hi), route, routeLinks: path.links.slice(lh.lo, lh.hi), routeNodes: path.nodes.slice(lh.lo, lh.hi + 1), partial: !!W || lh.lo > 0 || lh.hi < lastPos };
+          from: c.from, to: c.to, via: c.via, fromName: nm(lh.lo), toName: nm(lh.hi), route, routeLinks: path.links.slice(lh.lo, lh.hi), routeNodes: path.nodes.slice(lh.lo, lh.hi + 1), partial: !!W || lh.lo > 0 || lh.hi < lastPos };
       });
       if (W) return res; // a mesh walk only reports its own channels
       res.sP = sP; res.Pend = fin[svcIdx].Pc;
@@ -600,7 +613,7 @@ const MODEL = (() => {
         for (const m of h.members) res.channels[m.k] = w.channels ? w.channels[m.k] : null;
       }
       res.channels = res.channels.map((c, i) => c || { idx: i, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
-        status: mesh.routes[i] ? 'los' : 'nopath', notes: [mesh.routes[i] ? 'the route crosses a cut fiber' : 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, route: [], routeLinks: [], routeNodes: [], partial: true });
+        status: mesh.routes[i] ? 'los' : 'nopath', notes: [mesh.routes[i] ? 'the route crosses a cut fiber' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
       res.linkLoad = [...mesh.loads].map(([id, set]) => ({ id, name: linkName(link(id)), n: set.size }));
       const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los' || c.status === 'nopath'));
       if (failing.length) alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${failing.slice(0, 3).map(c => `slot ${c.slot + 1} (${c.short}): ${c.notes[0]}`).join('; ')}${failing.length > 3 ? '…' : ''}.` });
