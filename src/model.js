@@ -10,7 +10,7 @@ const MODEL = (() => {
     trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 1, def: () => ({ mode: 'zr400', tx: null }) },
     mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 1, def: () => ({ mode: 'zrp400', tx: null, clients: defaultClients() }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
-    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', gain: 20, nf: 5, gmin: 10, gmax: 30, pmax: 23, tiltCtl: true }) },
+    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, gmin: 10, gmax: 30, pmax: 23, tiltCtl: true }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
     dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, il: 7 }) },
     voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
@@ -19,7 +19,7 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, nch: '', raman: 0, cut: false } : { il: 0.5, cut: false });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', cut: false } : { il: 0.5, cut: false });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -29,7 +29,7 @@ const MODEL = (() => {
       name: 'DCI: 400ZR over 80 km', build() {
         const a1 = N('trx', 'TRX-A1', 80, 120), a2 = N('trx', 'TRX-A2', 80, 220), a3 = N('trx', 'TRX-A3', 80, 320);
         const ma = N('mux', 'MUX-A', 230, 220), ba = N('edfa', 'BST-A', 370, 220, { gmin: 5 });
-        const pb = N('edfa', 'PRE-B', 640, 220), mb = N('mux', 'MUX-B', 780, 220);
+        const pb = N('edfa', 'PRE-B', 640, 220, { gmin: 5 }), mb = N('mux', 'MUX-B', 780, 220);
         const b1 = N('trx', 'TRX-B1', 930, 120), b2 = N('trx', 'TRX-B2', 930, 220), b3 = N('trx', 'TRX-B3', 930, 320);
         return { nodes: [a1, a2, a3, ma, ba, pb, mb, b1, b2, b3], links: [L(a1, ma, 'patch'), L(a2, ma, 'patch'), L(a3, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, b1, 'patch'), L(mb, b2, 'patch'), L(mb, b3, 'patch')],
           g: { nch: 16, df: 75, launch: 0 }, svc: { a: a1.id, z: b1.id } };
@@ -39,7 +39,7 @@ const MODEL = (() => {
       name: 'Long haul: 5 spans with ILAs', build() {
         const a = N('trx', 'TRX-A', 60, 120, { mode: 'zrp400' }), ma = N('mux', 'MUX-A', 60, 250), ba = N('edfa', 'BST-A', 220, 250, { gmin: 5 });
         const i1 = N('edfa', 'ILA-1', 400, 250), i2 = N('edfa', 'ILA-2', 580, 250), i3 = N('edfa', 'ILA-3', 760, 250), i4 = N('edfa', 'ILA-4', 940, 250);
-        const pb = N('edfa', 'PRE-B', 1120, 250), mb = N('mux', 'MUX-B', 1260, 250), z = N('trx', 'TRX-Z', 1260, 120, { mode: 'zrp400' });
+        const pb = N('edfa', 'PRE-B', 1120, 250, { gmin: 5 }), mb = N('mux', 'MUX-B', 1260, 250), z = N('trx', 'TRX-Z', 1260, 120, { mode: 'zrp400' });
         return { nodes: [a, ma, ba, i1, i2, i3, i4, pb, mb, z], links: [L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, i1, 'fiber', { len: 80 }), L(i1, i2, 'fiber', { len: 95 }), L(i2, i3, 'fiber', { len: 80 }), L(i3, i4, 'fiber', { len: 100 }), L(i4, pb, 'fiber', { len: 85 }), L(pb, mb, 'patch'), L(mb, z, 'patch')],
           g: { nch: 64, df: 75, launch: 1 }, svc: { a: a.id, z: z.id } };
       }
@@ -55,7 +55,7 @@ const MODEL = (() => {
     mxp: {
       name: 'Muxponder: 4x100G over 400G ZR+', build() {
         const a = N('mxp', 'MXP-A', 80, 220), ma = N('mux', 'MUX-A', 260, 220), ba = N('edfa', 'BST-A', 400, 220, { gmin: 5 });
-        const pb = N('edfa', 'PRE-B', 670, 220), mb = N('mux', 'MUX-B', 810, 220), z = N('mxp', 'MXP-B', 960, 220);
+        const pb = N('edfa', 'PRE-B', 670, 220, { gmin: 5 }), mb = N('mux', 'MUX-B', 810, 220), z = N('mxp', 'MXP-B', 960, 220);
         return { nodes: [a, ma, ba, pb, mb, z], links: [L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, z, 'patch')],
           g: { nch: 16, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } };
       }
@@ -63,8 +63,8 @@ const MODEL = (() => {
     sfp10: {
       name: 'Switch 10G DWDM optics over 60 km', build() {
         const a1 = N('trx', 'SW-A1', 80, 150, { mode: 'dwdm10' }), a2 = N('trx', 'SW-A2', 80, 290, { mode: 'dwdm10' });
-        const ma = N('mux', 'MUX-A', 240, 220), ba = N('edfa', 'BST-A', 380, 220, { gmin: 3 });
-        const pb = N('edfa', 'PRE-B', 650, 220, { target: -4, gmin: 3 }), mb = N('mux', 'MUX-B', 790, 220);
+        const ma = N('mux', 'MUX-A', 240, 220), ba = N('edfa', 'BST-A', 380, 220, { gmin: 3, targetRev: -4 });
+        const pb = N('edfa', 'PRE-B', 650, 220, { target: -4, targetRev: 0, gmin: 0 }), mb = N('mux', 'MUX-B', 790, 220);
         const b1 = N('trx', 'SW-B1', 940, 150, { mode: 'dwdm10' }), b2 = N('trx', 'SW-B2', 940, 290, { mode: 'dwdm10' });
         return { nodes: [a1, a2, ma, ba, pb, mb, b1, b2], links: [L(a1, ma, 'patch'), L(a2, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 60 }), L(pb, mb, 'patch'), L(mb, b1, 'patch'), L(mb, b2, 'patch')],
           g: { nch: 8, df: 100, launch: 0 }, svc: { a: a1.id, z: b1.id } };
@@ -72,8 +72,8 @@ const MODEL = (() => {
     },
     sfp10dcm: {
       name: 'Switch 10G over 120 km with a DCM', build() {
-        const a1 = N('trx', 'SW-A1', 80, 220, { mode: 'dwdm10f' }), ma = N('mux', 'MUX-A', 230, 220), ba = N('edfa', 'BST-A', 370, 220, { gmin: 3 });
-        const pb = N('edfa', 'PRE-B', 640, 220, { target: 2, gmin: 3 }), dc = N('dcm', 'DCM-B', 780, 220, { cd: -1360, il: 7 }), mb = N('mux', 'MUX-B', 920, 220), b1 = N('trx', 'SW-B1', 1060, 220, { mode: 'dwdm10f' });
+        const a1 = N('trx', 'SW-A1', 80, 220, { mode: 'dwdm10f' }), ma = N('mux', 'MUX-A', 230, 220), ba = N('edfa', 'BST-A', 370, 220, { gmin: 3, targetRev: -4 });
+        const pb = N('edfa', 'PRE-B', 640, 220, { target: 2, targetRev: 0, gmin: 0 }), dc = N('dcm', 'DCM-B', 780, 220, { cd: -1360, il: 7 }), mb = N('mux', 'MUX-B', 920, 220), b1 = N('trx', 'SW-B1', 1060, 220, { mode: 'dwdm10f' });
         return { nodes: [a1, ma, ba, pb, dc, mb, b1], links: [L(a1, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 120 }), L(pb, dc, 'patch'), L(dc, mb, 'patch'), L(mb, b1, 'patch')],
           g: { nch: 8, df: 100, launch: 0 }, svc: { a: a1.id, z: b1.id } };
       }
@@ -145,7 +145,7 @@ const MODEL = (() => {
       }
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
-      if (n.type === 'edfa' && !(p.target === '' || p.target === null || Number.isFinite(+p.target))) p.target = '';
+      if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
       seen.add(n.id);
       nodes.push({ id: n.id, type: n.type, name: String(n.name ?? n.id), x: Number.isFinite(+n.x) ? +n.x : 0, y: Number.isFinite(+n.y) ? +n.y : 0, p });
     }
@@ -154,6 +154,7 @@ const MODEL = (() => {
       if (!l || typeof l.id !== 'string' || lseen.has(l.id) || !seen.has(l.a) || !seen.has(l.b) || l.a === l.b) continue;
       const kind = l.kind === 'fiber' ? 'fiber' : 'patch', p = fill(linkDefaults(kind), l.p);
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
+      if (kind === 'fiber') for (const k of ['extraRev', 'ramanRev']) if (!(p[k] === '' || (Number.isFinite(+p[k]) && p[k] !== null && +p[k] >= 0))) p[k] = '';
       if (kind === 'fiber') p.raman = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +p.raman || 0));
       if (kind === 'fiber' && !(p.nch === '' || (Number.isFinite(+p.nch) && +p.nch >= 1))) p.nch = '';
       lseen.add(l.id);
@@ -207,11 +208,15 @@ const MODEL = (() => {
   const reqOsnr = k => (reqCache[k] ??= PHY_.requiredOsnr(PHY_.MODES[k]));
 
   // opts.eol: evaluate with end-of-life allowances (see PHY.EOL). The normal result carries the EoL outcome in res.eol.
+  // opts.reverse: simulate Z -> A. Per-direction overrides (extraRev, ramanRev, targetRev, gainRev) apply; blank means "same as forward".
+  // The forward result carries the reverse one in res.rev and its status is the worse of the two. opts.single skips the reverse run.
+  const STATUS_RANK = { up: 0, degraded: 1, down: 2, los: 3 };
   function simulate(S, launchOverride, opts = {}) {
-    const eol = !!opts.eol;
+    const eol = !!opts.eol, rv = !!opts.reverse;
+    const pd = (p, k) => (rv && p[k + 'Rev'] !== '' && p[k + 'Rev'] != null && Number.isFinite(+p[k + 'Rev']) ? p[k + 'Rev'] : p[k]);
     const { node, link, linkName } = mkGraph(S);
     const g = { ...S.g }; if (launchOverride != null) g.launch = launchOverride;
-    const A = node(S.svc.a), Z = node(S.svc.z);
+    const A = node(rv ? S.svc.z : S.svc.a), Z = node(rv ? S.svc.a : S.svc.z);
     if (!isEnd(A) || !isEnd(Z) || A === Z) return { status: 'none', headline: 'Pick two transponders or muxponders as the A and Z ends of a service.' };
     const mode = PHY_.MODES[A.p.mode];
     let path = route(S, A.id, Z.id, false), rerouteCut = false;
@@ -259,8 +264,8 @@ const MODEL = (() => {
         // Per-span loading: from this fiber onward (until a mux or ROADM changes it) only this many channels are lit.
         if (l.p.nch !== '' && l.p.nch != null) nch = Math.min(96, Math.max(1, Math.round(+l.p.nch)));
         maxNch = Math.max(maxNch, nch);
-        const sl = fb.att * Lk + +l.p.extra + (eol ? eolSpan : 0);
-        const pump = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +l.p.raman || 0)), gr = PHY_.ramanGain(fb, Lk, pump);
+        const sl = fb.att * Lk + +pd(l.p, 'extra') + (eol ? eolSpan : 0);
+        const pump = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +pd(l.p, 'raman') || 0)), gr = PHY_.ramanGain(fb, Lk, pump);
         // Raman lifts the power profile along the span, so the fiber looks less lossy to the nonlinearity.
         const fbNl = gr > 0 ? { ...fb, att: Math.max(0.05, (fb.att * Lk - gr) / Lk) } : fb;
         Pnli += PHY_.etaNLI(fbNl, Lk, Rs, nch, df) * P ** 3;
@@ -276,11 +281,11 @@ const MODEL = (() => {
         cd += fb.D * Lk; dgd2 += fb.pmd ** 2 * Lk; km += Lk;
         rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: gr - sl, len: Lk, launch: b.sig, ...(gr > 0 ? { raman: gr, note: `Raman pump ${pump} mW: +${gr.toFixed(1)} dB on-off gain` } : {}) });
         if (pump > PHY_.RAMAN.warnMw) alarms.push({ sev: 'warn', text: `${linkName(l)}: ${pump} mW Raman pump is a Class 4 laser. Check connector cleanliness (fiber-fuse risk) and eye safety.` });
-        if (gr > 0 && !eol && +l.p.raman > PHY_.RAMAN.maxMw) alarms.push({ sev: 'info', text: `${linkName(l)}: pump limited to ${PHY_.RAMAN.maxMw} mW.` });
+        if (gr > 0 && !eol && !rv && +l.p.raman > PHY_.RAMAN.maxMw) alarms.push({ sev: 'info', text: `${linkName(l)}: pump limited to ${PHY_.RAMAN.maxMw} mW.` });
       }
       if (i + 1 === path.links.length) break;
       const t = nxt.type, nnext = node(path.nodes[i + 2]);
-      const target = nxt.p.target === '' || nxt.p.target == null ? +g.launch : +nxt.p.target;
+      const tv = pd(nxt.p, 'target'), target = tv === '' || tv == null ? +g.launch : +tv;
       if (t === 'mux') {
         const joins = isEnd(prv), drops = isEnd(nnext);
         const b = snap(); loss(+nxt.p.il);
@@ -289,7 +294,7 @@ const MODEL = (() => {
         rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
       } else if (t === 'dcm') { const b = snap(); loss(+nxt.p.il); cd += +nxt.p.cd; dgd2 += 1; rec(nxt.name, 'dcm', b, { gain: -nxt.p.il, note: `${+nxt.p.cd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
-      else if (t === 'edfa') { amp(nxt.name, nxt.p.nf, nxt.p.ctl, target, nxt.p.gain, +nxt.p.gmin, +nxt.p.gmax, +nxt.p.pmax, nxt.p.tiltCtl !== false); }
+      else if (t === 'edfa') { amp(nxt.name, nxt.p.nf, nxt.p.ctl, target, pd(nxt.p, 'gain'), +nxt.p.gmin, +nxt.p.gmax, +nxt.p.pmax, nxt.p.tiltCtl !== false); }
       else if (t === 'roadm') {
         const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
@@ -307,7 +312,7 @@ const MODEL = (() => {
     // Muxponder client ports: per-port optical budget plus rate aggregation into the line port.
     const clientFatal = [];
     res.clients = [];
-    if (!eol) {
+    if (!eol && !rv) {
       for (const n of [A, Z].filter(x => x.type === 'mxp')) {
         const lm = PHY_.MODES[n.p.mode], ports = n.p.clients.map((c, i) => ({ idx: i + 1, ...c, ...PHY_.clientBudget(c) }));
         const total = ports.reduce((a, p) => a + p.optic.rate, 0);
@@ -350,7 +355,7 @@ const MODEL = (() => {
     });
     res.qMargin = res.q - res.qThr; res.osnrMargin = res.gosnr - res.req;
     res.tilt = peakTilt; res.worstQMargin = PHY_.qFromBer(berEdge) - res.qThr;
-    if (!eol) { const e = simulate(S, launchOverride, { eol: true }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
+    if (!eol) { const e = simulate(S, launchOverride, { eol: true, reverse: rv }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
     // alarms & status
     const bad = [];
     if (Z.p.mode !== A.p.mode) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
@@ -370,6 +375,17 @@ const MODEL = (() => {
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }
     else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. Aging or a dirty connector will take it down.` : 'Up, with alarms to look at.'; }
     else { res.status = 'up'; res.headline = `Up with ${f1(res.qMargin)} dB Q margin.`; }
+    if (!eol && !rv && !opts.single) {
+      const r2 = simulate(S, launchOverride, { reverse: true });
+      res.rev = r2;
+      if (r2.mode) {
+        const seen = new Set(res.alarms.map(a => a.text));
+        r2.alarms.filter(a => a.sev !== 'info' && !seen.has(a.text)).forEach(a => res.alarms.push({ ...a, text: `${Z.name} to ${A.name}: ${a.text}` }));
+        if ((STATUS_RANK[r2.status] ?? 0) > (STATUS_RANK[res.status] ?? 0)) { res.status = r2.status; res.headline = `${Z.name} to ${A.name}: ${r2.headline}`; }
+        else if (res.status === 'up' && r2.status === 'degraded') { res.status = 'degraded'; res.headline = `${Z.name} to ${A.name}: ${r2.headline}`; }
+      }
+    }
+    res.reverse = rv;
     return res;
   }
 

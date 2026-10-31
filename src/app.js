@@ -34,7 +34,7 @@ const node = id => S.nodes.find(n => n.id === id);
 const link = id => S.links.find(l => l.id === id);
 const linksOf = id => S.links.filter(l => l.a === id || l.b === id);
 const linkName = l => MODEL.mkGraph(S).linkName(l);
-const simulate = launchOverride => MODEL.simulate(S, launchOverride);
+const simulate = (launchOverride, opts) => MODEL.simulate(S, launchOverride, opts);
 const reqOsnr = MODEL.reqOsnr;
 
 // ---------- canvas ----------
@@ -88,9 +88,11 @@ function nodeShape(n) {
   return g;
 }
 let lastRes = null;
+let dir = 'fwd'; // which direction the results panel shows: forward (A to Z) or return (Z to A)
+const view = () => (dir === 'rev' && lastRes && lastRes.rev && lastRes.rev.mode ? lastRes.rev : lastRes);
 function renderCanvas() {
   gRoot.innerHTML = '';
-  const onPath = new Set(lastRes && lastRes.path ? lastRes.path.links : []);
+  const vr = view(), onPath = new Set(vr && vr.path ? vr.path.links : []);
   const lg = sv('g'), ng = sv('g'), og = sv('g');
   for (const l of S.links) {
     const a = node(l.a), b = node(l.b); if (!a || !b) continue;
@@ -98,9 +100,9 @@ function renderCanvas() {
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'hit' }));
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'wire' }));
     if (onPath.has(l.id)) {
-      const ri = lastRes.path.links.indexOf(l.id), from = node(lastRes.path.nodes[ri]);
+      const ri = vr.path.links.indexOf(l.id), from = node(vr.path.nodes[ri]);
       const rev = from.id !== a.id;
-      og.append(sv('line', { x1: rev ? b.x : a.x, y1: rev ? b.y : a.y, x2: rev ? a.x : b.x, y2: rev ? a.y : b.y, class: 'lightpath ' + (lastRes.status || '') }));
+      og.append(sv('line', { x1: rev ? b.x : a.x, y1: rev ? b.y : a.y, x2: rev ? a.x : b.x, y2: rev ? a.y : b.y, class: 'lightpath ' + (vr.status || '') }));
     }
     if (l.kind === 'fiber' || l.p.cut) {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
@@ -268,8 +270,8 @@ function renderInspector() {
       box.append(field('Insertion loss (dB)', numIn(p, 'il', 0.1, 0, 15), 'Typical 40/48 ch AWG or thin-film: 4–6 dB per pass'));
     } else if (n.type === 'edfa') {
       box.append(field('Gain control', selIn(p, 'ctl', [['auto', 'Auto: hit output target'], ['fixed', 'Fixed gain']])));
-      if (p.ctl === 'auto') box.append(field('Output target (dBm/ch)', numIn(p, 'target', 0.5, -10, 10, true, String(S.g.launch)), 'Blank = follow the global launch power'));
-      else box.append(field('Gain (dB)', numIn(p, 'gain', 0.5, 0, 40)));
+      if (p.ctl === 'auto') box.append(field('Output target (dBm/ch)', numIn(p, 'target', 0.5, -10, 10, true, String(S.g.launch)), 'Blank = follow the global launch power'), field('Same, return direction (dBm/ch)', numIn(p, 'targetRev', 0.5, -10, 10, true, p.target === '' ? String(S.g.launch) : String(p.target)), 'Z to A. A line amp is really two amps, one per direction: a booster in one is a preamp in the other. Blank = same as forward.'));
+      else box.append(field('Gain (dB)', numIn(p, 'gain', 0.5, 0, 40)), field('Same, return direction (dB)', numIn(p, 'gainRev', 0.5, 0, 40, true, String(p.gain)), 'Z to A. Blank = same as forward.'));
       box.append(field('Noise figure (dB)', numIn(p, 'nf', 0.1, 3, 12), 'Quantum limit is 3 dB. Real EDFAs: 4.5–6 dB'));
       box.append(field('Gain range min / max (dB)', el('div', { class: 'pair' }, [numIn(p, 'gmin', 1, 0, 40), numIn(p, 'gmax', 1, 0, 40)])));
       box.append(field('Max total output (dBm)', numIn(p, 'pmax', 0.5, 10, 30), 'Shared by every channel in the fiber'));
@@ -297,11 +299,14 @@ function renderInspector() {
       box.append(field('Length (km)', numIn(l.p, 'len', 1, 0, 300)));
       box.append(field('Fiber type', selIn(l.p, 'fiber', Object.entries(PHY.FIBERS).map(([k, f]) => [k, f.name]))));
       box.append(field('Connector + splice loss (dB)', numIn(l.p, 'extra', 0.1, 0, 20), 'Dirty connector? Add 1–3 dB here'));
+      box.append(field('Same, return direction (dB)', numIn(l.p, 'extraRev', 0.1, 0, 20, true, String(l.p.extra)), 'Z to A. Blank = same as forward. Bidirectional lines have two fibers; a dirty connector on one hurts one direction.'));
       box.append(field('Channels lit on this span', numIn(l.p, 'nch', 1, 1, 96, true, String(S.g.nch)), 'Blank = global. Applies from this span until a mux or ROADM changes it. Fewer neighbours means less nonlinearity.'));
       const fb = PHY.FIBERS[l.p.fiber];
       box.append(field('Raman pump, backward (mW)', numIn(l.p, 'raman', 50, 0, PHY.RAMAN.maxMw), '0 = off. Distributed gain along the fiber: better OSNR than a lumped amp at the end, but more nonlinearity and a Class 4 laser above ~1 W.'));
-      const gr = PHY.ramanGain(fb, +l.p.len, Math.min(PHY.RAMAN.maxMw, +l.p.raman || 0));
-      if (gr > 0) box.append(el('p', { class: 'muted small', text: `On-off Raman gain about ${f1(gr)} dB, net span loss ${f1(fb.att * l.p.len + +l.p.extra - gr)} dB.` }));
+      box.append(field('Raman pump, return direction (mW)', numIn(l.p, 'ramanRev', 50, 0, PHY.RAMAN.maxMw, true, String(l.p.raman)), 'Blank = same as forward.'));
+      const rn = el('p', { class: 'muted small' });
+      const upd = () => { const gr = PHY.ramanGain(fb, +l.p.len, Math.min(PHY.RAMAN.maxMw, +l.p.raman || 0)); rn.textContent = gr > 0 ? `On-off Raman gain about ${f1(gr)} dB, net span loss ${f1(fb.att * l.p.len + +l.p.extra - gr)} dB.` : ''; rn.hidden = !(gr > 0); };
+      box.querySelector('#f-raman').addEventListener('input', upd); upd(); box.append(rn);
       box.append(el('div', { class: 'spec' }, [specRow('Attenuation', `${fb.att} dB/km`), specRow('Span loss', `${f1(fb.att * l.p.len + +l.p.extra)} dB`), specRow('Dispersion', `${fb.D} ps/nm/km → ${Math.round(fb.D * l.p.len)} ps/nm`), specRow('PMD', `${fb.pmd} ps/√km`), specRow('Nonlinear γ', `${fb.gamma} /W/km`)]));
     } else {
       if (l.p.il == null) l.p.il = linkDefaults('patch').il;
@@ -386,7 +391,14 @@ function tile(label, val, unit, topic, cls = '') {
   return el('button', { class: 'kpi ' + cls, onclick: () => learn(topic), title: 'Explain ' + label }, [el('span', { class: 'kl', text: label }), el('span', { class: 'kv' }, [document.createTextNode(val), el('small', { text: unit })])]);
 }
 function renderResults() {
-  const r = lastRes; const box = $('#results');
+  const box = $('#results');
+  const sw = $('#dirsw'); sw.innerHTML = '';
+  sw.hidden = !(lastRes && lastRes.rev && lastRes.rev.mode);
+  if (sw.hidden) dir = 'fwd';
+  if (!sw.hidden) {
+    [['fwd', lastRes.A, lastRes.Z], ['rev', lastRes.Z, lastRes.A]].forEach(([k, a, z]) => sw.append(el('button', { class: 'chip', 'aria-pressed': dir === k, text: `${a.name} → ${z.name}`, title: 'Show this direction in the results', onclick: () => { dir = k; renderCanvas(); renderResults(); } })));
+  }
+  const r = view();
   // service selectors
   const trx = S.nodes.filter(isEnd);
   for (const [id, key] of [['#svc-a', 'a'], ['#svc-z', 'z']]) {
@@ -394,8 +406,8 @@ function renderResults() {
     trx.forEach(n => s.append(el('option', { value: n.id, text: n.name })));
     s.value = node(S.svc[key]) ? S.svc[key] : '';
   }
-  $('#status').className = 'status s-' + r.status; $('#status').textContent = STATUS[r.status];
-  $('#headline').textContent = r.headline;
+  $('#status').className = 'status s-' + lastRes.status; $('#status').textContent = STATUS[lastRes.status];
+  $('#headline').textContent = lastRes.headline;
   const k = $('#kpis'); k.innerHTML = '';
   if (!r.mode) { $('#tabbody').innerHTML = ''; $('#alarms').innerHTML = ''; renderTabBody(); return; }
   const m = r.mode;
@@ -442,7 +454,7 @@ $('#svc-swap').addEventListener('click', () => { [S.svc.a, S.svc.z] = [S.svc.z, 
 function renderTabBody() {
   document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === tab));
   const b = $('#tabbody'); b.innerHTML = '';
-  const r = lastRes;
+  const r = view();
   if (tab === 'learn') return b.append(learnView());
   if (!r || !r.hops) return b.append(el('p', { class: 'muted pad', text: r ? r.headline : '' }));
   if (tab === 'power') b.append(powerChart(r));
@@ -603,7 +615,7 @@ function constView(r) {
 // launch sweep
 function sweepChart(r) {
   const W = 900, H = 300, ml = 46, mr = 16, mt = 16, mb = 40, lo = -8, hi = 8;
-  const pts = []; for (let p = lo; p <= hi + 1e-9; p += 0.25) { const q = simulate(p); if (q.gosnr != null) pts.push({ p, g: q.gosnr, o: q.osnr, qm: q.qMargin }); }
+  const pts = []; for (let p = lo; p <= hi + 1e-9; p += 0.25) { const q = simulate(p, { single: true, reverse: dir === 'rev' }); if (q.gosnr != null) pts.push({ p, g: q.gosnr, o: q.osnr, qm: q.qMargin }); }
   const wrap = el('div', { class: 'chartwrap' });
   if (pts.length < 3) { wrap.append(el('p', { class: 'muted pad', text: 'No signal at the receiver, so there is nothing to sweep.' })); return wrap; }
   const ys = pts.flatMap(p => [p.g, Math.min(p.o, p.g + 12)]).concat([r.req]);
@@ -643,6 +655,7 @@ const LEARN = {
   client: ['Client ports and muxponders', `<p>A <b>transponder</b> carries one client signal over one coherent line port. A <b>muxponder</b> aggregates several client ports (for example 4 × 100GbE) into one line port (for example 400G ZR+). The line port is what the DWDM system sees. Everything upstream of it (host router, client optics) is a separate, short, grey-optics link.</p><p>Each client port has its own power budget: Tx power minus fiber and connector loss must land inside the module's Rx window. Too little and the client link is down. Too much (a long-reach optic on a short jumper) overloads the receiver and needs a pad. Running past rated reach adds dispersion penalty the model only flags.</p><p>The clients must also fit the line rate. 400ZR itself carries a single 400GbE client; OpenZR+ and OTN-based line modes can multiplex 100G and 200G clients.</p>`],
   srs: ['SRS tilt', `<p><b>Stimulated Raman scattering</b>: light in the fiber acts as a weak Raman pump, so high-frequency (short-wavelength) channels give power to low-frequency ones. With a full C-band load at +1 dBm per channel it is worth roughly 1 dB of tilt per 80 km span, growing with total power, span length and occupied bandwidth.</p><p>Amplifiers with gain-tilt control (and ROADM WSSs) re-flatten the band, so tilt does not pile up. Switch tilt control off on the long-haul scenario to watch it accumulate. The service channel sits mid-band and barely moves, so the <i>worst channel</i> Q margin tracks the highest-frequency channel, which ends up weakest. The model is a first-order approximation, not a measurement.</p>`],
   raman: ['Raman amplification', `<p>A <b>Raman pump</b> at the receiving end (about 1450 nm, backward) transfers power to the signal along the fiber itself. Unlike an EDFA, the gain is <i>distributed</i>: the signal is boosted before it has fallen as far, so less ASE-limited OSNR is lost. A 1 W pump gives roughly 15 dB of on-off gain on 80-110 km of SMF.</p><p>The trade-off: the signal stays stronger for longer, which raises nonlinear noise, and above ~1 W the pump is a Class 4 laser (eye safety, fiber fuse on a dirty connector). Here the benefit is modelled as a lumped amplifier sitting late in the span (about 40% of the on-off gain counts as OSNR benefit) with a 4.5 dB equivalent noise figure. Pump depletion, multi-pump flattening, double Rayleigh scattering and pump-to-signal RIN are not modelled.</p><p>Set it on a fiber span in the inspector. Try 110 km with 0, 500 and 1000 mW and watch ASE and NLI move in opposite directions in the "What is eating the SNR" bar.</p>`],
+  bidi: ['Two directions', `<p>A DWDM line is really <b>two</b> fibers (or two wavelength bands on one) carrying traffic in opposite directions, with <b>one amplifier per direction</b>. A box labelled "BST-A" holds the booster for A to Z and the preamp for Z to A. The results panel shows both: pick the direction with the buttons by the status pill. The service status is the worse of the two.</p><p>Directions differ when one fiber has a dirtier connector, a different loss, a different Raman pump, or an amplifier that is set up for the other direction. Cable-wise a transmitter's launch and a receiver's input both depend on which role the amplifier plays, so an amp tuned as a booster is often wrong as a preamp: use the "return direction" fields on amplifiers and fibers.</p><p>Not modelled: counter-propagating nonlinear interaction (negligible), and different fiber routes per direction.</p>`],
   aging: ['End-of-life margin', `<p>Links are planned for the day they are worst, not the day they are lit. <b>End of life</b> here adds extra loss on every fiber span (splices from repairs, connector wear, fiber ageing; 1.0 dB by default) and a transceiver ageing penalty (0.5 dB by default). Both are editable in the inspector when nothing is selected. It then re-runs the whole simulation.</p><p>A link with a few dB of margin today can have none left at end of life. The "works today but fails at end of life" alarm is the early warning. Typical planning margin is 2-3 dB.</p>`],
   launch: ['Launch power', `<p>The per-channel power put into each span. Too low: amplifier noise dominates. Too high: nonlinearity dominates. Somewhere in between (often 0 to +2 dBm/ch for 60 GBd on SMF) GSNR peaks. Open the Launch sweep tab to see your link's curve.</p>`],
 };

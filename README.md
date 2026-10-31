@@ -29,6 +29,7 @@ No dependencies, no bundler. (The page asks Google Fonts for Archivo and IBM Ple
 - **ASE:** each EDFA adds `NF · hν · G · B_ref` (B_ref = 12.5 GHz, 0.1 nm), giving the familiar `OSNR ≈ 58 + P_in − NF` per amp. NF rises when gain is run below ~14 dB.
 - **Nonlinear interference:** closed-form incoherent GN model (Poggiolini), the same family of physics used by TIP's [GNPy](https://github.com/Telecominfraproject/oopt-gnpy). `P_NLI = η · P³` per span, with η depending on γ, effective length, β₂, baud rate, channel count and spacing.
 - **Transceivers:** each mode has a back-to-back SNR ceiling and an implementation penalty, tuned so required OSNR lands near real values (400ZR ≈ 23 dB, 400G ZR+ ≈ 22 dB, 100G DP-QPSK ≈ 11.6 dB). BER from Gray-coded M-QAM formulas; Q = 20·log10(√2·erfc⁻¹(2·BER)).
+- **Two directions:** every service is simulated both ways (A to Z and Z to A). The service status is the worse of the two, and buttons by the status pill switch every result view to either direction. Fibers have a separate return-direction connector loss and Raman pump, and amplifiers a separate return-direction output target or gain, because an amplifier box is a booster in one direction and a preamp in the other. Blank means "same as forward".
 - **Raman amplification:** each fiber span can carry a backward Raman pump (0 to 1500 mW). On-off gain follows pump power, effective length and fiber γ; ASE benefit is modelled as a lumped amplifier placed late in the span (about 40% of the gain counts), with a 4.5 dB equivalent noise figure, and nonlinear noise rises because the span looks less lossy. Alarm above 1 W. Pump depletion, multi-pump flattening and double Rayleigh scattering are not modelled.
 - **End-of-life allowances:** the extra loss per span (default 1.0 dB) and transceiver ageing (default 0.5 dB) behind the end-of-life margin are editable in the inspector when nothing is selected.
 - **Span list import:** Export / import has a "Build a line from a span list" box. Paste `km, fiber, extra loss dB` rows (for example from an OTDR or planning sheet) and it builds TRX, mux, booster, an ILA between spans, preamp, mux and TRX, with bad rows reported.
@@ -46,6 +47,6 @@ No dependencies, no bundler. (The page asks Google Fonts for Archivo and IBM Ple
 
 ## Ideas for next steps
 
-- Bidirectional links and per-direction amp settings
+- Different fiber routes per direction, and per-direction gain limits
 - Raman refinements: pump depletion, multi-pump gain flattening, forward pumping
 - Cross-phase modulation for 10G channels beside coherent ones

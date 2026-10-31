@@ -337,3 +337,36 @@ test('sanitize clamps the Raman pump and defaults old topologies to off', () => 
   delete f.p.raman; assert.equal(M.sanitize(S).links.find(l => l.kind === 'fiber').p.raman, 0);
   f.p.raman = 'junk'; assert.equal(M.sanitize(S).links.find(l => l.kind === 'fiber').p.raman, 0);
 });
+
+test('both directions are simulated; symmetric lines match, per-direction settings only move one way', () => {
+  const S = build('dci'), r = M.simulate(S);
+  assert.ok(r.rev && r.rev.reverse === true);
+  assert.equal(r.rev.A.id, S.svc.z); // reverse transmits from Z
+  assert.ok(Math.abs(r.rev.qMargin - r.qMargin) < 0.5, 'symmetric line, near-equal margin');
+  assert.equal(M.simulate(S, undefined, { single: true }).rev, undefined);
+
+  const dirty = clone(S); dirty.links.find(l => l.kind === 'fiber').p.extraRev = 14; // dirty connector on the return fiber only
+  const d = M.simulate(dirty);
+  assert.ok(Math.abs(d.qMargin - r.qMargin) < 1e-9, 'forward direction unchanged');
+  assert.ok(d.rev.qMargin < r.rev.qMargin - 1, 'reverse direction worse');
+  assert.notEqual(d.status, 'up');
+  assert.match(d.headline, /to TRX-A1/); // reported as the worse direction
+
+  const amp = clone(S); amp.nodes.find(n => n.name === 'PRE-B').p.targetRev = -8; // reverse booster launches low
+  const a = M.simulate(amp);
+  assert.ok(Math.abs(a.qMargin - r.qMargin) < 1e-9);
+  assert.ok(a.rev.osnr < r.rev.osnr - 1);
+});
+
+test('a one-way fiber problem takes the whole service down and sanitize cleans per-direction fields', () => {
+  const S = build('dci'); S.links.find(l => l.kind === 'fiber').p.extraRev = 30;
+  const r = M.simulate(S);
+  assert.equal(r.rev.status !== 'up', true);
+  assert.ok(['down', 'los', 'degraded'].includes(r.status));
+  const bad = build('dci'); const f = bad.links.find(l => l.kind === 'fiber'); f.p.extraRev = 'x'; f.p.ramanRev = -5;
+  bad.nodes.find(n => n.type === 'edfa').p.targetRev = 'junk';
+  const c = M.sanitize(bad);
+  assert.equal(c.links.find(l => l.kind === 'fiber').p.extraRev, '');
+  assert.equal(c.links.find(l => l.kind === 'fiber').p.ramanRev, '');
+  assert.equal(c.nodes.find(n => n.type === 'edfa').p.targetRev, '');
+});

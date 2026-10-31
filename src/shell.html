@@ -170,6 +170,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 .constinfo { display: grid; gap: 4px; max-width: 46ch } .constinfo div { display: flex; justify-content: space-between } .constinfo span { color: var(--muted) } .constinfo b { font-family: var(--f-mono); font-weight: 500 }
 .learn { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 20px; padding-top: 8px }
 .lnav { display: flex; flex-direction: column; gap: 3px }
+#dirsw { display: inline-flex; gap: 2px }
 .chip { text-align: left; background: none; border: 1px solid transparent; border-radius: 5px; padding: 5px 8px; cursor: pointer; color: var(--muted) }
 .chip[aria-pressed=true] { background: var(--raised); border-color: var(--line); color: var(--ink); font-weight: 600 }
 .learn article { max-width: 66ch; line-height: 1.55 }
@@ -243,6 +244,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <label for="svc-a">Service A <select id="svc-a"></select></label>
     <button class="btn" id="svc-swap" title="Swap direction">⇄</button>
     <label for="svc-z">Z <select id="svc-z"></select></label>
+    <span id="dirsw" role="group" aria-label="Direction shown" hidden></span>
     <span id="status" class="status"></span>
     <span id="headline"></span>
   </div>
