@@ -160,7 +160,8 @@ const MODEL = (() => {
     }
     const gi = o.g && typeof o.g === 'object' ? o.g : {};
     const num = (v, d) => (Number.isFinite(+v) && v !== '' && v !== null ? +v : d);
-    const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0) };
+    const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0),
+      eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))) };
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
     const svc = { a: seen.has(si.a) ? si.a : null, z: seen.has(si.z) ? si.z : null };
     return { nodes, links, g, svc };
@@ -216,6 +217,8 @@ const MODEL = (() => {
     if (!path) { path = route(S, A.id, Z.id, true); rerouteCut = true; }
     if (!path) return { status: 'nopath', headline: `No physical path from ${A.name} to ${Z.name}. Cable them together.` };
 
+    const eolSpan = Number.isFinite(+g.eolSpan) && g.eolSpan !== '' && g.eolSpan != null ? +g.eolSpan : PHY_.EOL.spanLoss;
+    const eolTrx = Number.isFinite(+g.eolTrx) && g.eolTrx !== '' && g.eolTrx != null ? +g.eolTrx : PHY_.EOL.trxPen;
     const nchLine = Math.max(1, +g.nch), df = +g.df * 1e9, Rs = mode.Rs;
     const txDbm = A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx;
     let P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
@@ -257,7 +260,7 @@ const MODEL = (() => {
         maxNch = Math.max(maxNch, nch);
         Pnli += PHY_.etaNLI(fb, Lk, Rs, nch, df) * P ** 3;
         tilt += PHY_.srsTilt(fb, Lk, P, nch, df);
-        const sl = fb.att * Lk + +l.p.extra + (eol ? PHY_.EOL.spanLoss : 0);
+        const sl = fb.att * Lk + +l.p.extra + (eol ? eolSpan : 0);
         loss(sl); cd += fb.D * Lk; dgd2 += fb.pmd ** 2 * Lk; km += Lk;
         rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: -sl, len: Lk, launch: b.sig });
       }
@@ -321,7 +324,7 @@ const MODEL = (() => {
     const pmdPen = (res.dgd / mode.dgdTol) ** 2;
     tiltSeen.push(tilt);
     const peakTilt = Math.max(...tiltSeen), edgeTilt = tiltSeen.reduce((a, b) => a + b, 0) / tiltSeen.length;
-    const agePen = eol ? PHY_.EOL.trxPen : 0, cdPen = PHY_.cdPenalty(mode, cd), basePen = filt + over + pmdPen + cdPen + agePen;
+    const agePen = eol ? eolTrx : 0, cdPen = PHY_.cdPenalty(mode, cd), basePen = filt + over + pmdPen + cdPen + agePen;
     const eff = PHY_.effSnr(mode, line, basePen);
     const ber = PHY_.MODS[mode.mod].ber(eff);
     // The service channel sits mid-band. The highest-frequency channel gives up half the SRS tilt to the lowest, so it is the worst one.
@@ -347,7 +350,7 @@ const MODEL = (() => {
     const slots = PHY_.cBandSlots(df);
     if (Math.max(maxNch, nchLine) > slots) alarms.push({ sev: 'warn', text: `${Math.max(maxNch, nchLine)} channels do not fit the C-band on a ${g.df} GHz grid (${slots} slots). Reduce channels or use a finer grid.` });
     if (Rs > df) alarms.push({ sev: 'warn', text: `${mode.short} occupies ~${Math.round(Rs / 1e9 * 1.1)} GHz but the grid slot is ${g.df} GHz. Filters clip it and neighbours overlap.` });
-    if (!eol && res.qMargin >= 0 && res.eol.qMargin < 0) alarms.push({ sev: 'warn', text: `Works today but fails at end of life: Q margin falls to ${f1(res.eol.qMargin)} dB with ${PHY_.EOL.spanLoss} dB of extra loss per span and ${PHY_.EOL.trxPen} dB of transceiver ageing.` });
+    if (!eol && res.qMargin >= 0 && res.eol.qMargin < 0) alarms.push({ sev: 'warn', text: `Works today but fails at end of life: Q margin falls to ${f1(res.eol.qMargin)} dB with ${eolSpan} dB of extra loss per span and ${eolTrx} dB of transceiver ageing.` });
     if (res.qMargin >= 0 && res.worstQMargin < 0) alarms.push({ sev: 'warn', text: `SRS tilt of up to ${f1(peakTilt)} dB leaves the highest-frequency channel with ${f1(res.worstQMargin)} dB of Q margin while the middle channel still passes. Turn on amplifier tilt control or add a ROADM to re-equalise.` });
     if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber.' });
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }

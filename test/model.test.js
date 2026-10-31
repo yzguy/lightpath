@@ -108,7 +108,7 @@ test('sanitize: drops junk, fills defaults, keeps valid data', () => {
   assert.deepEqual([v.name, v.x, v.y, v.p.att], ['7', 0, 0, 5]);
   assert.equal(c.nodes[0].p.mode, 'zr400');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.fiber, 'smf');
-  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5 });
+  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, eolSpan: 1, eolTrx: 0.5 });
   assert.deepEqual(c.svc, { a: null, z: S.svc.z });
   assert.ok(M.simulate(c).status); // and the cleaned topology simulates without throwing
 });
@@ -301,4 +301,16 @@ test('a DCM rescues a 10G optic past its dispersion limit; host FEC adds margin'
 test('sanitize keeps DCM devices and defaults bad values', () => {
   const S = build('sfp10dcm'); S.nodes.find(n => n.type === 'dcm').p.cd = 'junk';
   assert.equal(M.sanitize(S).nodes.find(n => n.type === 'dcm').p.cd, -1360);
+});
+
+test('end-of-life allowances are configurable and sanitized', () => {
+  const S = build('dci'), base = M.simulate(S).eol.qMargin;
+  const hard = clone(S); hard.g.eolSpan = 3; hard.g.eolTrx = 1.5;
+  assert.ok(M.simulate(hard).eol.qMargin < base);
+  const none = clone(S); none.g.eolSpan = 0; none.g.eolTrx = 0;
+  const rn = M.simulate(none);
+  assert.ok(Math.abs(rn.eol.qMargin - rn.qMargin) < 1e-6); // no allowance: end of life equals today
+  const bad = clone(S); bad.g.eolSpan = 99; bad.g.eolTrx = 'x';
+  const g = M.sanitize(bad).g;
+  assert.equal(g.eolSpan, 5); assert.equal(g.eolTrx, 0.5);
 });
