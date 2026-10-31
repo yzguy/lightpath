@@ -659,7 +659,7 @@ test('mesh preset: channels run on their own routes and load only those fibers',
 
 test('mesh: channels elsewhere in the network lighten the service fiber, and it matters', () => {
   const S = build('mesh'), all = clone(S);
-  all.g.plan.forEach(c => { c.from = ''; c.to = ''; c.via = ''; }); // every channel end to end on the service route
+  all.g.plan.forEach((c, k) => { c.from = ''; c.to = ''; c.via = ''; c.slot = 20 + k; }); // every channel end to end on the service route, one slot each
   const a = M.simulate(S, 3, { single: true }), b = M.simulate(all, 3, { single: true });
   assert.deepEqual(b.hops.filter(h => h.kind === 'span').map(h => h.nch), [16]);
   assert.ok(a.budget.nli < b.budget.nli && a.qMargin > b.qMargin);
@@ -692,7 +692,7 @@ test('mesh: the return direction routes every channel the other way round', () =
   const r = M.simulate(build('mesh'));
   assert.ok(r.rev && r.rev.channels.length === r.channels.length);
   assert.ok(r.rev.channels.every(c => c.status === 'up' && c.prx != null));
-  const fwd = r.channels.find(c => c.route.join('>') === 'ROADM-B>ROADM-C'), back = r.rev.channels.find(c => c.slot === fwd.slot);
+  const fwd = r.channels.find(c => c.route.join('>') === 'ROADM-B>ROADM-C'), back = r.rev.channels[fwd.idx];
   assert.deepEqual(back.route.slice().sort(), fwd.route.slice().sort());
   assert.ok(Math.abs(fwd.gosnr - back.gosnr) < 1.5);
 });
@@ -711,19 +711,19 @@ test('mesh: each channel reports the links and nodes of its route for the canvas
 
 test('explicit routing: a waypoint forces a channel onto a longer route and the numbers follow', () => {
   const S = build('mesh'), ra = S.nodes.find(n => n.name === 'ROADM-A').id, rb = S.nodes.find(n => n.name === 'ROADM-B').id, rc = S.nodes.find(n => n.name === 'ROADM-C').id;
-  const mk = via => { const T = clone(S); const c = T.g.plan.find(x => x.via); c.via = via; return { T, slot: c.slot }; };
+  const mk = via => { const T = clone(S); const k = T.g.plan.findIndex(x => x.via); T.g.plan[k].via = via; return { T, k }; };
   const direct = mk(''), around = mk(rb);
-  const d = M.simulate(direct.T).channels.find(c => c.slot === direct.slot), a = M.simulate(around.T).channels.find(c => c.slot === around.slot);
+  const d = M.simulate(direct.T).channels[direct.k], a = M.simulate(around.T).channels[around.k];
   assert.deepEqual(d.route, ['ROADM-A', 'ROADM-C']); assert.deepEqual(a.route, ['ROADM-A', 'ROADM-B', 'ROADM-C']);
   assert.equal(a.via, rb); assert.equal(a.routeLinks.length, 2);
   assert.ok(a.gosnr < d.gosnr - 1.5, 'two longer spans cost GSNR');
   // loads follow the explicit route
   const load = Object.fromEntries(M.simulate(around.T).linkLoad.map(l => [l.name, l.n]));
   assert.equal(load['ROADM-A–ROADM-B'], 7);
-  const loop = clone(S); const c2 = loop.g.plan.find(x => x.via); c2.via = ra; // a waypoint equal to the add node changes nothing
-  assert.deepEqual(M.simulate(loop).channels.find(c => c.slot === c2.slot).route, ['ROADM-A', 'ROADM-C']);
-  const back = clone(S); const c3 = back.g.plan.find(x => x.from === rb); c3.to = ra; c3.via = rc; // B to A the long way: B-C then C-A
-  const rr = M.simulate(M.sanitize(back)).channels.find(c => c.slot === c3.slot);
+  const loop = clone(S); const k2 = loop.g.plan.findIndex(x => x.via), c2 = loop.g.plan[k2]; c2.via = ra; // a waypoint equal to the add node changes nothing
+  assert.deepEqual(M.simulate(loop).channels[k2].route, ['ROADM-A', 'ROADM-C']);
+  const back = clone(S); const k3 = back.g.plan.findIndex(x => x.from === rb), c3 = back.g.plan[k3]; c3.to = ra; c3.via = rc; // B to A the long way: B-C then C-A
+  const rr = M.simulate(back).channels[k3];
   assert.deepEqual(rr.route, ['ROADM-B', 'ROADM-C', 'ROADM-A']);
 });
 
@@ -740,4 +740,71 @@ test('explicit routing: a waypoint no route can reach says why', () => {
   const c = S.g.plan.find(x => !x.svc && !x.from); c.via = 'island';
   const r = M.simulate(M.sanitize(S)), e = r.channels.find(x => x.slot === c.slot);
   assert.equal(e.status, 'nopath'); assert.match(e.notes[0], /waypoint/);
+});
+
+// ---- wavelength assignment: slot reuse, blocking, first-fit ----
+test('wavelength reuse: channels on routes that share no fiber can use the same slot', () => {
+  const S = build('mesh'), r = M.simulate(S);
+  const slots = S.g.plan.map(c => c.slot);
+  assert.ok(new Set(slots).size < slots.length, 'the A-B and B-C channels reuse slots');
+  assert.ok(r.channels.every(c => c.status === 'up'), 'no blocking');
+  const s24 = r.channels.filter(c => c.slot === 24);
+  assert.equal(s24.length, 2); assert.notDeepEqual(s24[0].route, s24[1].route);
+  // sanitize keeps same-slot channels on different routes and drops exact duplicates
+  const d = clone(S); d.g.plan.push({ ...d.g.plan[0] });
+  assert.equal(M.sanitize(d).g.plan.length, S.g.plan.length);
+  assert.equal(M.sanitize(S).g.plan.length, S.g.plan.length);
+});
+
+test('wavelength blocking: two channels in one slot on a shared fiber cannot both be lit', () => {
+  const S = build('mesh'), rc = S.nodes.find(n => n.name === 'ROADM-C').id;
+  // a B to C channel moved into slot 29, which a via-B channel already uses on the same B-C fiber; the earlier one in the plan wins
+  const bc = S.g.plan.findIndex(c => c.slot === 24 && c.to === rc && !c.via);
+  S.g.plan[bc].slot = 29;
+  const r = M.simulate(S);
+  const blocked = r.channels.filter(c => c.status === 'blocked');
+  assert.equal(blocked.length, 1);
+  assert.equal(blocked[0].slot, 29); assert.ok(S.g.plan[blocked[0].idx].via, 'the later channel (the long way round) is the one blocked');
+  assert.equal(blocked[0].prx, null); assert.match(blocked[0].notes[0], /already lit on .* by another channel/);
+  assert.equal(r.channels[bc].status, 'up');
+  assert.ok(r.alarms.some(a => /failing/.test(a.text)));
+  const load = Object.fromEntries(r.linkLoad.map(l => [l.name, l.n]));
+  assert.equal(load['ROADM-B–ROADM-C'], 6, 'a blocked channel is not on the fiber');
+});
+
+test('wavelength blocking: the service has priority over every other channel', () => {
+  const S = build('mesh'), svcSlot = S.g.plan.find(c => c.svc).slot;
+  const other = S.g.plan.find(c => !c.svc && !c.from && !c.via);
+  other.slot = svcSlot; // an end-to-end channel on the service's own slot and fiber
+  const r = M.simulate(S);
+  assert.equal(r.channels.filter(c => c.status === 'blocked').length, 1);
+  assert.equal(r.channels.find(c => c.svc).status, 'up');
+  assert.ok(r.channels[S.g.plan.indexOf(other)].status === 'blocked');
+  assert.ok(r.status === 'degraded' || r.status === 'up');
+  assert.equal(r.hops.filter(h => h.kind === 'span')[0].nch, 4, 'the blocked channel does not load the service fiber');
+});
+
+test('first-fit assignment: reuses slots across disjoint routes and clears every conflict', () => {
+  const S = build('mesh');
+  S.g.plan.forEach((c, k) => { c.slot = 10 + k; }); // spread over 16 different slots
+  const svcSlot = S.g.plan.find(c => c.svc).slot;
+  const plan = M.assignSlots(S);
+  assert.equal(plan.length, 16);
+  assert.equal(plan.find(c => c.svc).slot, svcSlot, 'the service keeps its slot');
+  const used = new Set(plan.map(c => c.slot));
+  assert.ok(used.size <= 12, `disjoint routes share slots: ${used.size} slots for 16 channels`);
+  assert.ok(Math.min(...used) === 0, 'first fit packs from the bottom');
+  S.g.plan = plan;
+  const r = M.simulate(S);
+  assert.ok(r.channels.every(c => c.status === 'up'), 'no channel blocked');
+  // idempotent
+  assert.deepEqual(M.assignSlots(S).map(c => c.slot), plan.map(c => c.slot));
+});
+
+test('first-fit assignment: channels that all cross one fiber need a slot each', () => {
+  const S = build('mesh');
+  S.g.plan.forEach(c => { c.from = ''; c.to = ''; c.via = ''; });
+  const plan = M.assignSlots(S);
+  assert.equal(new Set(plan.map(c => c.slot)).size, plan.length);
+  assert.equal(M.assignSlots({ ...build('dci') }), null, 'no plan, nothing to assign');
 });

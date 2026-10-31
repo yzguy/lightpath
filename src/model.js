@@ -72,15 +72,14 @@ const MODEL = (() => {
       name: 'Mesh: channels on different routes', build() {
         const ra = N('roadm', 'ROADM-A', 200, 300), rb = N('roadm', 'ROADM-B', 520, 110), rc = N('roadm', 'ROADM-C', 840, 300);
         const ta = N('trx', 'TRX-A', 200, 440, { mode: 'zrp400' }), tc = N('trx', 'TRX-C', 840, 440, { mode: 'zrp400' });
-        // the service rides A to C directly; others run A to B, B to C, or A to C the long way round via B (a diverse route)
-        const plan = [];
-        for (let s = 24; s < 40; s++) {
-          const k = s - 24, c = { slot: s, mode: 'zrp400', off: 0, svc: s === 31, from: '', to: '', via: '' };
-          if (!c.svc && k % 4 === 0) { c.from = ra.id; c.to = rb.id; } // A to B over the 100 km link
-          else if (!c.svc && k % 4 === 2) { c.from = rb.id; c.to = rc.id; } // B to C over the 110 km link
-          else if (!c.svc && k % 4 === 3) { c.from = ra.id; c.to = rc.id; c.via = rb.id; } // A to C forced the long way round through B
-          plan.push(c);
-        }
+        // The service rides A to C directly; others run A to B, B to C, or A to C the long way round via B (a diverse route).
+        // The A-B and B-C channels share no fiber, so they reuse the same four slots; the long-way channels cross both fibers and need their own.
+        const plan = [], ch = (slot, o = {}) => plan.push({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', ...o });
+        for (let k = 0; k < 4; k++) { ch(24 + k, { from: ra.id, to: rb.id }); ch(24 + k, { from: rb.id, to: rc.id }); }
+        for (let k = 0; k < 3; k++) ch(28 + k, { from: ra.id, to: rc.id, via: rb.id });
+        ch(31, { svc: true });
+        for (let k = 0; k < 4; k++) ch(32 + k);
+        plan.sort((a, b) => a.slot - b.slot);
         return { nodes: [ra, rb, rc, ta, tc], links: [L(ra, rc, 'fiber', { len: 70 }), L(ra, rb, 'fiber', { len: 100 }), L(rb, rc, 'fiber', { len: 110 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
           g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
       }
@@ -164,7 +163,8 @@ const MODEL = (() => {
   }
 
   // ---------- channel plan ----------
-  // g.plan = null (identical channels, g.nch of them) or [{ slot, mode, off (dB vs the service), svc }]. Slots index the C-band grid.
+  // g.plan = null (identical channels, g.nch of them) or [{ slot, mode, off (dB vs the service), svc, from, to, via }]. Slots index the C-band grid.
+  // A slot can be used by several channels as long as their routes share no fiber (wavelength reuse); on a shared fiber the later one is blocked.
   const nodeId = v => (typeof v === 'string' && /^[\w-]{1,40}$/.test(v) ? v : '');
   function sanitizePlan(p, df) {
     if (!Array.isArray(p) || !p.length) return null;
@@ -172,8 +172,9 @@ const MODEL = (() => {
     for (const c of p) {
       if (!c || typeof c !== 'object') continue;
       const slot = Math.round(+c.slot);
-      if (!Number.isFinite(slot) || slot < 0 || slot >= slots || seen.has(slot)) continue;
-      seen.add(slot);
+      const key = slot + '|' + nodeId(c.from) + '|' + nodeId(c.to) + '|' + nodeId(c.via); // the same slot may repeat on different routes
+      if (!Number.isFinite(slot) || slot < 0 || slot >= slots || seen.has(key)) continue;
+      seen.add(key);
       out.push({ slot, mode: PHY_.MODES[c.mode] ? c.mode : 'zrp400', off: Math.min(10, Math.max(-10, Number.isFinite(+c.off) && c.off !== '' && c.off !== null ? +c.off : 0)), svc: !!c.svc, from: nodeId(c.from), to: nodeId(c.to), via: nodeId(c.via) });
       if (out.length >= 96) break;
     }
@@ -192,7 +193,7 @@ const MODEL = (() => {
   function remapPlan(plan, oldDf, newDf) {
     if (!plan) return plan;
     const slots = PHY_.cBandSlots(newDf * 1e9), seen = new Set(), out = [];
-    for (const c of plan) { const s = Math.floor((c.slot + 0.5) * oldDf / newDf); if (s >= slots || seen.has(s)) continue; seen.add(s); out.push({ ...c, slot: s }); }
+    for (const c of plan) { const s = Math.floor((c.slot + 0.5) * oldDf / newDf), key = s + '|' + c.from + '|' + c.to + '|' + c.via; if (s >= slots || seen.has(key)) continue; seen.add(key); out.push({ ...c, slot: s }); }
     return sanitizePlan(out, newDf);
   }
 
@@ -314,8 +315,8 @@ const MODEL = (() => {
   // cabled graph. loads: link id -> set of channel indices on it (the same channels light the link in both directions). hosts: the walks
   // that have to be simulated: the service path first, then every route that is not a stretch of an earlier one. Each channel is a member
   // of one host, with lo/hi the node positions along that host where it is added and dropped.
-  function planMesh(S, chans, path, rv) {
-    const svcA = S.svc.a, svcZ = S.svc.z, memo = new Map();
+  function planMesh(S, chans, path, rv, noBlock) {
+    const svcA = S.svc.a, svcZ = S.svc.z, memo = new Map(), { link, linkName } = mkGraph(S);
     const routeFor = c => {
       const ea = c.from || svcA, ez = c.to || svcZ, via = c.svc ? '' : c.via || '';
       if (c.svc || (ea === svcA && ez === svcZ && !via)) return path;
@@ -335,7 +336,17 @@ const MODEL = (() => {
       const m = memo.get(key); why[c.idx] = m.why; return m.r;
     };
     const why = [];
-    const routes = chans.map(routeFor), loads = new Map();
+    const routes0 = chans.map(routeFor), routes = routes0.slice(), loads = new Map(), blocked = [];
+    // Wavelength continuity: a slot can carry one channel per fiber. The service has priority, then plan order; a channel that meets a lit slot is blocked.
+    if (!noBlock) {
+      const used = new Map();
+      chans.map((_, k) => k).sort((a, b) => (chans[b].svc ? 1 : 0) - (chans[a].svc ? 1 : 0) || a - b).forEach(k => {
+        const r = routes0[k]; if (!r) return;
+        const hit = r.links.find(id => used.has(chans[k].slot + '|' + id));
+        if (hit) { routes[k] = null; blocked[k] = true; why[k] = `slot ${chans[k].slot + 1} is already lit on ${linkName(link(hit))} by another channel`; }
+        else r.links.forEach(id => used.set(chans[k].slot + '|' + id, k));
+      });
+    }
     routes.forEach((r, k) => { if (r) for (const id of r.links) { if (!loads.has(id)) loads.set(id, new Set()); loads.get(id).add(k); } });
     const hosts = [{ path, members: [] }];
     const place = (h, k) => {
@@ -348,7 +359,25 @@ const MODEL = (() => {
     routes.map((r, k) => k).filter(k => routes[k] && routes[k] !== path).sort((a, b) => routes[b].links.length - routes[a].links.length).forEach(k => {
       if (!hosts.some(h => place(h, k))) { const h = { path: routes[k], members: [] }; hosts.push(h); place(h, k); }
     });
-    return { routes, loads, hosts, why };
+    return { routes, loads, hosts, why, blocked };
+  }
+
+  // First-fit wavelength assignment: the service keeps its slot; the other channels, longest route first, each take the lowest slot that is
+  // free on every fiber of their route. Channels on routes with no fiber in common end up sharing slots. Returns the new plan (or null).
+  function assignSlots(S) {
+    const g = S.g, sa = S.nodes.find(n => n.id === S.svc.a);
+    if (!g || !Array.isArray(g.plan) || !g.plan.length || !isEnd(sa)) return null;
+    const df = +g.df * 1e9, slotsN = PHY_.cBandSlots(df), chans = buildChans(g, sa.p.mode, true, slotsN, df);
+    const path = route(S, S.svc.a, S.svc.z, false) || route(S, S.svc.a, S.svc.z, true);
+    if (!path) return null;
+    const mesh = planMesh(S, chans, path, false, true), len = k => (mesh.routes[k] ? mesh.routes[k].links.length : 0);
+    const used = Array.from({ length: slotsN }, () => new Set()), slot = chans.map(c => c.slot);
+    chans.map((_, k) => k).sort((a, b) => (chans[b].svc ? 1 : 0) - (chans[a].svc ? 1 : 0) || len(b) - len(a) || a - b).forEach(k => {
+      const r = mesh.routes[k]; if (!r) return;
+      if (!chans[k].svc) { const s = used.findIndex(u => r.links.every(id => !u.has(id))); if (s >= 0) slot[k] = s; }
+      r.links.forEach(id => used[slot[k]].add(id));
+    });
+    return sanitizePlan(g.plan.map((c, k) => ({ ...c, slot: slot[k] })), +g.df);
   }
 
   // opts.eol: evaluate with end-of-life allowances (see PHY.EOL). The normal result carries the EoL outcome in res.eol.
@@ -613,9 +642,9 @@ const MODEL = (() => {
         for (const m of h.members) res.channels[m.k] = w.channels ? w.channels[m.k] : null;
       }
       res.channels = res.channels.map((c, i) => c || { idx: i, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
-        status: mesh.routes[i] ? 'los' : 'nopath', notes: [mesh.routes[i] ? 'the route crosses a cut fiber' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
+        status: mesh.blocked[i] ? 'blocked' : mesh.routes[i] ? 'los' : 'nopath', notes: [mesh.routes[i] ? 'the route crosses a cut fiber' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
       res.linkLoad = [...mesh.loads].map(([id, set]) => ({ id, name: linkName(link(id)), n: set.size }));
-      const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los' || c.status === 'nopath'));
+      const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los' || c.status === 'nopath' || c.status === 'blocked'));
       if (failing.length) alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${failing.slice(0, 3).map(c => `slot ${c.slot + 1} (${c.short}): ${c.notes[0]}`).join('; ')}${failing.length > 3 ? '…' : ''}.` });
     }
     if (!eol && !W) { const e = simulate(S, launchOverride, { eol: true, reverse: rv }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
@@ -654,6 +683,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

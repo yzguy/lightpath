@@ -207,10 +207,11 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 }
 .planstrip { display: flex; flex-wrap: wrap; gap: 2px; margin: 8px 0 }
 .pcell { width: 18px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: var(--raised); cursor: pointer; font-size: 9px; color: var(--muted) }
+.pcell.multi { border: 3px double var(--raised); opacity: 1 } .slotin { width: 58px }
 .pcell.coh { background: var(--sig); border-color: var(--sig); opacity: .75 } .pcell.nrz { background: var(--warn); border-color: var(--warn); opacity: .85 } .pcell.me { outline: 2px solid var(--accent); outline-offset: 1px }
 .planbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 }
 .plantbl input[type=number] { width: 64px } .plantbl td, .plantbl th { white-space: nowrap }
-.st-up { color: var(--good) } .st-degraded { color: var(--warn) } .st-down, .st-los { color: var(--bad) }
+.st-up { color: var(--good) } .st-degraded { color: var(--warn) } .st-down, .st-los { color: var(--bad) } .st-blocked, .st-nopath { color: var(--warn) }
 </style>
 
 <header class="top">
