@@ -108,6 +108,15 @@ const PHY = (() => {
   }
   // Direct-detection optics have no DSP: dispersion closes the eye gradually (dB of SNR penalty, ~2 dB at the rated tolerance).
   const cdPenalty = (mode, cd) => (mode.coh === false ? 2 * (Math.abs(cd) / mode.cdTol) ** 2 : 0);
+  // Backward-pumped distributed Raman. Effective gain coefficient (unpolarised pump, averaged over the C-band) scaled by gamma ~ 1/Aeff.
+  // On-off gain = 4.343 * CR * Ppump * Leff_pump. For noise the span is treated as a lumped amplifier of that gain placed
+  // closer to the span end, so only (1 - NOISE_FRAC) of the on-off gain is not "seen" by the noise: OSNR benefit ~ NOISE_FRAC * gain.
+  const RAMAN = { cr: 0.2, pumpAtt: 0.25, noiseFrac: 0.4, nf: 4.5, maxMw: 1500, warnMw: 1000 };
+  function ramanGain(fiber, Lkm, pumpMw) {
+    if (!(pumpMw > 0)) return 0;
+    const ap = RAMAN.pumpAtt / 4.343, Leffp = (1 - Math.exp(-ap * Lkm)) / ap;
+    return 4.343 * RAMAN.cr * (fiber.gamma / 1.3) * (pumpMw / 1000) * Leffp;
+  }
   function ampNfEff(nf, g) { return nf + (g < 14 ? 0.35 * (14 - g) : 0) + (g > 30 ? 0.2 * (g - 30) : 0); }
 
   function qFromBer(b) { b = Math.max(b, 1e-300); return 20 * Math.log10(Math.SQRT2 * erfcinv(2 * Math.min(b, 0.4999))); }
@@ -134,6 +143,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

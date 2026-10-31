@@ -19,7 +19,7 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, nch: '', cut: false } : { il: 0.5, cut: false });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, nch: '', raman: 0, cut: false } : { il: 0.5, cut: false });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -154,6 +154,7 @@ const MODEL = (() => {
       if (!l || typeof l.id !== 'string' || lseen.has(l.id) || !seen.has(l.a) || !seen.has(l.b) || l.a === l.b) continue;
       const kind = l.kind === 'fiber' ? 'fiber' : 'patch', p = fill(linkDefaults(kind), l.p);
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
+      if (kind === 'fiber') p.raman = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +p.raman || 0));
       if (kind === 'fiber' && !(p.nch === '' || (Number.isFinite(+p.nch) && +p.nch >= 1))) p.nch = '';
       lseen.add(l.id);
       links.push({ id: l.id, a: l.a, b: l.b, kind, p });
@@ -258,11 +259,24 @@ const MODEL = (() => {
         // Per-span loading: from this fiber onward (until a mux or ROADM changes it) only this many channels are lit.
         if (l.p.nch !== '' && l.p.nch != null) nch = Math.min(96, Math.max(1, Math.round(+l.p.nch)));
         maxNch = Math.max(maxNch, nch);
-        Pnli += PHY_.etaNLI(fb, Lk, Rs, nch, df) * P ** 3;
-        tilt += PHY_.srsTilt(fb, Lk, P, nch, df);
         const sl = fb.att * Lk + +l.p.extra + (eol ? eolSpan : 0);
-        loss(sl); cd += fb.D * Lk; dgd2 += fb.pmd ** 2 * Lk; km += Lk;
-        rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: -sl, len: Lk, launch: b.sig });
+        const pump = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +l.p.raman || 0)), gr = PHY_.ramanGain(fb, Lk, pump);
+        // Raman lifts the power profile along the span, so the fiber looks less lossy to the nonlinearity.
+        const fbNl = gr > 0 ? { ...fb, att: Math.max(0.05, (fb.att * Lk - gr) / Lk) } : fb;
+        Pnli += PHY_.etaNLI(fbNl, Lk, Rs, nch, df) * P ** 3;
+        tilt += PHY_.srsTilt(fb, Lk, P, nch, df);
+        if (gr > 0) {
+          // Equivalent lumped amplifier of gain gr with noiseFrac * gr dB of the span loss still ahead of the signal after it: noise
+          // enters late in the span, which is why distributed gain beats a lumped amp at the end by about noiseFrac * gr in OSNR.
+          const r = PHY_.RAMAN.noiseFrac * gr, before = Math.max(0, sl - r);
+          loss(before); P *= lin(gr); Pnli *= lin(gr);
+          Pase = Pase * lin(gr) + lin(PHY_.RAMAN.nf) * PHY_.H * PHY_.NU * lin(gr) * PHY_.BREF;
+          loss(sl - before);
+        } else loss(sl);
+        cd += fb.D * Lk; dgd2 += fb.pmd ** 2 * Lk; km += Lk;
+        rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: gr - sl, len: Lk, launch: b.sig, ...(gr > 0 ? { raman: gr, note: `Raman pump ${pump} mW: +${gr.toFixed(1)} dB on-off gain` } : {}) });
+        if (pump > PHY_.RAMAN.warnMw) alarms.push({ sev: 'warn', text: `${linkName(l)}: ${pump} mW Raman pump is a Class 4 laser. Check connector cleanliness (fiber-fuse risk) and eye safety.` });
+        if (gr > 0 && !eol && +l.p.raman > PHY_.RAMAN.maxMw) alarms.push({ sev: 'info', text: `${linkName(l)}: pump limited to ${PHY_.RAMAN.maxMw} mW.` });
       }
       if (i + 1 === path.links.length) break;
       const t = nxt.type, nnext = node(path.nodes[i + 2]);

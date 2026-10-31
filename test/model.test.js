@@ -314,3 +314,26 @@ test('end-of-life allowances are configurable and sanitized', () => {
   const g = M.sanitize(bad).g;
   assert.equal(g.eolSpan, 5); assert.equal(g.eolTrx, 0.5);
 });
+
+test('Raman pump improves a long single span: higher OSNR and less gain needed downstream', () => {
+  const mk = pump => { const S = build('dci'); S.links.find(l => l.kind === 'fiber').p.len = 110; S.links.find(l => l.kind === 'fiber').p.raman = pump; return S; };
+  const off = M.simulate(mk(0)), on = M.simulate(mk(800));
+  assert.ok(on.osnr > off.osnr + 2, `OSNR ${off.osnr} -> ${on.osnr}`);
+  assert.ok(on.osnr < off.osnr + 12, 'benefit stays realistic');
+  const span = on.hops.find(h => h.kind === 'span');
+  assert.ok(span.raman > 5);
+  assert.ok(M.simulate(mk(1400)).alarms.some(a => /Class 4/.test(a.text)));
+  assert.ok(!off.alarms.some(a => /Class 4/.test(a.text)));
+  // net span loss is lower, so the preamp has less to make up
+  const pre = r => r.hops.find(h => h.name === 'PRE-B').gain;
+  assert.ok(pre(on) < pre(off) - 5);
+  assert.ok(on.snrNli < off.snrNli, 'Raman raises the nonlinear noise');
+  assert.ok(on.snrAse > off.snrAse, 'and lowers the ASE noise');
+});
+
+test('sanitize clamps the Raman pump and defaults old topologies to off', () => {
+  const S = build('dci'); const f = S.links.find(l => l.kind === 'fiber');
+  f.p.raman = 99999; assert.equal(M.sanitize(S).links.find(l => l.kind === 'fiber').p.raman, PHY.RAMAN.maxMw);
+  delete f.p.raman; assert.equal(M.sanitize(S).links.find(l => l.kind === 'fiber').p.raman, 0);
+  f.p.raman = 'junk'; assert.equal(M.sanitize(S).links.find(l => l.kind === 'fiber').p.raman, 0);
+});

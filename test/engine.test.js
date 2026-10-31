@@ -97,3 +97,11 @@ test('10G DWDM is a direct-detection mode: sane OSNR, dispersion penalty only wi
   assert.equal(P.cdPenalty(P.MODES.zr400, 2000), 0);
   assert.ok(P.cdPenalty(m, 800) > 0 && P.cdPenalty(m, 1600) > P.cdPenalty(m, 800));
 });
+
+test('Raman gain: zero when off, grows with pump, smaller on large-core fiber', () => {
+  assert.equal(P.ramanGain(P.FIBERS.smf, 80, 0), 0);
+  const g1 = P.ramanGain(P.FIBERS.smf, 80, 500), g2 = P.ramanGain(P.FIBERS.smf, 80, 1000);
+  assert.ok(g1 > 5 && g1 < 12, `500 mW ${g1}`);
+  assert.ok(g2 > g1 && g2 > 10 && g2 < 22, `1 W ${g2}`);
+  assert.ok(P.ramanGain(P.FIBERS.ull, 80, 1000) < g2);
+});
