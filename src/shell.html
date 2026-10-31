@@ -144,6 +144,8 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .chart .node-ax { font-size: 10px }
 .pl { fill: none; stroke-width: 2.2; stroke-linejoin: round }
 .l-sig { stroke: var(--sig); background: var(--sig) } .l-ase { stroke: var(--ase); background: var(--ase) } .l-nli { stroke: var(--nli); background: var(--nli) }
+.sp-ch { fill: var(--sig); fill-opacity: .35; stroke: var(--sig); stroke-width: 1 } .sp-me { fill: var(--accent); fill-opacity: .55; stroke: var(--accent) }
+.sp-slot { fill: none; stroke: var(--grid) } .sp-ase { fill: var(--ase); fill-opacity: .12 } .sp-sel { margin: 4px 0 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px }
 .pl.dashed { stroke-dasharray: 6 4 }
 .gap { fill: var(--gap) }
 .failzone { fill: var(--bad); opacity: .08 }
@@ -235,6 +237,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div class="tabs" id="tabs" role="tablist">
     <button class="tab" data-tab="power" role="tab">Power map</button>
     <button class="tab" data-tab="hops" role="tab">Hop-by-hop PM</button>
+    <button class="tab" data-tab="spectrum" role="tab">Spectrum</button>
     <button class="tab" data-tab="const" role="tab">Constellation</button>
     <button class="tab" data-tab="sweep" role="tab">Launch sweep</button>
     <button class="tab" data-tab="learn" role="tab">Learn</button>

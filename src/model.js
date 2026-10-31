@@ -14,7 +14,7 @@ const MODEL = (() => {
     voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
   };
   const PREFIX = { trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, cut: false } : { il: 0.5, cut: false });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, nch: '', cut: false } : { il: 0.5, cut: false });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -86,6 +86,7 @@ const MODEL = (() => {
       if (!l || typeof l.id !== 'string' || lseen.has(l.id) || !seen.has(l.a) || !seen.has(l.b) || l.a === l.b) continue;
       const kind = l.kind === 'fiber' ? 'fiber' : 'patch', p = fill(linkDefaults(kind), l.p);
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
+      if (kind === 'fiber' && !(p.nch === '' || (Number.isFinite(+p.nch) && +p.nch >= 1))) p.nch = '';
       lseen.add(l.id);
       links.push({ id: l.id, a: l.a, b: l.b, kind, p });
     }
@@ -147,7 +148,7 @@ const MODEL = (() => {
 
     const nchLine = Math.max(1, +g.nch), df = +g.df * 1e9, Rs = mode.Rs;
     const txDbm = A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx;
-    let P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1;
+    let P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1;
     const hops = [], alarms = [];
     const snap = () => ({ sig: db(P * 1000), ase: db(Pase * 1000), nli: Pnli > 0 ? db(Pnli * 1000 * PHY_.BREF / Rs) : -99 });
     const osnrNow = () => db(P / Pase);
@@ -178,6 +179,9 @@ const MODEL = (() => {
       if (l.kind === 'patch') { const b = snap(); loss(+l.p.il); rec('patch', 'patch', b, { gain: -l.p.il }); }
       else {
         const fb = PHY_.FIBERS[l.p.fiber], Lk = +l.p.len, b = snap();
+        // Per-span loading: from this fiber onward (until a mux or ROADM changes it) only this many channels are lit.
+        if (l.p.nch !== '' && l.p.nch != null) nch = Math.min(96, Math.max(1, Math.round(+l.p.nch)));
+        maxNch = Math.max(maxNch, nch);
         Pnli += PHY_.etaNLI(fb, Lk, Rs, nch, df) * P ** 3;
         const sl = fb.att * Lk + +l.p.extra;
         loss(sl); cd += fb.D * Lk; dgd2 += fb.pmd ** 2 * Lk; km += Lk;
@@ -238,6 +242,8 @@ const MODEL = (() => {
     if (prx < mode.rxMin) alarms.push({ sev: 'warn', text: `Rx power ${f1(prx)} dBm is below the ${mode.rxMin} dBm sensitivity spec (Rx LOW alarm). Receiver noise is now eating SNR.` });
     if (prx > mode.rxMax) alarms.push({ sev: prx > mode.rxMax + 5 ? 'bad' : 'warn', text: `Rx power ${f1(prx)} dBm is above the ${mode.rxMax} dBm overload point (Rx HIGH alarm). Add a pad.` });
     if (res.dgd > mode.dgdTol * 0.7) alarms.push({ sev: 'warn', text: `Mean DGD ${f1(res.dgd)} ps is close to or over the ${mode.dgdTol} ps PMD tolerance.` });
+    const slots = PHY_.cBandSlots(df);
+    if (Math.max(maxNch, nchLine) > slots) alarms.push({ sev: 'warn', text: `${Math.max(maxNch, nchLine)} channels do not fit the C-band on a ${g.df} GHz grid (${slots} slots). Reduce channels or use a finer grid.` });
     if (Rs > df) alarms.push({ sev: 'warn', text: `${mode.short} occupies ~${Math.round(Rs / 1e9 * 1.1)} GHz but the grid slot is ${g.df} GHz. Filters clip it and neighbours overlap.` });
     if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber.' });
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }

@@ -258,6 +258,7 @@ function renderInspector() {
       box.append(field('Length (km)', numIn(l.p, 'len', 1, 0, 300)));
       box.append(field('Fiber type', selIn(l.p, 'fiber', Object.entries(PHY.FIBERS).map(([k, f]) => [k, f.name]))));
       box.append(field('Connector + splice loss (dB)', numIn(l.p, 'extra', 0.1, 0, 20), 'Dirty connector? Add 1–3 dB here'));
+      box.append(field('Channels lit on this span', numIn(l.p, 'nch', 1, 1, 96, true, String(S.g.nch)), 'Blank = global. Applies from this span until a mux or ROADM changes it. Fewer neighbours means less nonlinearity.'));
       const fb = PHY.FIBERS[l.p.fiber];
       box.append(el('div', { class: 'spec' }, [specRow('Attenuation', `${fb.att} dB/km`), specRow('Span loss', `${f1(fb.att * l.p.len + +l.p.extra)} dB`), specRow('Dispersion', `${fb.D} ps/nm/km → ${Math.round(fb.D * l.p.len)} ps/nm`), specRow('PMD', `${fb.pmd} ps/√km`), specRow('Nonlinear γ', `${fb.gamma} /W/km`)]));
     } else {
@@ -360,6 +361,7 @@ function renderTabBody() {
   if (!r || !r.hops) return b.append(el('p', { class: 'muted pad', text: r ? r.headline : '' }));
   if (tab === 'power') b.append(powerChart(r));
   else if (tab === 'hops') b.append(hopTable(r));
+  else if (tab === 'spectrum') b.append(spectrumView(r));
   else if (tab === 'const') b.append(constView(r));
   else if (tab === 'sweep') b.append(sweepChart(r));
 }
@@ -411,6 +413,48 @@ function hopTable(r) {
   });
   t.append(tb);
   return el('div', { class: 'tablewrap' }, [el('p', { class: 'muted small', text: 'What the PM counters would read along the path, per channel. OSNR / GSNR in 0.1 nm measured after each element.' }), t]);
+}
+
+// spectrum (OSA-style view at any point along the path)
+let specHop = -1;
+function spectrumView(r) {
+  const wrap = el('div', { class: 'chartwrap' });
+  const hops = r.hops.filter(h => h.kind !== 'cut');
+  if (!hops.length) return wrap;
+  if (specHop < 0 || specHop >= hops.length) specHop = hops.length - 1;
+  const h = hops[specHop], df = +r.g.df * 1e9, slots = PHY.cBandSlots(df), lit = Math.min(h.nch, slots);
+  const sel = el('select', { id: 'spec-hop', 'aria-label': 'Measurement point' });
+  hops.forEach((x, i) => sel.append(el('option', { value: i, text: `After ${x.name}` })));
+  sel.value = specHop; sel.addEventListener('change', () => { specHop = +sel.value; renderTabBody(); });
+  wrap.append(el('div', { class: 'sp-sel' }, [el('label', { for: 'spec-hop', text: 'Measure at' }), sel]));
+
+  const W = 900, H = 300, ml = 46, mr = 16, mt = 16, mb = 40, f0 = PHY.CBAND.f0 / 1e12, f1v = (PHY.CBAND.f0 + PHY.CBAND.width) / 1e12;
+  const Rs = r.mode.Rs, dens = 10 * Math.log10(Rs / PHY.BREF); // channel power -> level seen in a 0.1 nm slice
+  const sigD = h.out.sig - dens, aseD = h.out.ase, nliD = h.out.nli;
+  const top = Math.max(sigD, aseD) + 8, ymax = Math.ceil(top / 10) * 10, ymin = Math.floor((Math.min(aseD, nliD > -90 ? nliD : aseD) - 14) / 10) * 10;
+  const X = f => ml + (f - f0) / (f1v - f0) * (W - ml - mr), Y = v => mt + (ymax - Math.min(ymax, Math.max(ymin, v))) / (ymax - ymin) * (H - mt - mb);
+  const s = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Optical spectrum at the selected point' });
+  for (let v = ymin; v <= ymax; v += 10) { s.append(sv('line', { x1: ml, x2: W - mr, y1: Y(v), y2: Y(v), class: 'grid' })); const t = sv('text', { x: ml - 6, y: Y(v) + 4, class: 'ax', 'text-anchor': 'end' }); t.textContent = v; s.append(t); }
+  for (let f = Math.ceil(f0 * 2) / 2; f <= f1v + 1e-9; f += 0.5) { const t = sv('text', { x: X(f), y: H - mb + 16, class: 'ax', 'text-anchor': 'middle' }); t.textContent = f.toFixed(1); s.append(t); }
+  const xl = sv('text', { x: (ml + W - mr) / 2, y: H - 6, class: 'ax', 'text-anchor': 'middle' }); xl.textContent = 'Frequency (THz)'; s.append(xl);
+  const yl = sv('text', { x: 12, y: mt + (H - mt - mb) / 2, class: 'ax', transform: `rotate(-90 12 ${mt + (H - mt - mb) / 2})`, 'text-anchor': 'middle' }); yl.textContent = 'dBm in 0.1 nm'; s.append(yl);
+  // ASE fills the whole band (amplifiers amplify noise in unlit slots too)
+  if (h.out.ase > -90) s.append(sv('rect', { x: X(f0), y: Y(aseD), width: X(f1v) - X(f0), height: Math.max(0, Y(ymin) - Y(aseD)), class: 'sp-ase' }));
+  s.append(sv('line', { x1: X(f0), x2: X(f1v), y1: Y(aseD), y2: Y(aseD), class: 'pl l-ase' }));
+  // lit block centred in the band; the service channel sits in its middle
+  const first = Math.floor((slots - lit) / 2), me = first + Math.floor(lit / 2);
+  for (let k = first; k < first + lit; k++) {
+    const fc = f0 + (k + 0.5) * df / 1e12, half = Math.min(Rs, df * 0.92) / 2e12;
+    s.append(sv('rect', { x: X(fc - half), y: Y(sigD), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sigD)), class: k === me ? 'sp-me' : 'sp-ch' }));
+  }
+  if (nliD > -90 && lit > 0) { // NLI is noise-like and sits under the lit channels
+    const a = f0 + first * df / 1e12, b = f0 + (first + lit) * df / 1e12;
+    s.append(sv('line', { x1: X(a), x2: X(b), y1: Y(nliD), y2: Y(nliD), class: 'pl l-nli' }));
+  }
+  const tn = sv('text', { x: W - mr, y: mt + 10, class: 'ax strong', 'text-anchor': 'end' }); tn.textContent = `${lit} ch lit of ${slots} slots (${r.g.df} GHz grid)`; s.append(tn);
+  wrap.append(s, el('div', { class: 'legend' }, [lg('l-sig', 'Neighbouring channels'), el('span', {}, [el('i', { style: 'background:var(--accent)' }), 'Service channel']), lg('l-ase', 'ASE floor'), lg('l-nli', 'NLI under the lit channels'),
+    el('span', { class: 'muted', text: `Channel power here is ${f1(h.out.sig)} dBm (reads ${f1(sigD)} dBm in a 0.1 nm slice, since a ${(Rs / 1e9).toFixed(0)} GBd signal is ${f1(dens)} dB wider). OSNR = channel power − ASE floor = ${f1(h.out.sig - aseD)} dB. All channels are assumed equal power.` })]));
+  return wrap;
 }
 
 // constellation

@@ -57,6 +57,9 @@ const PHY = (() => {
     const r = Rs / df;
     return r < 0.7 ? 0.03 : 0.03 + 0.5 * (r - 0.7) + 2.5 * Math.max(0, r - 0.9) ** 2 + (r > 1 ? 4 * (r - 1) : 0);
   }
+  // C-band plan: 191.3-196.1 THz (4.8 THz). How many fixed-grid slots of width df (Hz) fit.
+  const CBAND = { f0: 191.3e12, width: 4.8e12 };
+  const cBandSlots = df => Math.floor(CBAND.width / df + 1e-9);
   function ampNfEff(nf, g) { return nf + (g < 14 ? 0.35 * (14 - g) : 0) + (g > 30 ? 0.2 * (g - 30) : 0); }
 
   function qFromBer(b) { b = Math.max(b, 1e-300); return 20 * Math.log10(Math.SQRT2 * erfcinv(2 * Math.min(b, 0.4999))); }
@@ -83,6 +86,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, ampNfEff, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, ampNfEff, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

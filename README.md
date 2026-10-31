@@ -2,7 +2,7 @@
 
 A browser-based, drag-and-drop DWDM lab for building intuition about the optical physical layer, in the spirit of EVE-NG or Packet Tracer but for optics.
 
-Drag transponders, mux/demux, EDFAs, ROADMs and VOAs onto a bench, cable them with patch cords or fiber spans, pick an A and Z transponder, and watch Rx power, OSNR, GSNR, pre-FEC BER, Q-factor, margin, CD and DGD respond. Includes alarms (LOS, Rx LOW/HIGH, amp gain range, CD out of range), a noise budget breakdown, a power-level diagram, a hop-by-hop PM table, a live constellation, a launch-power sweep and short physics explainers.
+Drag transponders, mux/demux, EDFAs, ROADMs and VOAs onto a bench, cable them with patch cords or fiber spans, pick an A and Z transponder, and watch Rx power, OSNR, GSNR, pre-FEC BER, Q-factor, margin, CD and DGD respond. Includes alarms (LOS, Rx LOW/HIGH, amp gain range, CD out of range), a noise budget breakdown, a power-level diagram, a hop-by-hop PM table, an OSA-style spectrum at any point along the path, a live constellation, a launch-power sweep and short physics explainers.
 
 ## Run
 
@@ -33,13 +33,12 @@ No dependencies, no bundler. (The page asks Google Fonts for Archivo and IBM Ple
 
 ### Simplifications
 
-- One direction only (A → Z), same channel load on every span.
+- One direction only (A → Z). Channel load is the global setting unless a fiber span overrides it; all channels are assumed equal power, centred in the C-band (191.3–196.1 THz).
 - ROADM express = 2 WSS passes; add/drop = 1 WSS pass + add/drop structure; optional integrated pre/booster amps.
 - Numbers are good for trends and intuition, within a few dB of reality. This is not a planning tool.
 
 ## Ideas for next steps
 
 - Bidirectional links and per-direction amp settings
-- Per-span channel loading and a spectrum (OSA) view
 - Import real span data (lengths, measured losses) from CSV
 - Raman amplification, SRS tilt, ageing margins

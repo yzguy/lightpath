@@ -121,3 +121,32 @@ test('required OSNR is cached per mode', () => {
   assert.equal(M.reqOsnr('zr400'), M.reqOsnr('zr400'));
   assert.ok(Math.abs(M.reqOsnr('zr400') - PHY.requiredOsnr(PHY.MODES.zr400)) < 1e-9);
 });
+
+test('per-span channel loading: fewer lit channels on a span means less NLI downstream', () => {
+  const S = build('lh'); S.g.launch = 3;
+  const base = M.simulate(S);
+  S.links.filter(l => l.kind === 'fiber').forEach(l => (l.p.nch = 4));
+  const thin = M.simulate(S);
+  assert.ok(thin.snrNli > base.snrNli, 'NLI should drop');
+  assert.ok(thin.hops.some(h => h.kind === 'span' && h.nch === 4));
+  assert.equal(base.hops.filter(h => h.kind === 'span')[0].nch, 64);
+});
+
+test('channels that do not fit the C-band grid raise an alarm', () => {
+  const S = build('lh'); // 64 ch at 75 GHz fits exactly
+  assert.ok(!M.simulate(S).alarms.some(a => /do not fit/.test(a.text)));
+  S.g.nch = 96;
+  assert.ok(M.simulate(S).alarms.some(a => /do not fit/.test(a.text)));
+  S.g.nch = 64; S.g.df = 100;
+  assert.ok(M.simulate(S).alarms.some(a => /do not fit/.test(a.text)));
+});
+
+test('sanitize: span channel override must be blank or >= 1', () => {
+  const S = build('lh'), f = S.links.find(l => l.kind === 'fiber');
+  f.p.nch = 'lots';
+  assert.equal(M.sanitize(S).links.find(l => l.id === f.id).p.nch, '');
+  f.p.nch = 12;
+  assert.equal(M.sanitize(S).links.find(l => l.id === f.id).p.nch, 12);
+  f.p.nch = 0;
+  assert.equal(M.sanitize(S).links.find(l => l.id === f.id).p.nch, '');
+});

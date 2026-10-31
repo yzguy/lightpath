@@ -58,3 +58,10 @@ test('every mode has the fields the app reads', () => {
     assert.ok(P.MODS[m.mod], `${k} modulation`);
   }
 });
+
+test('C-band slot count per grid', () => {
+  assert.equal(P.cBandSlots(50e9), 96);
+  assert.equal(P.cBandSlots(75e9), 64);
+  assert.equal(P.cBandSlots(100e9), 48);
+  assert.equal(P.cBandSlots(150e9), 32);
+});
