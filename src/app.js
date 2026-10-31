@@ -486,10 +486,20 @@ function clientsView(r) {
 
 // power map
 function powerChart(r) {
-  const W = 900, H = 300, ml = 46, mr = 16, mt = 16, mb = 54;
+  const W = 900, H = 300, ml = 46, mr = 16, mt = 16;
+  let mb = 54;
   const hops = r.hops, total = Math.max(1, r.km), nodeW = Math.max(4, total * 0.05);
   let x = 0; const xs = hops.map(h => { const x0 = x; x += h.kind === 'span' ? h.len : h.kind === 'patch' ? nodeW * 0.25 : nodeW; return [x0, x]; });
   const X = v => ml + v / x * (W - ml - mr);
+  // Device labels: first row that is free at this x, so neighbours on a busy path never overprint.
+  const rowEnd = [], rowOf = {};
+  hops.forEach((h, i) => {
+    if (h.kind === 'span' || h.kind === 'patch') return;
+    const cx = (X(xs[i][0]) + X(xs[i][1])) / 2, half = h.name.length * 3.3 + 3;
+    let row = 0; while (rowEnd[row] != null && rowEnd[row] > cx - half) row++;
+    rowEnd[row] = cx + half; rowOf[i] = row;
+  });
+  mb = 38 + Math.max(3, rowEnd.length) * 13;
   const vals = hops.flatMap(h => [h.in.sig, h.out.sig, h.in.ase, h.out.ase, h.in.nli, h.out.nli]).filter(v => v > -90);
   const ymax = Math.ceil((Math.max(...vals) + 3) / 5) * 5, ymin = Math.floor((Math.min(...vals) - 3) / 10) * 10;
   const Y = v => mt + (ymax - Math.max(v, ymin)) / (ymax - ymin) * (H - mt - mb);
@@ -506,12 +516,12 @@ function powerChart(r) {
   }
   hops.forEach((h, i) => {
     if (h.kind === 'span' || h.kind === 'patch') {
-      if (h.kind === 'span') { const t = sv('text', { x: (X(xs[i][0]) + X(xs[i][1])) / 2, y: H - mb + 16, class: 'ax', 'text-anchor': 'middle' }); t.textContent = `${h.len} km`; s.append(t); }
+      if (h.kind === 'span' && X(xs[i][1]) - X(xs[i][0]) > String(h.len).length * 6.5 + 28) { const t = sv('text', { x: (X(xs[i][0]) + X(xs[i][1])) / 2, y: H - mb + 16, class: 'ax', 'text-anchor': 'middle' }); t.textContent = `${h.len} km`; s.append(t); }
       return;
     }
     const cx = (X(xs[i][0]) + X(xs[i][1])) / 2;
     s.append(sv('line', { x1: cx, x2: cx, y1: mt, y2: H - mb, class: 'tick' }));
-    const t = sv('text', { x: cx, y: H - mb + 30 + (i % 3) * 11, class: 'ax node-ax', 'text-anchor': 'middle' }); t.textContent = h.name.replace(/ (pre|boost|express|add|drop)$/, m => m); s.append(t);
+    const t = sv('text', { x: cx, y: H - mb + 30 + rowOf[i] * 13, class: 'ax node-ax', 'text-anchor': 'middle' }); t.textContent = h.name.replace(/ (pre|boost|express|add|drop)$/, m => m); s.append(t);
   });
   if (isFinite(r.prx)) { const t = sv('text', { x: W - mr, y: mt - 4, class: 'ax strong', 'text-anchor': 'end' }); t.textContent = `Rx ${f1(r.prx)} dBm`; s.append(t); }
   const wrap = el('div', { class: 'chartwrap' }, [s]);
