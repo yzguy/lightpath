@@ -150,3 +150,44 @@ test('sanitize: span channel override must be blank or >= 1', () => {
   f.p.nch = 0;
   assert.equal(M.sanitize(S).links.find(l => l.id === f.id).p.nch, '');
 });
+
+test('end-of-life: always worse than today, and flagged when it flips a passing link to failing', () => {
+  for (const k in M.PRESETS) { const r = M.simulate(build(k)); assert.ok(r.eol.qMargin < r.qMargin, k); }
+  const S = build('lh'); S.nodes.filter(n => n.type === 'edfa').forEach(n => (n.p.gmax = 30));
+  S.links.filter(l => l.kind === 'fiber').forEach(l => (l.p.len += 8)); // push it to the edge
+  let r = M.simulate(S);
+  for (let i = 0; i < 40 && !(r.qMargin >= 0 && r.eol.qMargin < 0); i++) { S.links.filter(l => l.kind === 'fiber').forEach(l => (l.p.len += 1)); r = M.simulate(S); }
+  assert.ok(r.qMargin >= 0 && r.eol.qMargin < 0, 'found a topology that works now but fails at end of life');
+  assert.ok(r.alarms.some(a => /end of life/.test(a.text)));
+});
+
+test('SRS tilt: accumulates without tilt control, is reset by it, and hurts the edge channel', () => {
+  const S = build('lh'), amps = S.nodes.filter(n => n.type === 'edfa');
+  const on = M.simulate(S);
+  amps.forEach(n => (n.p.tiltCtl = false));
+  const off = M.simulate(S);
+  assert.ok(off.tilt > 3 * on.tilt, `tilt ${on.tilt} -> ${off.tilt}`);
+  assert.ok(off.worstQMargin < on.worstQMargin);
+  assert.ok(off.worstQMargin < off.qMargin, 'worst channel is worse than the mid-band service channel');
+});
+
+test('a single lit channel has no SRS tilt', () => {
+  const S = build('dark');
+  const r = M.simulate(S);
+  assert.equal(r.tilt, 0);
+  assert.ok(Math.abs(r.worstQMargin - r.qMargin) < 1e-9);
+});
+
+test('ROADM re-equalises tilt', () => {
+  const S = build('ring'); S.g.nch = 64; S.g.launch = 3;
+  const r = M.simulate(S);
+  assert.ok(r.hops.filter(h => h.kind === 'roadm').every(h => h.tilt === 0));
+});
+
+test('sanitize keeps the amplifier tilt-control flag a boolean', () => {
+  const S = build('lh'), a = S.nodes.find(n => n.type === 'edfa');
+  a.p.tiltCtl = 'maybe';
+  assert.equal(M.sanitize(S).nodes.find(n => n.id === a.id).p.tiltCtl, true);
+  a.p.tiltCtl = false;
+  assert.equal(M.sanitize(S).nodes.find(n => n.id === a.id).p.tiltCtl, false);
+});

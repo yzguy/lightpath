@@ -9,7 +9,7 @@ const MODEL = (() => {
   const TYPES = {
     trx: { label: 'Transponder', hint: 'Coherent line card / pluggable', maxLinks: 1, def: () => ({ mode: 'zr400', tx: null }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
-    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', gain: 20, nf: 5, gmin: 10, gmax: 30, pmax: 23 }) },
+    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', gain: 20, nf: 5, gmin: 10, gmax: 30, pmax: 23, tiltCtl: true }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
     voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
   };
@@ -136,7 +136,9 @@ const MODEL = (() => {
   const reqCache = {};
   const reqOsnr = k => (reqCache[k] ??= PHY_.requiredOsnr(PHY_.MODES[k]));
 
-  function simulate(S, launchOverride) {
+  // opts.eol: evaluate with end-of-life allowances (see PHY.EOL). The normal result carries the EoL outcome in res.eol.
+  function simulate(S, launchOverride, opts = {}) {
+    const eol = !!opts.eol;
     const { node, link, linkName } = mkGraph(S);
     const g = { ...S.g }; if (launchOverride != null) g.launch = launchOverride;
     const A = node(S.svc.a), Z = node(S.svc.z);
@@ -148,16 +150,17 @@ const MODEL = (() => {
 
     const nchLine = Math.max(1, +g.nch), df = +g.df * 1e9, Rs = mode.Rs;
     const txDbm = A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx;
-    let P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1;
+    let P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
+    const tiltSeen = []; // tilt (dB, low- minus high-frequency channel) at every amplifier input and at the receiver
     const hops = [], alarms = [];
     const snap = () => ({ sig: db(P * 1000), ase: db(Pase * 1000), nli: Pnli > 0 ? db(Pnli * 1000 * PHY_.BREF / Rs) : -99 });
     const osnrNow = () => db(P / Pase);
     const gosnrNow = () => db(1 / (Pase / P + (Pnli / P) * Rs / PHY_.BREF));
     function rec(name, kind, before, extra = {}) {
-      hops.push({ name, kind, in: before, out: snap(), km, nch, osnr: osnrNow(), gosnr: gosnrNow(), ...extra });
+      hops.push({ name, kind, in: before, out: snap(), km, nch, tilt, osnr: osnrNow(), gosnr: gosnrNow(), ...extra });
     }
     const loss = d => { const f = lin(-d); P *= f; Pase *= f; Pnli *= f; };
-    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax) {
+    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl) {
       const before = snap(), pin = before.sig;
       let G = ctl === 'auto' ? target - pin : +gFixed, note = '';
       if (G < gmin) { note = `Needs ${f1(G)} dB but min gain is ${gmin} dB: output runs hot`; G = gmin; }
@@ -166,6 +169,8 @@ const MODEL = (() => {
       if (tot > pmax) { G -= tot - pmax; note = `Hit total output limit ${pmax} dBm (${nch} ch): per-channel power capped`; }
       const nfe = PHY_.ampNfEff(+nf, G);
       P *= lin(G); Pnli *= lin(G);
+      tiltSeen.push(tilt);
+      if (tiltCtl) tilt = 0; // gain-tilt control re-flattens the band at the amp output
       Pase = Pase * lin(G) + lin(nfe) * PHY_.H * PHY_.NU * lin(G) * PHY_.BREF;
       rec(name, 'amp', before, { gain: G, nf: nfe, note });
       if (note) alarms.push({ sev: 'warn', text: `${name}: ${note}.` });
@@ -183,7 +188,8 @@ const MODEL = (() => {
         if (l.p.nch !== '' && l.p.nch != null) nch = Math.min(96, Math.max(1, Math.round(+l.p.nch)));
         maxNch = Math.max(maxNch, nch);
         Pnli += PHY_.etaNLI(fb, Lk, Rs, nch, df) * P ** 3;
-        const sl = fb.att * Lk + +l.p.extra;
+        tilt += PHY_.srsTilt(fb, Lk, P, nch, df);
+        const sl = fb.att * Lk + +l.p.extra + (eol ? PHY_.EOL.spanLoss : 0);
         loss(sl); cd += fb.D * Lk; dgd2 += fb.pmd ** 2 * Lk; km += Lk;
         rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: -sl, len: Lk, launch: b.sig });
       }
@@ -197,15 +203,15 @@ const MODEL = (() => {
         if (drops) nch = 1;
         rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
       } else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
-      else if (t === 'edfa') { amp(nxt.name, nxt.p.nf, nxt.p.ctl, target, nxt.p.gain, +nxt.p.gmin, +nxt.p.gmax, +nxt.p.pmax); }
+      else if (t === 'edfa') { amp(nxt.name, nxt.p.nf, nxt.p.ctl, target, nxt.p.gain, +nxt.p.gmin, +nxt.p.gmax, +nxt.p.pmax, nxt.p.tiltCtl !== false); }
       else if (t === 'roadm') {
         const add = prv.type === 'trx' || prv.type === 'mux', drop = nnext.type === 'trx' || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
         if (add) nch = nchLine;
-        if (p.amps && !add) amp(nxt.name + ' pre', p.nf, 'auto', +g.launch + (drop ? 4 : 0), 0, 0, 35, 24);
-        const b = snap(); const lo = np * +p.wss + (add || drop ? +p.ad : 0); loss(lo); passes += np;
+        if (p.amps && !add) amp(nxt.name + ' pre', p.nf, 'auto', +g.launch + (drop ? 4 : 0), 0, 0, 35, 24, true);
+        const b = snap(); const lo = np * +p.wss + (add || drop ? +p.ad : 0); loss(lo); passes += np; tiltSeen.push(tilt); tilt = 0; // the WSS equalises every channel
         rec(nxt.name + (add ? ' add' : drop ? ' drop' : ' express'), 'roadm', b, { gain: -lo, note: `${np} WSS pass${np > 1 ? 'es' : ''}` });
-        if (p.amps && !drop) amp(nxt.name + ' boost', p.nf + 0.5, 'auto', +g.launch, 0, 0, 35, 24);
+        if (p.amps && !drop) amp(nxt.name + ' boost', p.nf + 0.5, 'auto', +g.launch, 0, 0, 35, 24, true);
         if (drop) nch = 1;
       }
       // a transponder in the middle of a path is never traversed (route() forbids it)
@@ -225,14 +231,21 @@ const MODEL = (() => {
     const filt = passes * PHY_.filterPenaltyPerPass(Rs, df);
     const over = Math.max(0, prx - mode.rxMax) * 1.5;
     const pmdPen = (res.dgd / mode.dgdTol) ** 2;
-    const eff = PHY_.effSnr(mode, line, filt + over + pmdPen);
+    tiltSeen.push(tilt);
+    const peakTilt = Math.max(...tiltSeen), edgeTilt = tiltSeen.reduce((a, b) => a + b, 0) / tiltSeen.length;
+    const agePen = eol ? PHY_.EOL.trxPen : 0, basePen = filt + over + pmdPen + agePen;
+    const eff = PHY_.effSnr(mode, line, basePen);
     const ber = PHY_.MODS[mode.mod].ber(eff);
+    // The service channel sits mid-band. The highest-frequency channel gives up half the SRS tilt to the lowest, so it is the worst one.
+    const effEdge = PHY_.effSnr(mode, line, basePen + edgeTilt / 2), berEdge = PHY_.MODS[mode.mod].ber(effEdge);
     Object.assign(res, {
       osnr: db(P / Pase), gosnr: db(1 / (1 / snrAse + 1 / snrNli) * Rs / PHY_.BREF), snrAse, snrNli, snrRx, snrTrx, effDb: db(eff),
       ber, q: PHY_.qFromBer(ber), qThr: PHY_.qFromBer(mode.berThr), filt, over, pmdPen, req: reqOsnr(A.p.mode),
       budget: { ase: 1 / snrAse, nli: 1 / snrNli, trx: 1 / snrTrx, rx: 1 / snrRx },
     });
     res.qMargin = res.q - res.qThr; res.osnrMargin = res.gosnr - res.req;
+    res.tilt = peakTilt; res.worstQMargin = PHY_.qFromBer(berEdge) - res.qThr;
+    if (!eol) { const e = simulate(S, launchOverride, { eol: true }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
     // alarms & status
     const bad = [];
     if (Z.p.mode !== A.p.mode) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
@@ -245,6 +258,8 @@ const MODEL = (() => {
     const slots = PHY_.cBandSlots(df);
     if (Math.max(maxNch, nchLine) > slots) alarms.push({ sev: 'warn', text: `${Math.max(maxNch, nchLine)} channels do not fit the C-band on a ${g.df} GHz grid (${slots} slots). Reduce channels or use a finer grid.` });
     if (Rs > df) alarms.push({ sev: 'warn', text: `${mode.short} occupies ~${Math.round(Rs / 1e9 * 1.1)} GHz but the grid slot is ${g.df} GHz. Filters clip it and neighbours overlap.` });
+    if (!eol && res.qMargin >= 0 && res.eol.qMargin < 0) alarms.push({ sev: 'warn', text: `Works today but fails at end of life: Q margin falls to ${f1(res.eol.qMargin)} dB with ${PHY_.EOL.spanLoss} dB of extra loss per span and ${PHY_.EOL.trxPen} dB of transceiver ageing.` });
+    if (res.qMargin >= 0 && res.worstQMargin < 0) alarms.push({ sev: 'warn', text: `SRS tilt of up to ${f1(peakTilt)} dB leaves the highest-frequency channel with ${f1(res.worstQMargin)} dB of Q margin while the middle channel still passes. Turn on amplifier tilt control or add a ROADM to re-equalise.` });
     if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber.' });
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }
     else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. Aging or a dirty connector will take it down.` : 'Up, with alarms to look at.'; }

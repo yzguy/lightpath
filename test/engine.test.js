@@ -65,3 +65,14 @@ test('C-band slot count per grid', () => {
   assert.equal(P.cBandSlots(100e9), 48);
   assert.equal(P.cBandSlots(150e9), 32);
 });
+
+test('SRS tilt: zero for one channel, grows with power, channel count and span length', () => {
+  const f = P.FIBERS.smf, W = P.lin(0) / 1000;
+  assert.equal(P.srsTilt(f, 80, W, 1, 75e9), 0);
+  const base = P.srsTilt(f, 80, W, 64, 75e9);
+  near(base, 0.9, 0.5, 'order of magnitude: ~1 dB/span for a full C-band at 0 dBm');
+  assert.ok(P.srsTilt(f, 80, W * 2, 64, 75e9) > base);
+  assert.ok(P.srsTilt(f, 80, W, 32, 75e9) < base);
+  assert.ok(P.srsTilt(f, 20, W, 64, 75e9) < base);
+  assert.ok(P.srsTilt(P.FIBERS.ull, 80, W, 64, 75e9) < base, 'large-core fiber has less Raman tilt');
+});

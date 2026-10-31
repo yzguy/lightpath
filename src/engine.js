@@ -60,6 +60,16 @@ const PHY = (() => {
   // C-band plan: 191.3-196.1 THz (4.8 THz). How many fixed-grid slots of width df (Hz) fit.
   const CBAND = { f0: 191.3e12, width: 4.8e12 };
   const cBandSlots = df => Math.floor(CBAND.width / df + 1e-9);
+  // End-of-life allowances (ageing, repairs, dirty connectors): extra loss per fiber span, extra transceiver penalty.
+  const EOL = { spanLoss: 1.0, trxPen: 0.5 };
+  // Stimulated Raman scattering tilt. Power moves from high- to low-frequency channels. Returns dB between the
+  // lowest and highest channel added by one span (Zirngibl-style approximation: tilt ~ 4.34 * slope * Ptot * Leff * bandwidth).
+  // Raman gain slope ~0.028 /W/km/THz on SMF at 80 um^2; scaled by gamma as a stand-in for 1/Aeff.
+  function srsTilt(fiber, Lkm, PchW, nch, df) {
+    if (nch < 2) return 0;
+    const ap = fiber.att / (10 * Math.LOG10E), Leff = (1 - Math.exp(-ap * Lkm)) / ap;
+    return 4.343 * 0.028 * (fiber.gamma / 1.3) * (PchW * nch) * Leff * ((nch - 1) * df / 1e12);
+  }
   function ampNfEff(nf, g) { return nf + (g < 14 ? 0.35 * (14 - g) : 0) + (g > 30 ? 0.2 * (g - 30) : 0); }
 
   function qFromBer(b) { b = Math.max(b, 1e-300); return 20 * Math.log10(Math.SQRT2 * erfcinv(2 * Math.min(b, 0.4999))); }
@@ -86,6 +96,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, ampNfEff, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, srsTilt, ampNfEff, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

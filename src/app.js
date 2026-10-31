@@ -259,6 +259,7 @@ function renderInspector() {
       box.append(field('Noise figure (dB)', numIn(p, 'nf', 0.1, 3, 12), 'Quantum limit is 3 dB. Real EDFAs: 4.5–6 dB'));
       box.append(field('Gain range min / max (dB)', el('div', { class: 'pair' }, [numIn(p, 'gmin', 1, 0, 40), numIn(p, 'gmax', 1, 0, 40)])));
       box.append(field('Max total output (dBm)', numIn(p, 'pmax', 0.5, 10, 30), 'Shared by every channel in the fiber'));
+      box.append(field('Gain-tilt control', selIn(p, 'tiltCtl', [['true', 'On: re-flatten the band'], ['false', 'Off: SRS tilt accumulates']]), 'Counters Raman tilt from the span before it'));
     } else if (n.type === 'roadm') {
       box.append(field('WSS loss per pass (dB)', numIn(p, 'wss', 0.5, 0, 15)));
       box.append(field('Add/drop structure loss (dB)', numIn(p, 'ad', 0.5, 0, 15)));
@@ -343,6 +344,9 @@ function renderResults() {
       tile('Pre-FEC BER', r.ber < 1e-15 ? '<1e-15' : r.ber.toExponential(1), '', 'ber', r.ber > m.berThr ? 'bad' : ''),
       tile('Q-factor', f1(r.q), ' dB', 'q'), tile('Q margin', (r.qMargin > 0 ? '+' : '') + f1(r.qMargin), ' dB', 'margin', r.qMargin < 0 ? 'bad' : r.qMargin < 1 ? 'warn' : 'good'),
       tile('OSNR margin', (r.osnrMargin > 0 ? '+' : '') + f1(r.osnrMargin), ' dB', 'margin', r.osnrMargin < 0 ? 'bad' : r.osnrMargin < 2 ? 'warn' : ''),
+      tile('Q margin, end of life', (r.eol.qMargin > 0 ? '+' : '') + f1(r.eol.qMargin), ' dB', 'aging', r.eol.qMargin < 0 ? 'bad' : r.eol.qMargin < 1 ? 'warn' : ''),
+      tile('Q margin, worst channel', (r.worstQMargin > 0 ? '+' : '') + f1(r.worstQMargin), ' dB', 'srs', r.worstQMargin < 0 ? 'bad' : r.worstQMargin < 1 ? 'warn' : ''),
+      tile('SRS tilt (peak)', f1(r.tilt), ' dB', 'srs'),
       tile('CD', Math.round(r.cd).toLocaleString(), ' ps/nm', 'cd', Math.abs(r.cd) > m.cdTol ? 'bad' : ''), tile('Mean DGD', f1(r.dgd), ' ps', 'pmd'), tile('Distance', Math.round(r.km), ' km', 'span'));
   }
   const al = $('#alarms'); al.innerHTML = '';
@@ -468,7 +472,8 @@ function spectrumView(r) {
   const first = Math.floor((slots - lit) / 2), me = first + Math.floor(lit / 2);
   for (let k = first; k < first + lit; k++) {
     const fc = f0 + (k + 0.5) * df / 1e12, half = Math.min(Rs, df * 0.92) / 2e12;
-    s.append(sv('rect', { x: X(fc - half), y: Y(sigD), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sigD)), class: k === me ? 'sp-me' : 'sp-ch' }));
+    const sk = sigD + (lit > 1 && h.tilt ? h.tilt * (0.5 - (k - first) / (lit - 1)) : 0); // SRS: low-frequency channels gain, high-frequency lose
+    s.append(sv('rect', { x: X(fc - half), y: Y(sk), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sk)), class: k === me ? 'sp-me' : 'sp-ch' }));
   }
   if (nliD > -90 && lit > 0) { // NLI is noise-like and sits under the lit channels
     const a = f0 + first * df / 1e12, b = f0 + (first + lit) * df / 1e12;
@@ -476,7 +481,7 @@ function spectrumView(r) {
   }
   const tn = sv('text', { x: W - mr, y: mt + 10, class: 'ax strong', 'text-anchor': 'end' }); tn.textContent = `${lit} ch lit of ${slots} slots (${r.g.df} GHz grid)`; s.append(tn);
   wrap.append(s, el('div', { class: 'legend' }, [lg('l-sig', 'Neighbouring channels'), el('span', {}, [el('i', { style: 'background:var(--accent)' }), 'Service channel']), lg('l-ase', 'ASE floor'), lg('l-nli', 'NLI under the lit channels'),
-    el('span', { class: 'muted', text: `Channel power here is ${f1(h.out.sig)} dBm (reads ${f1(sigD)} dBm in a 0.1 nm slice, since a ${(Rs / 1e9).toFixed(0)} GBd signal is ${f1(dens)} dB wider). OSNR = channel power − ASE floor = ${f1(h.out.sig - aseD)} dB. All channels are assumed equal power.` })]));
+    el('span', { class: 'muted', text: `Channel power here is ${f1(h.out.sig)} dBm (reads ${f1(sigD)} dBm in a 0.1 nm slice, since a ${(Rs / 1e9).toFixed(0)} GBd signal is ${f1(dens)} dB wider). OSNR = channel power − ASE floor = ${f1(h.out.sig - aseD)} dB. All channels launch at equal power.${h.tilt > 0.05 ? ` SRS has tilted them by ${f1(h.tilt)} dB, lowest to highest frequency.` : ''}` })]));
   return wrap;
 }
 
@@ -550,6 +555,8 @@ const LEARN = {
   pmd: ['PMD / DGD', `<p>The two polarizations travel at slightly different speeds because fiber is not perfectly round. Mean differential group delay grows with √length. New fiber is ~0.05 ps/√km; some 1990s fiber is 0.5 or worse.</p><p>Coherent DSP tracks it, with a penalty that grows as you approach the tolerance.</p>`],
   filter: ['Filter narrowing', `<p>Every WSS pass rounds off the edges of the passband. A 60 GBd signal in a 75 GHz slot loses a little each pass; through many ROADMs it adds up. Squeezing a 64 GBd signal into a 50 GHz grid is a big penalty.</p>`],
   rx: ['Receiver power window', `<p>Coherent receivers mix the signal with a local oscillator laser. Too little light and receiver electronics noise takes over (Rx LOW). Too much and the photodiodes and ADCs saturate (Rx HIGH, overload). Far too little is LOS.</p><p>For amplified links the usual target is the middle of the window, set with the preamp or a pad.</p>`],
+  srs: ['SRS tilt', `<p><b>Stimulated Raman scattering</b>: light in the fiber acts as a weak Raman pump, so high-frequency (short-wavelength) channels give power to low-frequency ones. With a full C-band load at +1 dBm per channel it is worth roughly 1 dB of tilt per 80 km span, growing with total power, span length and occupied bandwidth.</p><p>Amplifiers with gain-tilt control (and ROADM WSSs) re-flatten the band, so tilt does not pile up. Switch tilt control off on the long-haul scenario to watch it accumulate. The service channel sits mid-band and barely moves, so the <i>worst channel</i> Q margin tracks the highest-frequency channel, which ends up weakest. The model is a first-order approximation, not a measurement.</p>`],
+  aging: ['End-of-life margin', `<p>Links are planned for the day they are worst, not the day they are lit. <b>End of life</b> here adds 1.0 dB of extra loss on every fiber span (splices from repairs, connector wear, fiber ageing) and 0.5 dB of transceiver ageing penalty, then re-runs the whole simulation.</p><p>A link with a few dB of margin today can have none left at end of life. The "works today but fails at end of life" alarm is the early warning. Typical planning margin is 2-3 dB.</p>`],
   launch: ['Launch power', `<p>The per-channel power put into each span. Too low: amplifier noise dominates. Too high: nonlinearity dominates. Somewhere in between (often 0 to +2 dBm/ch for 60 GBd on SMF) GSNR peaks. Open the Launch sweep tab to see your link's curve.</p>`],
 };
 let learnTopic = 'osnr';

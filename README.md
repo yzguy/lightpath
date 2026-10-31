@@ -29,6 +29,8 @@ No dependencies, no bundler. (The page asks Google Fonts for Archivo and IBM Ple
 - **ASE:** each EDFA adds `NF · hν · G · B_ref` (B_ref = 12.5 GHz, 0.1 nm), giving the familiar `OSNR ≈ 58 + P_in − NF` per amp. NF rises when gain is run below ~14 dB.
 - **Nonlinear interference:** closed-form incoherent GN model (Poggiolini), the same family of physics used by TIP's [GNPy](https://github.com/Telecominfraproject/oopt-gnpy). `P_NLI = η · P³` per span, with η depending on γ, effective length, β₂, baud rate, channel count and spacing.
 - **Transceivers:** each mode has a back-to-back SNR ceiling and an implementation penalty, tuned so required OSNR lands near real values (400ZR ≈ 23 dB, 400G ZR+ ≈ 22 dB, 100G DP-QPSK ≈ 11.6 dB). BER from Gray-coded M-QAM formulas; Q = 20·log10(√2·erfc⁻¹(2·BER)).
+- **End of life:** every result also carries an end-of-life run (+1.0 dB loss per fiber span, +0.5 dB transceiver ageing). A link that passes today but fails then raises an alarm.
+- **SRS tilt:** first-order Raman tilt per span (grows with total power, effective length and occupied bandwidth). Amplifier gain-tilt control (on by default) and ROADM WSSs re-flatten the band. The service channel sits mid-band, so the *worst channel* (highest frequency) Q margin is reported separately, and the Spectrum tab draws the tilt.
 - **Other impairments:** CD vs DSP tolerance (hard fail), mean DGD penalty vs PMD tolerance, WSS filter-narrowing penalty per pass, Rx thermal noise and overload penalty, amplifier gain range and total-output saturation.
 
 ### Simplifications
@@ -41,4 +43,4 @@ No dependencies, no bundler. (The page asks Google Fonts for Archivo and IBM Ple
 
 - Bidirectional links and per-direction amp settings
 - Import real span data (lengths, measured losses) from CSV
-- Raman amplification, SRS tilt, ageing margins
+- Raman amplification
