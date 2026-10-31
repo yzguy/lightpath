@@ -570,3 +570,68 @@ test('mixed-line preset: 10G channels get their own results and the overload fix
   // both directions work in plan mode too
   assert.ok(r.rev && r.rev.channels && r.rev.channels.length === r.channels.length);
 });
+
+// ---- per-channel add/drop ----
+test('add/drop preset: channels are lit only between their add and drop ROADMs', () => {
+  const S = build('adddrop'), r = M.simulate(S);
+  assert.equal(r.status, 'up');
+  const rb = S.nodes.find(n => n.name === 'ROADM-B').id;
+  assert.equal(S.g.plan.filter(c => c.to === rb).length, 4); assert.equal(S.g.plan.filter(c => c.from === rb).length, 4);
+  const spans = r.hops.filter(h => h.kind === 'span');
+  assert.deepEqual(spans.map(h => h.nch), [12, 12], '16 channels in the plan, 12 on each span');
+  assert.equal(r.hops.find(h => h.name === 'ROADM-A add').nch, 12);
+  const dropped = r.channels.filter(c => c.to === rb), added = r.channels.filter(c => c.from === rb), through = r.channels.filter(c => !c.partial);
+  assert.equal(dropped.length, 4); assert.equal(added.length, 4); assert.equal(through.length, 8);
+  assert.ok(dropped.every(c => c.toName === 'ROADM-B' && c.partial));
+  assert.ok(r.channels.every(c => c.status === 'up'));
+  // fewer spans and fewer WSS passes mean better GSNR than the end-to-end channels
+  const gMean = a => a.reduce((x, c) => x + c.gosnr, 0) / a.length;
+  assert.ok(gMean(dropped) > gMean(through) + 0.5 && gMean(added) > gMean(through) + 0.5);
+  // the service channel is end to end, so its row still equals the headline
+  const svc = r.channels.find(c => c.svc);
+  assert.ok(Math.abs(svc.qMargin - r.qMargin) < 1e-6 && Math.abs(svc.prx - r.prx) < 1e-6);
+  // a spectrum measured after the first span shows the 12 channels that are lit there, not all 16
+  assert.equal(spans[0].lit.filter(Boolean).length, 12);
+  assert.notDeepEqual(spans[0].lit, spans[1].lit);
+});
+
+test('add/drop: a channel that leaves early does not load the rest of the line', () => {
+  const S = build('adddrop'), full = clone(S);
+  full.g.plan.forEach(c => { c.from = ''; c.to = ''; });
+  const a = M.simulate(S, 3, { single: true }), b = M.simulate(full, 3, { single: true });
+  assert.ok(a.budget.nli < b.budget.nli, 'fewer channels per span, less nonlinear noise');
+  assert.ok(a.qMargin > b.qMargin);
+  // end-to-end plan: the same numbers as before add/drop existed (all channels everywhere)
+  assert.deepEqual(b.hops.filter(h => h.kind === 'span').map(h => h.nch), [16, 16]);
+  assert.ok(b.channels.every(c => !c.partial));
+});
+
+test('add/drop works in the return direction', () => {
+  const r = M.simulate(build('adddrop'));
+  assert.ok(r.rev && r.rev.channels.length === r.channels.length);
+  assert.equal(r.rev.channels.filter(c => c.partial).length, 8);
+  assert.deepEqual(r.rev.hops.filter(h => h.kind === 'span').map(h => h.nch), [12, 12]);
+  const fwd = r.channels.find(c => c.to && !c.svc), back = r.rev.channels.find(c => c.slot === fwd.slot);
+  assert.ok(Math.abs(fwd.gosnr - back.gosnr) < 1.5, 'a symmetric line gives similar GSNR both ways');
+});
+
+test('add/drop sanitize: unknown nodes, the service channel and from=to are cleaned up', () => {
+  const S = build('adddrop'), rb = S.nodes.find(n => n.name === 'ROADM-B').id, mux = 'nope';
+  const d = clone(S);
+  d.g.plan[0].from = mux; d.g.plan[1].to = rb; d.g.plan[1].from = rb; d.g.plan.find(c => c.svc).to = rb; d.g.plan[2].from = { evil: 1 };
+  const c = M.sanitize(d), p = c.g.plan;
+  assert.equal(p[0].from, '');
+  assert.equal(p[1].to, '', 'from === to is cleared');
+  assert.equal(p.find(x => x.svc).to, '', 'the service runs end to end');
+  assert.equal(p[2].from, '');
+  // legacy plans without the fields load as end-to-end
+  const old = clone(S); old.g.plan.forEach(x => { delete x.from; delete x.to; });
+  assert.ok(M.sanitize(old).g.plan.every(x => x.from === '' && x.to === ''));
+});
+
+test('add/drop: a channel whose ROADM is not on the routed path falls back to end to end', () => {
+  const S = build('adddrop'), rb = S.nodes.find(n => n.name === 'ROADM-B').id;
+  const cut = clone(S); cut.nodes = cut.nodes.filter(n => n.id !== rb); cut.links = cut.links.filter(l => l.a !== rb && l.b !== rb);
+  const c = M.sanitize(cut);
+  assert.ok(c.g.plan.every(x => x.from === '' && x.to === ''), 'sanitize clears ids that no longer exist');
+});

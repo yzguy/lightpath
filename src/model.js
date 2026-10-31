@@ -52,6 +52,22 @@ const MODEL = (() => {
           g: { nch: 48, df: 75, launch: 0 }, svc: { a: ta.id, z: tc.id } };
       }
     },
+    adddrop: {
+      name: 'ROADM line with add/drop at the middle node', build() {
+        const ra = N('roadm', 'ROADM-A', 160, 240), rb = N('roadm', 'ROADM-B', 520, 240), rc = N('roadm', 'ROADM-C', 880, 240);
+        const ta = N('trx', 'TRX-A', 160, 400, { mode: 'zrp400' }), tc = N('trx', 'TRX-C', 880, 400, { mode: 'zrp400' });
+        // slots 22..37: some run end to end, some drop at B, some are added at B
+        const plan = [];
+        for (let s = 22; s < 38; s++) {
+          const k = s - 22, c = { slot: s, mode: 'zrp400', off: 0, svc: s === 30, from: '', to: '' };
+          if (!c.svc && k % 4 === 1) c.to = rb.id; // A to B
+          else if (!c.svc && k % 4 === 3) c.from = rb.id; // B to C
+          plan.push(c);
+        }
+        return { nodes: [ra, rb, rc, ta, tc], links: [L(ra, rb, 'fiber', { len: 80 }), L(rb, rc, 'fiber', { len: 80 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
+          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
+      }
+    },
     mxp: {
       name: 'Muxponder: 4x100G over 400G ZR+', build() {
         const a = N('mxp', 'MXP-A', 80, 220), ma = N('mux', 'MUX-A', 260, 220), ba = N('edfa', 'BST-A', 400, 220, { gmin: 5 });
@@ -132,6 +148,7 @@ const MODEL = (() => {
 
   // ---------- channel plan ----------
   // g.plan = null (identical channels, g.nch of them) or [{ slot, mode, off (dB vs the service), svc }]. Slots index the C-band grid.
+  const nodeId = v => (typeof v === 'string' && /^[\w-]{1,40}$/.test(v) ? v : '');
   function sanitizePlan(p, df) {
     if (!Array.isArray(p) || !p.length) return null;
     const slots = PHY_.cBandSlots(df * 1e9), seen = new Set(), out = [];
@@ -140,19 +157,19 @@ const MODEL = (() => {
       const slot = Math.round(+c.slot);
       if (!Number.isFinite(slot) || slot < 0 || slot >= slots || seen.has(slot)) continue;
       seen.add(slot);
-      out.push({ slot, mode: PHY_.MODES[c.mode] ? c.mode : 'zrp400', off: Math.min(10, Math.max(-10, Number.isFinite(+c.off) && c.off !== '' && c.off !== null ? +c.off : 0)), svc: !!c.svc });
+      out.push({ slot, mode: PHY_.MODES[c.mode] ? c.mode : 'zrp400', off: Math.min(10, Math.max(-10, Number.isFinite(+c.off) && c.off !== '' && c.off !== null ? +c.off : 0)), svc: !!c.svc, from: nodeId(c.from), to: nodeId(c.to) });
       if (out.length >= 96) break;
     }
     if (!out.length) return null;
     out.sort((a, b) => a.slot - b.slot);
     const first = out.findIndex(c => c.svc);
-    out.forEach((c, i) => { c.svc = i === (first >= 0 ? first : Math.floor(out.length / 2)); });
+    out.forEach((c, i) => { c.svc = i === (first >= 0 ? first : Math.floor(out.length / 2)); if (c.svc || c.from === c.to) { if (c.svc) c.from = c.to = ''; else c.to = ''; } });
     return out;
   }
   // Turn the uniform line into an editable plan: the same block of channels, service in the middle.
   function planFromUniform(g, svcMode) {
     const df = +g.df * 1e9, ch = buildChans(g, svcMode, false, PHY_.cBandSlots(df), df);
-    return ch.map(c => ({ slot: c.slot, mode: c.mode, off: 0, svc: c.svc }));
+    return ch.map(c => ({ slot: c.slot, mode: c.mode, off: 0, svc: c.svc, from: '', to: '' }));
   }
   // The same plan on a different grid: each channel keeps its frequency, collisions drop.
   function remapPlan(plan, oldDf, newDf) {
@@ -211,6 +228,7 @@ const MODEL = (() => {
     const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', plan: null,
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))) };
     g.plan = sanitizePlan(gi.plan, g.df);
+    if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; }); }
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
     const svc = { a: seen.has(si.a) ? si.a : null, z: seen.has(si.z) ? si.z : null };
     return { nodes, links, g, svc };
@@ -260,11 +278,11 @@ const MODEL = (() => {
   function buildChans(g, svcKey, planOn, slotsN, df) {
     let list;
     if (planOn) {
-      list = g.plan.map(c => ({ slot: +c.slot, mode: c.svc ? svcKey : c.mode, off: Number.isFinite(+c.off) ? +c.off : 0, svc: !!c.svc }));
+      list = g.plan.map(c => ({ slot: +c.slot, mode: c.svc ? svcKey : c.mode, off: Number.isFinite(+c.off) ? +c.off : 0, svc: !!c.svc, from: c.svc ? '' : c.from || '', to: c.svc ? '' : c.to || '' }));
       if (!list.some(c => c.svc)) list[Math.floor(list.length / 2)].svc = true;
     } else {
       const n = Math.max(1, Math.round(+g.nch)), start = Math.floor(Math.max(0, slotsN - n) / 2), mid = Math.floor(n / 2);
-      list = Array.from({ length: n }, (_, i) => ({ slot: start + i, mode: svcKey, off: 0, svc: i === mid }));
+      list = Array.from({ length: n }, (_, i) => ({ slot: start + i, mode: svcKey, off: 0, svc: i === mid, from: '', to: '' }));
     }
     return list.map((c, i) => { const m = PHY_.MODES[c.mode] || PHY_.MODES[svcKey], fTHz = PHY_.slotFreqTHz(c.slot, df); return { ...c, idx: i, m, mode: PHY_.MODES[c.mode] ? c.mode : svcKey, Rs: m.Rs, fTHz, f: fTHz * 1e12 }; });
   }
@@ -298,10 +316,21 @@ const MODEL = (() => {
     const chans = buildChans(g, A.p.mode, planOn, slotsN, df);
     if (planOn) g.nch = chans.length;
     const svcIdx = Math.max(0, chans.findIndex(c => c.svc)), nChan = chans.length;
+    // Add/drop: each channel is lit between the path positions of its add and drop nodes ('' = the service ends). lo/hi are node indices on the path.
+    const lastPos = path.nodes.length - 1, posOf = (id, dflt) => path.nodes.indexOf(id || dflt);
+    for (const c of chans) {
+      let lo = c.svc ? 0 : posOf(c.from, path.nodes[0]), hi = c.svc ? lastPos : posOf(c.to, path.nodes[lastPos]);
+      if (lo < 0) lo = 0; if (hi < 0) hi = lastPos;
+      if (lo > hi) [lo, hi] = [hi, lo];
+      if (lo === hi) { lo = 0; hi = lastPos; }
+      c.lo = lo; c.hi = hi;
+    }
+    const maskAt = j => chans.map(c => c.lo <= j && j < c.hi), litCount = j => maskAt(j).filter(Boolean).length;
     const nchLine = Math.max(1, +g.nch), Rs = mode.Rs;
     const reachHz = PHY_.XPM.reachGHz * 1e9, nbWeight = c => (planOn ? (c.m.coh === false ? PHY_.XPM.same : PHY_.XPM.coh) : (g.neighbors === 'coh' ? PHY_.XPM.coh : PHY_.XPM.same));
-    const xpmW = chans.map((ci, i) => (ci.m.coh === false ? chans.reduce((a, cj, j) => a + (j !== i && Math.abs(cj.f - ci.f) <= reachHz ? nbWeight(cj) * lin(cj.off - ci.off) : 0), 0) : 0));
+    const xpmWFor = (i, act) => (chans[i].m.coh === false ? chans.reduce((a, cj, j) => a + (j !== i && (!act || act[j]) && Math.abs(cj.f - chans[i].f) <= reachHz ? nbWeight(cj) * lin(cj.off - chans[i].off) : 0), 0) : 0);
     const ev = []; // event log replayed per channel after the loop (plan mode only)
+    let curAct = planOn ? maskAt(0) : null; // channels lit at the current point of the path (plan mode)
     const txDbm = A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx;
     let mpi = 0, xpmPen = 0, P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
     const tiltSeen = []; // tilt (dB, low- minus high-frequency channel) at every amplifier input and at the receiver
@@ -310,7 +339,7 @@ const MODEL = (() => {
     const osnrNow = () => db(P / Pase);
     const gosnrNow = () => db(1 / (Pase / P + (Pnli / P) * Rs / PHY_.BREF));
     function rec(name, kind, before, extra = {}) {
-      hops.push({ name, kind, in: before, out: snap(), km, nch, tilt, osnr: osnrNow(), gosnr: gosnrNow(), ...extra });
+      hops.push({ name, kind, in: before, out: snap(), km, nch, tilt, osnr: osnrNow(), gosnr: gosnrNow(), ...(curAct ? { lit: curAct.slice() } : {}), ...extra });
     }
     const loss = d => { const f = lin(-d); P *= f; Pase *= f; Pnli *= f; if (planOn) ev.push({ k: 'L', f }); };
     function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl) {
@@ -339,7 +368,8 @@ const MODEL = (() => {
       else {
         const fb = PHY_.FIBERS[l.p.fiber], Lk = +l.p.len, b = snap();
         // Per-span loading: from this fiber onward (until a mux or ROADM changes it) only this many channels are lit.
-        if (l.p.nch !== '' && l.p.nch != null) nch = Math.min(96, Math.max(1, Math.round(+l.p.nch)));
+        if (planOn) { curAct = maskAt(i); nch = curAct.filter(Boolean).length; } // the plan decides which channels ride this span
+        else if (l.p.nch !== '' && l.p.nch != null) nch = Math.min(96, Math.max(1, Math.round(+l.p.nch)));
         maxNch = Math.max(maxNch, nch);
         const sl = fb.att * Lk + +pd(l.p, 'extra') + (eol ? eolSpan : 0);
         const pump = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +pd(l.p, 'raman') || 0));
@@ -350,19 +380,21 @@ const MODEL = (() => {
         const gb = sb.gain, gf = sf.gain, gr = gb + gf, depl = Math.max(sb.depletion, sf.depletion);
         // Raman lifts the power profile along the span, so the fiber looks less lossy to the nonlinearity (more so when pumped forward).
         const fbNl = gr > 0 ? { ...fb, att: Math.max(0.05, (fb.att * Lk - gr) / Lk) } : fb;
-        const full = nch === nChan, fwdF = PHY_.ramanFwdNliFactor(gf);
+        const act = planOn ? curAct : null, full = planOn || nch === nChan, fwdF = PHY_.ramanFwdNliFactor(gf);
         // Plan mode: this channel's nonlinear noise depends on who its neighbours are (baud rate, power, distance).
-        const nF = planOn && full ? PHY_.nliPlanFactor(fbNl, chans.map(c => ({ f: c.f, Rs: c.Rs, P: lin(c.off) })), svcIdx, df, nChan) : 1;
+        const actList = planOn ? chans.map((c, k) => (act[k] ? { f: c.f, Rs: c.Rs, P: lin(c.off), k } : null)).filter(Boolean) : null;
+        const nF = planOn ? PHY_.nliPlanFactor(fbNl, actList, actList.findIndex(c => c.k === svcIdx), df, actList.length) : 1;
         const nNew = PHY_.etaNLI(fbNl, Lk, Rs, nch, df) * P ** 3 * fwdF * nF;
         if (mode.coh === false && nch > 1) { // cross-phase modulation from the other channels hits a direct-detection receiver
-          xpmPen = Math.min(PHY_.XPM.cap, xpmPen + PHY_.xpmSpanPenalty(fbNl, Lk, 1, P, xpmW[svcIdx]));
+          xpmPen = Math.min(PHY_.XPM.cap, xpmPen + PHY_.xpmSpanPenalty(fbNl, Lk, 1, P, xpmWFor(svcIdx, act)));
         }
         const rho = PHY_.nliCorrelation(cd);
         Pnli += nNew + 2 * rho * Math.sqrt(Pnli * nNew); // coherent cross term when the dispersion map is flat
         // Raman gain spectrum: channels at different frequencies see different gain, relative to the service channel.
         const rel = gr > 0 && full ? chans.map(c => PHY_.ramanRel(npump, c.fTHz, chans[svcIdx].fTHz)) : null;
-        const ripplePP = rel ? gr * (Math.max(...rel) - Math.min(...rel)) : 0;
-        if (planOn) ev.push({ k: 'S', fbNl, Lk, nch, full, fwdF, rho, cd, P, xpm: nch > 1 });
+        const relAct = rel && act ? rel.filter((_, k) => act[k]) : rel;
+        const ripplePP = relAct ? gr * (Math.max(...relAct) - Math.min(...relAct)) : 0;
+        if (planOn) ev.push({ k: 'S', fbNl, Lk, nch, act: act.slice(), fwdF, rho, dcd: fb.D * Lk, dg2: fb.pmd ** 2 * Lk, xpm: nch > 1 });
         if (gr > 0) mpi += PHY_.drsRatio(gr, fb, Lk);
         tilt += PHY_.srsTilt(fb, Lk, P, nch, df) + ripplePP;
         if (gr > 0) {
@@ -388,17 +420,23 @@ const MODEL = (() => {
         const b = snap(); loss(+nxt.p.il);
         if (joins) nch = nchLine;
         if (drops) nch = 1;
+        if (planOn) { if (!drops) nch = litCount(i + 1); curAct = maskAt(i + 1); }
         rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
-      } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il'), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
+      } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il'), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
       else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false); }
       else if (t === 'roadm') {
         const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
-        if (add) nch = nchLine;
+        if (add) nch = planOn ? litCount(i + 1) : nchLine;
         if (p.amps && !add) amp(nxt.name + ' pre', p.nf, 'auto', +g.launch + (drop ? 4 : 0), 0, 0, 35, 24, true);
-        const b = snap(); const lo = np * +p.wss + (add || drop ? +p.ad : 0); loss(lo); passes += np; tiltSeen.push(tilt); tilt = 0; if (planOn) ev.push({ k: 'Z' }); // the WSS equalises every channel
-        rec(nxt.name + (add ? ' add' : drop ? ' drop' : ' express'), 'roadm', b, { gain: -lo, note: `${np} WSS pass${np > 1 ? 'es' : ''}` });
+        const k = i + 1, leaving = planOn ? chans.map((c, j) => (c.hi === k && k < lastPos ? j : -1)).filter(j => j >= 0) : [], joining = planOn ? chans.map((c, j) => (c.lo === k ? j : -1)).filter(j => j >= 0) : [];
+        // Channels that leave here take the drop port (one WSS pass, the drop structure and a drop amplifier) instead of expressing through.
+        if (leaving.length) { const dg = p.amps ? 4 : 0; ev.push({ k: 'D', idx: leaving, G: lin(dg), nfe: PHY_.ampNfEff(+p.nf, dg), f: lin(-(+p.wss + +p.ad)) }); }
+        const b = snap(); const lo = np * +p.wss + (add || drop ? +p.ad : 0); loss(lo); passes += np; tiltSeen.push(tilt); tilt = 0;
+        if (planOn) { ev.push({ k: 'W', n: np }); ev.push({ k: 'Z' }); if (joining.length) ev.push({ k: 'J', idx: joining }); curAct = maskAt(k); } // the WSS equalises every channel, added ones join at the same level
+        rec(nxt.name + (add ? ' add' : drop ? ' drop' : ' express'), 'roadm', b, { gain: -lo, note: `${np} WSS pass${np > 1 ? 'es' : ''}` + (leaving.length ? `, ${leaving.length} channel${leaving.length > 1 ? 's' : ''} dropped` : '') + (joining.length ? `, ${joining.length} added` : '') });
+        if (planOn && !drop) nch = litCount(k);
         if (p.amps && !drop) amp(nxt.name + ' boost', p.nf + 0.5, 'auto', +g.launch, 0, 0, 35, 24, true);
         if (drop) nch = 1;
       }
@@ -453,40 +491,60 @@ const MODEL = (() => {
     res.qMargin = res.q - res.qThr; res.osnrMargin = res.gosnr - res.req;
     res.tilt = peakTilt; res.worstQMargin = PHY_.qFromBer(berEdge) - res.qThr;
     // Plan mode: replay the event log for every channel with its own mode, baud rate, power offset, frequency and neighbours.
+    // A channel exists from the node where it is added to the node where it is dropped; its state is frozen (fin) when it leaves.
     if (planOn && !eol) {
       const N = nChan, hnb = PHY_.H * PHY_.NU * PHY_.BREF, P0 = lin(txDbm) / 1000;
-      const Pc = chans.map(c => P0 * lin(c.off)), Pa = chans.map((c, i) => Pc[i] / lin(c.m.txOsnr)), Pn = new Array(N).fill(0), xp = new Array(N).fill(0);
+      const Pc = new Array(N).fill(0), Pa = new Array(N).fill(0), Pn = new Array(N).fill(0), xp = new Array(N).fill(0), cdc = new Array(N).fill(0), dg2 = new Array(N).fill(0), psc = new Array(N).fill(0);
+      const alive = chans.map(c => c.lo === 0), fin = new Array(N).fill(null);
+      chans.forEach((c, i) => { if (alive[i]) { Pc[i] = P0 * lin(c.off); Pa[i] = Pc[i] / lin(c.m.txOsnr); } });
       let sP = P0;
+      const each = fn => { for (let i = 0; i < N; i++) if (alive[i]) fn(i); };
+      const freeze = i => { fin[i] = { Pc: Pc[i], Pa: Pa[i], Pn: Pn[i], xp: xp[i], cd: cdc[i], dg2: dg2[i], ps: psc[i] }; alive[i] = false; };
       for (const e of ev) {
-        if (e.k === 'L') { sP *= e.f; for (let i = 0; i < N; i++) { Pc[i] *= e.f; Pa[i] *= e.f; Pn[i] *= e.f; } }
-        else if (e.k === 'A') { sP *= e.G; for (let i = 0; i < N; i++) { Pc[i] *= e.G; Pn[i] *= e.G; Pa[i] = Pa[i] * e.G + lin(e.nfe) * hnb * e.G; } }
-        else if (e.k === 'R') { sP *= lin(e.gain); for (let i = 0; i < N; i++) { const gi = lin(e.gain * (e.rel ? e.rel[i] : 1)); Pc[i] *= gi; Pn[i] *= gi; Pa[i] = Pa[i] * gi + lin(e.nf) * hnb * gi; } }
-        else if (e.k === 'Z') { for (let i = 0; i < N; i++) { const c = sP * lin(chans[i].off) / Pc[i]; Pc[i] *= c; Pn[i] *= c; Pa[i] *= c; } }
+        if (e.k === 'L') { sP *= e.f; each(i => { Pc[i] *= e.f; Pa[i] *= e.f; Pn[i] *= e.f; }); }
+        else if (e.k === 'A') { sP *= e.G; each(i => { Pc[i] *= e.G; Pn[i] *= e.G; Pa[i] = Pa[i] * e.G + lin(e.nfe) * hnb * e.G; }); }
+        else if (e.k === 'R') { sP *= lin(e.gain); each(i => { const gi = lin(e.gain * (e.rel ? e.rel[i] : 1)); Pc[i] *= gi; Pn[i] *= gi; Pa[i] = Pa[i] * gi + lin(e.nf) * hnb * gi; }); }
+        else if (e.k === 'Z') each(i => { const c = sP * lin(chans[i].off) / Pc[i]; Pc[i] *= c; Pn[i] *= c; Pa[i] *= c; });
+        else if (e.k === 'C') each(i => { cdc[i] += e.dcd; dg2[i] += e.dg2; });
+        else if (e.k === 'W') each(i => { psc[i] += e.n; });
+        else if (e.k === 'D') for (const i of e.idx) {
+          if (!alive[i]) continue;
+          Pc[i] *= e.G * e.f; Pn[i] *= e.G * e.f; Pa[i] = (Pa[i] * e.G + (e.G > 1 ? lin(e.nfe) * hnb * e.G : 0)) * e.f; psc[i] += 1;
+          freeze(i);
+        }
+        else if (e.k === 'J') for (const i of e.idx) { // added at this ROADM: level with the express channels, own transmitter noise, nothing accumulated yet
+          Pc[i] = sP * lin(chans[i].off); Pa[i] = Pc[i] / lin(chans[i].m.txOsnr); Pn[i] = 0; xp[i] = 0; cdc[i] = 0; dg2[i] = 0; psc[i] = 1; alive[i] = true;
+        }
         else if (e.k === 'S') {
-          const pl = e.full ? chans.map((c, j) => ({ f: c.f, Rs: c.Rs, P: lin(c.off) })) : null;
-          for (let i = 0; i < N; i++) {
-            if (!e.full && i !== svcIdx) continue;
-            const nNew = PHY_.etaNLI(e.fbNl, e.Lk, chans[i].Rs, e.nch, df) * Pc[i] ** 3 * e.fwdF * (e.full ? PHY_.nliPlanFactor(e.fbNl, pl, i, df, N) : 1);
-            Pn[i] += nNew + 2 * e.rho * Math.sqrt(Pn[i] * nNew);
-            if (chans[i].m.coh === false && e.xpm) xp[i] = Math.min(PHY_.XPM.cap, xp[i] + PHY_.xpmSpanPenalty(e.fbNl, e.Lk, 1, Pc[i], xpmW[i]));
+          const pl = chans.map((c, j) => ({ f: c.f, Rs: c.Rs, P: lin(c.off) })).filter((_, j) => e.act[j]), at = chans.map((_, j) => j).filter(j => e.act[j]);
+          for (const i of at) {
+            if (!alive[i]) continue;
+            const nNew = PHY_.etaNLI(e.fbNl, e.Lk, chans[i].Rs, e.nch, df) * Pc[i] ** 3 * e.fwdF * PHY_.nliPlanFactor(e.fbNl, pl, at.indexOf(i), df, at.length);
+            Pn[i] += nNew + 2 * PHY_.nliCorrelation(cdc[i]) * Math.sqrt(Pn[i] * nNew);
+            if (chans[i].m.coh === false && e.xpm) xp[i] = Math.min(PHY_.XPM.cap, xp[i] + PHY_.xpmSpanPenalty(e.fbNl, e.Lk, 1, Pc[i], xpmWFor(i, e.act)));
+            cdc[i] += e.dcd; dg2[i] += e.dg2;
           }
         }
       }
+      for (let i = 0; i < N; i++) if (alive[i]) freeze(i);
       res.channels = chans.map((c, i) => {
-        const m = c.m, prx = db(Pc[i] * 1000), snrA = (Pc[i] / Pa[i]) * PHY_.BREF / m.Rs, snrN = Pn[i] > 0 ? Pc[i] / Pn[i] : Infinity, snrR = lin(prx - m.rxMin + 25);
+        const m = c.m, f = fin[i], prx = db(f.Pc * 1000), snrA = (f.Pc / f.Pa) * PHY_.BREF / m.Rs, snrN = f.Pn > 0 ? f.Pc / f.Pn : Infinity, snrR = lin(prx - m.rxMin + 25);
         const ln = 1 / (1 / snrA + 1 / snrN + 1 / snrR + mpi);
-        const pen = passes * PHY_.filterPenaltyPerPass(m.Rs, df) + Math.max(0, prx - m.rxMax) * 1.5 + (res.dgd / m.dgdTol) ** 2 + PHY_.cdPenalty(m, cd) + xp[i] + tiltPenaltyFor(chans, i, edgeTilt) + agePen;
+        const dgdC = Math.sqrt(f.dg2);
+        const pen = f.ps * PHY_.filterPenaltyPerPass(m.Rs, df) + Math.max(0, prx - m.rxMax) * 1.5 + (dgdC / m.dgdTol) ** 2 + PHY_.cdPenalty(m, f.cd) + f.xp + tiltPenaltyFor(chans, i, edgeTilt) + agePen;
         const bER = PHY_.MODS[m.mod].ber(PHY_.effSnr(m, ln, pen)), q = PHY_.qFromBer(bER), qThr = PHY_.qFromBer(m.berThr), qm = q - qThr;
         const notes = [];
         let status = 'up';
         if (prx < m.rxMin - 12) { status = 'los'; notes.push('Rx power far below the receiver sensitivity'); }
-        else if (Math.abs(cd) > m.cdTol) { status = 'down'; notes.push(`dispersion ${Math.round(cd)} ps/nm is past the ${m.cdTol} ps/nm tolerance`); }
+        else if (Math.abs(f.cd) > m.cdTol) { status = 'down'; notes.push(`dispersion ${Math.round(f.cd)} ps/nm is past the ${m.cdTol} ps/nm tolerance`); }
         else if (bER > m.berThr) { status = 'down'; notes.push('pre-FEC BER above the FEC limit'); }
         else if (qm < 1 || prx < m.rxMin || prx > m.rxMax) { status = 'degraded'; notes.push(qm < 1 ? `only ${f1(qm)} dB of Q margin` : prx < m.rxMin ? 'Rx below the sensitivity spec' : 'Rx above the overload point'); }
-        if (xp[i] > 1.5) notes.push(`XPM costs ${f1(xp[i])} dB`);
-        return { idx: i, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(Pc[i] / Pa[i]), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: xp[i], status, notes };
+        if (f.xp > 1.5) notes.push(`XPM costs ${f1(f.xp)} dB`);
+        const nm = k => (node(path.nodes[k]) || {}).name;
+        return { idx: i, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
+          from: c.from, to: c.to, fromName: nm(c.lo), toName: nm(c.hi), partial: c.lo > 0 || c.hi < lastPos };
       });
-      res.sP = sP; res.Pend = Pc[svcIdx];
+      res.sP = sP; res.Pend = fin[svcIdx].Pc;
       const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los'));
       if (failing.length) alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${failing.slice(0, 3).map(c => `slot ${c.slot + 1} (${c.short}): ${c.notes[0]}`).join('; ')}${failing.length > 3 ? '…' : ''}.` });
     }
