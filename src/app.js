@@ -11,63 +11,17 @@ const el = (tag, attrs = {}, kids = []) => {
 const SVGNS = 'http://www.w3.org/2000/svg';
 const sv = (tag, attrs = {}) => { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; };
 const f1 = x => (isFinite(x) ? x.toFixed(1) : '—');
-const f2 = x => (isFinite(x) ? x.toFixed(2) : '—');
-const uid = p => p + Math.random().toString(36).slice(2, 7);
-
-const TYPES = {
-  trx: { label: 'Transponder', hint: 'Coherent line card / pluggable', maxLinks: 1, def: () => ({ mode: 'zr400', tx: null }) },
-  mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
-  edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', gain: 20, nf: 5, gmin: 10, gmax: 30, pmax: 23 }) },
-  roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
-  voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
-};
-const PREFIX = { trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-
-// ---------- presets ----------
-function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
-function L(a, b, kind, p = {}) { return { id: uid('l'), a: a.id, b: b.id, kind, p: kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, cut: false, ...p } : { il: 0.5, cut: false, ...p } }; }
-const PRESETS = {
-  dci: {
-    name: 'DCI: 400ZR over 80 km', build() {
-      const a1 = N('trx', 'TRX-A1', 80, 120), a2 = N('trx', 'TRX-A2', 80, 220), a3 = N('trx', 'TRX-A3', 80, 320);
-      const ma = N('mux', 'MUX-A', 230, 220), ba = N('edfa', 'BST-A', 370, 220, { gmin: 5 });
-      const pb = N('edfa', 'PRE-B', 640, 220), mb = N('mux', 'MUX-B', 780, 220);
-      const b1 = N('trx', 'TRX-B1', 930, 120), b2 = N('trx', 'TRX-B2', 930, 220), b3 = N('trx', 'TRX-B3', 930, 320);
-      return { nodes: [a1, a2, a3, ma, ba, pb, mb, b1, b2, b3], links: [L(a1, ma, 'patch'), L(a2, ma, 'patch'), L(a3, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, b1, 'patch'), L(mb, b2, 'patch'), L(mb, b3, 'patch')],
-        g: { nch: 16, df: 75, launch: 0 }, svc: { a: a1.id, z: b1.id } };
-    }
-  },
-  lh: {
-    name: 'Long haul: 5 spans with ILAs', build() {
-      const a = N('trx', 'TRX-A', 60, 120, { mode: 'zrp400' }), ma = N('mux', 'MUX-A', 60, 250), ba = N('edfa', 'BST-A', 220, 250, { gmin: 5 });
-      const i1 = N('edfa', 'ILA-1', 400, 250), i2 = N('edfa', 'ILA-2', 580, 250), i3 = N('edfa', 'ILA-3', 760, 250), i4 = N('edfa', 'ILA-4', 940, 250);
-      const pb = N('edfa', 'PRE-B', 1120, 250), mb = N('mux', 'MUX-B', 1260, 250), z = N('trx', 'TRX-Z', 1260, 120, { mode: 'zrp400' });
-      return { nodes: [a, ma, ba, i1, i2, i3, i4, pb, mb, z], links: [L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, i1, 'fiber', { len: 80 }), L(i1, i2, 'fiber', { len: 95 }), L(i2, i3, 'fiber', { len: 80 }), L(i3, i4, 'fiber', { len: 100 }), L(i4, pb, 'fiber', { len: 85 }), L(pb, mb, 'patch'), L(mb, z, 'patch')],
-        g: { nch: 64, df: 75, launch: 1 }, svc: { a: a.id, z: z.id } };
-    }
-  },
-  ring: {
-    name: 'ROADM triangle with restoration', build() {
-      const ra = N('roadm', 'ROADM-A', 200, 300), rb = N('roadm', 'ROADM-B', 520, 110), rc = N('roadm', 'ROADM-C', 840, 300);
-      const ta = N('trx', 'TRX-A', 200, 440, { mode: 'zrp400' }), tc = N('trx', 'TRX-C', 840, 440, { mode: 'zrp400' }), tb = N('trx', 'TRX-B', 520, 0, { mode: 'zrp400' });
-      return { nodes: [ra, rb, rc, ta, tb, tc], links: [L(ra, rc, 'fiber', { len: 70 }), L(ra, rb, 'fiber', { len: 100 }), L(rb, rc, 'fiber', { len: 110 }), L(ta, ra, 'patch'), L(tc, rc, 'patch'), L(tb, rb, 'patch')],
-        g: { nch: 48, df: 75, launch: 0 }, svc: { a: ta.id, z: tc.id } };
-    }
-  },
-  dark: {
-    name: 'Dark fiber: unamplified ZR', build() {
-      const a = N('trx', 'TRX-A', 150, 220), z = N('trx', 'TRX-Z', 800, 220);
-      return { nodes: [a, z], links: [L(a, z, 'fiber', { len: 25, extra: 1.5 })], g: { nch: 1, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } };
-    }
-  },
-};
+const { TYPES, PREFIX, PRESETS, uid, linkDefaults } = MODEL;
 
 // ---------- state ----------
 let S;
 let sel = null, tool = 'select';
 const KEY = 'optical-lab-v1';
 function load() {
-  try { const t = localStorage.getItem(KEY); if (t) { const o = JSON.parse(t); if (o && o.nodes) { S = o; return; } } } catch (e) {}
+  try {
+    const t = localStorage.getItem(KEY);
+    if (t) { const o = JSON.parse(t), v = o && o.view; S = { ...MODEL.sanitize(o), view: v && isFinite(v.k) && isFinite(v.x) && isFinite(v.y) && v.k > 0 ? { x: v.x, y: v.y, k: v.k } : { x: -40, y: -60, k: 1 } }; return; }
+  } catch (e) { /* corrupt or outdated save: fall through to the default scenario */ }
   applyPreset('dci', true);
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
@@ -79,145 +33,12 @@ function applyPreset(k, quiet) {
 const node = id => S.nodes.find(n => n.id === id);
 const link = id => S.links.find(l => l.id === id);
 const linksOf = id => S.links.filter(l => l.a === id || l.b === id);
-const other = (l, id) => (l.a === id ? l.b : l.a);
-
-// ---------- routing ----------
-function route(aId, zId, allowCut) {
-  const dist = { [aId]: 0 }, prev = {}, done = new Set();
-  while (true) {
-    let u = null, best = Infinity;
-    for (const k in dist) if (!done.has(k) && dist[k] < best) { best = dist[k]; u = k; }
-    if (u == null) return null;
-    if (u === zId) break;
-    done.add(u);
-    if (u !== aId && node(u).type === 'trx') continue;
-    for (const l of linksOf(u)) {
-      if (l.p.cut && !allowCut) continue;
-      const v = other(l, u);
-      const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + (l.p.cut ? 1e6 : 0);
-      if (dist[v] == null || dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = { u, l: l.id }; }
-    }
-  }
-  const nodes = [zId], links = [];
-  let c = zId;
-  while (c !== aId) { links.unshift(prev[c].l); c = prev[c].u; nodes.unshift(c); }
-  return { nodes, links };
-}
-
-// ---------- simulation ----------
-const reqCache = {};
-const reqOsnr = k => (reqCache[k] ??= PHY.requiredOsnr(PHY.MODES[k]));
-function simulate(launchOverride) {
-  const g = { ...S.g }; if (launchOverride != null) g.launch = launchOverride;
-  const A = node(S.svc.a), Z = node(S.svc.z);
-  if (!A || !Z || A.type !== 'trx' || Z.type !== 'trx' || A === Z) return { status: 'none', headline: 'Pick two transponders as the A and Z ends of a service.' };
-  const mode = PHY.MODES[A.p.mode];
-  let path = route(A.id, Z.id, false), rerouteCut = false;
-  if (!path) { path = route(A.id, Z.id, true); rerouteCut = true; }
-  if (!path) return { status: 'nopath', headline: `No physical path from ${A.name} to ${Z.name}. Cable them together.` };
-
-  const nchLine = Math.max(1, +g.nch), df = +g.df * 1e9, Rs = mode.Rs;
-  const txDbm = A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx;
-  let P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1;
-  const hops = [], alarms = [];
-  const snap = () => ({ sig: db(P * 1000), ase: db(Pase * 1000), nli: Pnli > 0 ? db(Pnli * 1000 * PHY.BREF / Rs) : -99 });
-  const osnrNow = () => db(P / Pase);
-  const gosnrNow = () => db(1 / (Pase / P + (Pnli / P) * Rs / PHY.BREF));
-  function rec(name, kind, before, extra = {}) {
-    hops.push({ name, kind, in: before, out: snap(), km, nch, osnr: osnrNow(), gosnr: gosnrNow(), ...extra });
-  }
-  const loss = d => { const f = lin(-d); P *= f; Pase *= f; Pnli *= f; };
-  function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax) {
-    const before = snap(), pin = before.sig;
-    let G = ctl === 'auto' ? target - pin : +gFixed, note = '';
-    if (G < gmin) { note = `Needs ${f1(G)} dB but min gain is ${gmin} dB: output runs hot`; G = gmin; }
-    if (G > gmax) { note = `Needs ${f1(G)} dB but max gain is ${gmax} dB: output runs low`; G = gmax; }
-    const tot = pin + G + db(nch);
-    if (tot > pmax) { G -= tot - pmax; note = `Hit total output limit ${pmax} dBm (${nch} ch): per-channel power capped`; }
-    const nfe = PHY.ampNfEff(+nf, G);
-    P *= lin(G); Pnli *= lin(G);
-    Pase = Pase * lin(G) + lin(nfe) * PHY.H * PHY.NU * lin(G) * PHY.BREF;
-    rec(name, 'amp', before, { gain: G, nf: nfe, note });
-    if (note) alarms.push({ sev: 'warn', text: `${name}: ${note}.` });
-  }
-
-  rec(A.name, 'tx', snap(), { note: `Tx ${f1(txDbm)} dBm, Tx OSNR ${mode.txOsnr} dB` });
-  let losAt = null;
-  for (let i = 0; i < path.links.length; i++) {
-    const l = link(path.links[i]), nxt = node(path.nodes[i + 1]), prv = node(path.nodes[i]);
-    if (l.p.cut) { losAt = l; hops.push({ name: linkName(l), kind: 'cut', in: snap(), out: { sig: -99, ase: -99, nli: -99 }, km, nch, note: 'Fiber cut' }); break; }
-    if (l.kind === 'patch') { const b = snap(); loss(+l.p.il); rec('patch', 'patch', b, { gain: -l.p.il }); }
-    else {
-      const fb = PHY.FIBERS[l.p.fiber], Lk = +l.p.len, b = snap();
-      Pnli += PHY.etaNLI(fb, Lk, Rs, nch, df) * P ** 3;
-      const sl = fb.att * Lk + +l.p.extra;
-      loss(sl); cd += fb.D * Lk; dgd2 += fb.pmd ** 2 * Lk; km += Lk;
-      rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: -sl, len: Lk, launch: b.sig });
-    }
-    if (i + 1 === path.links.length) break;
-    const t = nxt.type, nnext = node(path.nodes[i + 2]);
-    const target = nxt.p.target === '' || nxt.p.target == null ? +g.launch : +nxt.p.target;
-    if (t === 'mux') {
-      const b = snap(); loss(+nxt.p.il);
-      nch = prv.type === 'trx' ? nchLine : nnext.type === 'trx' ? 1 : nch;
-      if (prv.type === 'trx') nch = nchLine;
-      rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: prv.type === 'trx' ? 'mux: channel joins the line' : nnext.type === 'trx' ? 'demux: channel dropped' : '' });
-      if (nnext.type === 'trx') nch = 1;
-      hops[hops.length - 1].nch = nch;
-    } else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
-    else if (t === 'edfa') { amp(nxt.name, nxt.p.nf, nxt.p.ctl, target, nxt.p.gain, +nxt.p.gmin, +nxt.p.gmax, +nxt.p.pmax); }
-    else if (t === 'roadm') {
-      const add = prv.type === 'trx' || prv.type === 'mux', drop = nnext.type === 'trx' || nnext.type === 'mux';
-      const p = nxt.p, np = add || drop ? 1 : 2;
-      if (add) nch = nchLine;
-      if (p.amps && !add) amp(nxt.name + ' pre', p.nf, 'auto', +g.launch + (drop ? 4 : 0), 0, 0, 35, 24);
-      const b = snap(); const lo = np * +p.wss + (add || drop ? +p.ad : 0); loss(lo); passes += np;
-      rec(nxt.name + (add ? ' add' : drop ? ' drop' : ' express'), 'roadm', b, { gain: -lo, note: `${np} WSS pass${np > 1 ? 'es' : ''}` });
-      if (p.amps && !drop) amp(nxt.name + ' boost', p.nf + 0.5, 'auto', +g.launch, 0, 0, 35, 24);
-      if (drop) nch = 1;
-    } else if (t === 'trx') { /* not traversable */ }
-  }
-
-  const res = { mode, modeKey: A.p.mode, A, Z, path, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
-  if (losAt) { res.status = 'los'; res.headline = `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}.`; res.prx = -Infinity; return res; }
-  const prx = db(P * 1000); res.prx = prx;
-  if (prx < mode.rxMin - 12) { res.status = 'los'; res.headline = `LOS at ${Z.name}: ${f1(prx)} dBm is below what the receiver can detect.`; alarms.unshift({ sev: 'bad', text: `Rx power ${f1(prx)} dBm is far below the ${f1(mode.rxMin)} dBm sensitivity.` }); return finishSweepless(res); }
-  const snrAse = (P / Pase) * PHY.BREF / Rs, snrNli = Pnli > 0 ? P / Pnli : Infinity;
-  const snrRx = lin(prx - mode.rxMin + 25), snrTrx = lin(mode.snrTrx);
-  const line = 1 / (1 / snrAse + 1 / snrNli + 1 / snrRx);
-  const filt = passes * PHY.filterPenaltyPerPass(Rs, df);
-  const over = Math.max(0, prx - mode.rxMax) * 1.5;
-  const pmdPen = (res.dgd / mode.dgdTol) ** 2;
-  const eff = PHY.effSnr(mode, line, filt + over + pmdPen);
-  const ber = PHY.MODS[mode.mod].ber(eff);
-  Object.assign(res, {
-    osnr: db(P / Pase), gosnr: db(1 / (1 / snrAse + 1 / snrNli) * Rs / PHY.BREF), snrAse, snrNli, snrRx, snrTrx, effDb: db(eff),
-    ber, q: PHY.qFromBer(ber), qThr: PHY.qFromBer(mode.berThr), filt, over, pmdPen, req: reqOsnr(A.p.mode),
-    budget: { ase: 1 / snrAse, nli: 1 / snrNli, trx: 1 / snrTrx, rx: 1 / snrRx },
-  });
-  res.qMargin = res.q - res.qThr; res.osnrMargin = res.gosnr - res.req;
-  // alarms & status
-  const bad = [];
-  if (Z.p.mode !== A.p.mode) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY.MODES[Z.p.mode].short}. The ends will never lock.`);
-  if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} DSP range of ${mode.cdTol} ps/nm.`);
-  if (ber > mode.berThr) bad.push(`Pre-FEC BER ${ber.toExponential(2)} is above the ${mode.fec} limit ${mode.berThr.toExponential(2)}: uncorrectable errors, link down.`);
-  bad.forEach(t => alarms.unshift({ sev: 'bad', text: t }));
-  if (prx < mode.rxMin) alarms.push({ sev: 'warn', text: `Rx power ${f1(prx)} dBm is below the ${mode.rxMin} dBm sensitivity spec (Rx LOW alarm). Receiver noise is now eating SNR.` });
-  if (prx > mode.rxMax) alarms.push({ sev: prx > mode.rxMax + 5 ? 'bad' : 'warn', text: `Rx power ${f1(prx)} dBm is above the ${mode.rxMax} dBm overload point (Rx HIGH alarm). Add a pad.` });
-  if (res.dgd > mode.dgdTol * 0.7) alarms.push({ sev: 'warn', text: `Mean DGD ${f1(res.dgd)} ps is close to or over the ${mode.dgdTol} ps PMD tolerance.` });
-  if (Rs > df) alarms.push({ sev: 'warn', text: `${mode.short} occupies ~${Math.round(Rs / 1e9 * 1.1)} GHz but the grid slot is ${g.df} GHz. Filters clip it and neighbours overlap.` });
-  if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber.' });
-  if (bad.length) { res.status = 'down'; res.headline = bad[0]; }
-  else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. Aging or a dirty connector will take it down.` : 'Up, with alarms to look at.'; }
-  else { res.status = 'up'; res.headline = `Up with ${f1(res.qMargin)} dB Q margin.`; }
-  return res;
-}
-function finishSweepless(r) { r.status = 'los'; return r; }
-function linkName(l) { const a = node(l.a), b = node(l.b); return `${a ? a.name : '?'}–${b ? b.name : '?'}`; }
+const linkName = l => MODEL.mkGraph(S).linkName(l);
+const simulate = launchOverride => MODEL.simulate(S, launchOverride);
+const reqOsnr = MODEL.reqOsnr;
 
 // ---------- canvas ----------
 const svg = $('#cv'), gRoot = $('#world');
-const NODE_W = { trx: 92, mux: 70, edfa: 64, roadm: 70, voa: 60 };
 function fitView() {
   if (!S.nodes.length) return;
   const xs = S.nodes.map(n => n.x), ys = S.nodes.map(n => n.y);
@@ -316,7 +137,7 @@ svg.addEventListener('pointerup', e => {
   if (d.kind === 'cable') {
     $('#rubber').setAttribute('visibility', 'hidden');
     const t = document.elementFromPoint(e.clientX, e.clientY), nEl = t && t.closest && t.closest('.node');
-    if (nEl && nEl.dataset.id !== d.from.id) connect(d.from, node(nEl.dataset.id), tool);
+    if (nEl && nEl.dataset.id !== d.from.id) { pendingCable = null; connect(d.from, node(nEl.dataset.id), tool); }
     else if (!d.moved || !nEl) { if (!pendingCable) { pendingCable = d.from; toast(`Now click the second device to connect ${d.from.name}`); } else { const a = pendingCable; pendingCable = null; if (a.id !== d.from.id) connect(a, d.from, tool); } }
   } else if (d.kind === 'pan' && !d.moved) select(null);
   else if (d.kind === 'node' && d.moved) { save(); }
@@ -333,7 +154,7 @@ svg.addEventListener('dblclick', e => { const nEl = e.target.closest('.node'); i
 function connect(a, b, kind) {
   if (S.links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return toast('Those two are already connected.');
   for (const n of [a, b]) if (linksOf(n.id).length >= TYPES[n.type].maxLinks) return toast(`${n.name} has no free port. ${TYPES[n.type].label}s have ${TYPES[n.type].maxLinks === 1 ? 'one line port' : 'an input and an output'}.`);
-  const l = { id: uid('l'), a: a.id, b: b.id, kind, p: kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, cut: false } : { il: 0.5, cut: false } };
+  const l = { id: uid('l'), a: a.id, b: b.id, kind, p: linkDefaults(kind) };
   S.links.push(l); select({ kind: 'link', id: l.id }); toast(`${kind === 'fiber' ? 'Fiber span' : 'Patch cord'}: ${a.name} ↔ ${b.name}`);
 }
 function addNode(type, x, y) {
@@ -359,6 +180,7 @@ function setEnd(id) {
 // palette
 document.querySelectorAll('.pal-item').forEach(it => {
   it.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', it.dataset.type); e.dataTransfer.effectAllowed = 'copy'; });
+  it.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); it.click(); } });
   it.addEventListener('click', () => { const r = svg.getBoundingClientRect(); const w = toWorld(r.left + r.width / 2 + (Math.random() - 0.5) * 80, r.top + r.height / 2 + (Math.random() - 0.5) * 60); addNode(it.dataset.type, w.x, w.y); });
 });
 svg.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
@@ -366,7 +188,7 @@ svg.addEventListener('drop', e => { e.preventDefault(); const t = e.dataTransfer
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 function setTool(t) { tool = t; pendingCable = null; document.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === t)); svg.dataset.tool = t; }
 document.addEventListener('keydown', e => {
-  if (e.target.closest('input,select,textarea')) return;
+  if (e.target.closest('input,select,textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'Delete' || e.key === 'Backspace') { del(); e.preventDefault(); }
   else if (e.key === 'v' || e.key === 'Escape') setTool('select');
   else if (e.key === 'p') setTool('patch');
@@ -374,7 +196,7 @@ document.addEventListener('keydown', e => {
 });
 
 // ---------- inspector ----------
-function select(s) { sel = s; pendingCable = pendingCable; renderAll(); }
+function select(s) { sel = s; renderAll(); }
 function field(label, input, hint) { return el('label', { class: 'fld' }, [el('span', { text: label }), input, hint ? el('small', { text: hint }) : null]); }
 function numIn(obj, key, step = 0.5, min, max, allowBlank, placeholder) {
   const i = el('input', { type: 'number', step, value: obj[key], id: 'f-' + key }); if (min != null) i.min = min; if (max != null) i.max = max; if (placeholder) i.placeholder = placeholder;
@@ -432,14 +254,14 @@ function renderInspector() {
     box.append(el('h3', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('p', { class: 'muted', text: linkName(l) }));
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
     if (l.kind === 'fiber') {
-      if (l.p.len == null) Object.assign(l.p, { len: 80, fiber: 'smf', extra: 1 });
+      for (const k in linkDefaults('fiber')) if (l.p[k] == null) l.p[k] = linkDefaults('fiber')[k];
       box.append(field('Length (km)', numIn(l.p, 'len', 1, 0, 300)));
       box.append(field('Fiber type', selIn(l.p, 'fiber', Object.entries(PHY.FIBERS).map(([k, f]) => [k, f.name]))));
       box.append(field('Connector + splice loss (dB)', numIn(l.p, 'extra', 0.1, 0, 20), 'Dirty connector? Add 1–3 dB here'));
       const fb = PHY.FIBERS[l.p.fiber];
       box.append(el('div', { class: 'spec' }, [specRow('Attenuation', `${fb.att} dB/km`), specRow('Span loss', `${f1(fb.att * l.p.len + +l.p.extra)} dB`), specRow('Dispersion', `${fb.D} ps/nm/km → ${Math.round(fb.D * l.p.len)} ps/nm`), specRow('PMD', `${fb.pmd} ps/√km`), specRow('Nonlinear γ', `${fb.gamma} /W/km`)]));
     } else {
-      if (l.p.il == null) l.p.il = 0.5;
+      if (l.p.il == null) l.p.il = linkDefaults('patch').il;
       box.append(field('Loss (dB)', numIn(l.p, 'il', 0.1, 0, 10)));
     }
     box.append(el('div', { class: 'row' }, [
@@ -469,7 +291,7 @@ $('#btn-export').addEventListener('click', () => { $('#io').hidden = false; $('#
 $('#io-close').addEventListener('click', () => { $('#io').hidden = true; });
 $('#io-copy').addEventListener('click', () => { const t = $('#io-text'); navigator.clipboard?.writeText(t.value).then(() => toast('Copied topology JSON'), () => { t.select(); toast('Select-all done; press Ctrl/Cmd+C'); }) ?? t.select(); });
 $('#io-load').addEventListener('click', () => {
-  try { const o = JSON.parse($('#io-text').value); if (!Array.isArray(o.nodes) || !Array.isArray(o.links)) throw 0; S = { ...S, nodes: o.nodes, links: o.links, g: o.g || S.g, svc: o.svc || { a: null, z: null } }; sel = null; $('#io').hidden = true; fitView(); renderAll(); toast('Topology loaded'); }
+  try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; sel = null; $('#io').hidden = true; fitView(); renderAll(); toast('Topology loaded'); }
   catch (e) { toast('That text is not a topology export. Paste the JSON from Export.'); }
 });
 

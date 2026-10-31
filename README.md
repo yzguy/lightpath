@@ -11,16 +11,18 @@ Drag transponders, mux/demux, EDFAs, ROADMs and VOAs onto a bench, cable them wi
 open dist/optical-line-lab.html   # or xdg-open on Linux
 ```
 
-No dependencies, no bundler. Topology is saved in the browser's localStorage and can be exported/imported as JSON.
+No dependencies, no bundler. (The page asks Google Fonts for Archivo and IBM Plex Mono and falls back to system fonts offline.) Run the tests with `npm test`. Topology is saved in the browser's localStorage and can be exported/imported as JSON.
 
 ## Layout
 
 | File | What it holds |
 | --- | --- |
 | `src/engine.js` | Physics (`PHY`): ASE, GN-model NLI, transceiver modes, fiber types, BER/Q math, required OSNR. Also loadable in Node (`require('./src/engine.js')`). |
-| `src/app.js` | Canvas, palette, inspector, routing (Dijkstra over the cabled graph), path simulation, results views, Learn content. |
+| `src/model.js` | Device types, preset scenarios, input validation (`sanitize`), routing (Dijkstra over the cabled graph) and the A→Z path simulation. DOM-free, also loadable in Node. |
+| `src/app.js` | Canvas, palette, inspector, results views, Learn content. |
+| `test/` | Node unit tests for the engine and model (`npm test`). |
 | `src/shell.html` | Markup and CSS (light and dark themes). |
-| `build.sh` | Concatenates the three into `dist/optical-line-lab.html`. |
+| `build.sh` | Syntax-checks, then concatenates shell + engine + model + app into `dist/optical-line-lab.html`. |
 
 ## Physics model
 
