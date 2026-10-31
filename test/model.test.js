@@ -370,3 +370,41 @@ test('a one-way fiber problem takes the whole service down and sanitize cleans p
   assert.equal(c.links.find(l => l.kind === 'fiber').p.ramanRev, '');
   assert.equal(c.nodes.find(n => n.type === 'edfa').p.targetRev, '');
 });
+
+test('one-way fibers give each direction its own route', () => {
+  const S = build('ring'), base = M.simulate(S);
+  assert.ok(Math.abs(base.km - 70) < 1 && Math.abs(base.rev.km - 70) < 1);
+  const direct = S.links.find(l => l.kind === 'fiber' && +l.p.len === 70);
+  direct.p.dir = 'ab'; // ROADM-A to ROADM-C only: the return direction must go round via B
+  const r = M.simulate(S);
+  assert.ok(Math.abs(r.km - 70) < 1, 'forward still direct');
+  assert.ok(Math.abs(r.rev.km - 210) < 1, `return goes round: ${r.rev.km}`);
+  assert.ok(r.rev.path.nodes.some(id => S.nodes.find(n => n.id === id).name === 'ROADM-B'));
+  // direction is a property of the cable, so the old behaviour is untouched when it is 'both'
+  direct.p.dir = 'both';
+  assert.equal(M.simulate(S).rev.km, base.rev.km);
+});
+
+test('a one-way fiber with no return path takes the service down', () => {
+  const S = build('dci'); S.links.find(l => l.kind === 'fiber').p.dir = 'ab';
+  const r = M.simulate(S);
+  assert.equal(r.status, 'down');
+  assert.match(r.headline, /return direction/);
+  assert.equal(r.rev.status, 'nopath');
+  const bad = build('dci'); bad.links.forEach(l => (l.p.dir = 'sideways'));
+  assert.ok(M.sanitize(bad).links.every(l => l.p.dir === 'both'));
+});
+
+test('per-direction amplifier limits and DCM settings apply to the return direction only', () => {
+  const S = build('dci'), base = M.simulate(S);
+  S.nodes.find(n => n.name === 'PRE-B').p.gminRev = 25; // as the return booster it cannot turn down far enough
+  const r = M.simulate(S);
+  assert.deepEqual(r.alarms.filter(a => !/ to /.test(a.text)), base.alarms.filter(a => !/ to /.test(a.text)));
+  assert.ok(r.rev.alarms.some(a => /PRE-B.*min gain is 25/.test(a.text)));
+  const D = build('sfp10dcm'); D.nodes.find(n => n.type === 'dcm').p.cdRev = 0; // no compensation on the return fiber
+  const d = M.simulate(D);
+  assert.equal(M.simulate(build('sfp10dcm')).status, 'up');
+  assert.ok(Math.abs(d.cd - 680) < 1e-6 && Math.abs(d.rev.cd - 2040) < 1e-6);
+  assert.equal(d.status, 'down');
+  assert.match(d.headline, /dispersion tolerance/);
+});

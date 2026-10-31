@@ -10,16 +10,16 @@ const MODEL = (() => {
     trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 1, def: () => ({ mode: 'zr400', tx: null }) },
     mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 1, def: () => ({ mode: 'zrp400', tx: null, clients: defaultClients() }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
-    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, gmin: 10, gmax: 30, pmax: 23, tiltCtl: true }) },
+    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
-    dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, il: 7 }) },
+    dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, cdRev: '', il: 7, ilRev: '' }) },
     voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
   };
   const defaultClients = () => Array.from({ length: 4 }, () => newClient());
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', cut: false } : { il: 0.5, cut: false });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', dir: 'both', cut: false } : { il: 0.5, dir: 'both', cut: false });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -145,7 +145,8 @@ const MODEL = (() => {
       }
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
-      if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
+      if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev', 'nfRev', 'gminRev', 'gmaxRev', 'pmaxRev']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
+      if (n.type === 'dcm') for (const k of ['cdRev', 'ilRev']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
       seen.add(n.id);
       nodes.push({ id: n.id, type: n.type, name: String(n.name ?? n.id), x: Number.isFinite(+n.x) ? +n.x : 0, y: Number.isFinite(+n.y) ? +n.y : 0, p });
     }
@@ -154,6 +155,7 @@ const MODEL = (() => {
       if (!l || typeof l.id !== 'string' || lseen.has(l.id) || !seen.has(l.a) || !seen.has(l.b) || l.a === l.b) continue;
       const kind = l.kind === 'fiber' ? 'fiber' : 'patch', p = fill(linkDefaults(kind), l.p);
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
+      if (!['both', 'ab', 'ba'].includes(p.dir)) p.dir = 'both';
       if (kind === 'fiber') for (const k of ['extraRev', 'ramanRev']) if (!(p[k] === '' || (Number.isFinite(+p[k]) && p[k] !== null && +p[k] >= 0))) p[k] = '';
       if (kind === 'fiber') p.raman = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +p.raman || 0));
       if (kind === 'fiber' && !(p.nch === '' || (Number.isFinite(+p.nch) && +p.nch >= 1))) p.nch = '';
@@ -192,6 +194,7 @@ const MODEL = (() => {
       if (u !== aId && isEnd(node(u))) continue;
       for (const l of linksOf(u)) {
         if (l.p.cut && !allowCut) continue;
+        if ((l.p.dir === 'ab' && l.a !== u) || (l.p.dir === 'ba' && l.b !== u)) continue; // one-way fiber: light only travels the carried way
         const v = other(l, u);
         const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + (l.p.cut ? 1e6 : 0);
         if (dist[v] == null || dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = { u, l: l.id }; }
@@ -210,7 +213,7 @@ const MODEL = (() => {
   // opts.eol: evaluate with end-of-life allowances (see PHY.EOL). The normal result carries the EoL outcome in res.eol.
   // opts.reverse: simulate Z -> A. Per-direction overrides (extraRev, ramanRev, targetRev, gainRev) apply; blank means "same as forward".
   // The forward result carries the reverse one in res.rev and its status is the worse of the two. opts.single skips the reverse run.
-  const STATUS_RANK = { up: 0, degraded: 1, down: 2, los: 3 };
+  const STATUS_RANK = { up: 0, degraded: 1, down: 2, nopath: 2, los: 3 };
   function simulate(S, launchOverride, opts = {}) {
     const eol = !!opts.eol, rv = !!opts.reverse;
     const pd = (p, k) => (rv && p[k + 'Rev'] !== '' && p[k + 'Rev'] != null && Number.isFinite(+p[k + 'Rev']) ? p[k + 'Rev'] : p[k]);
@@ -292,9 +295,9 @@ const MODEL = (() => {
         if (joins) nch = nchLine;
         if (drops) nch = 1;
         rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
-      } else if (t === 'dcm') { const b = snap(); loss(+nxt.p.il); cd += +nxt.p.cd; dgd2 += 1; rec(nxt.name, 'dcm', b, { gain: -nxt.p.il, note: `${+nxt.p.cd} ps/nm` }); }
+      } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il'), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
-      else if (t === 'edfa') { amp(nxt.name, nxt.p.nf, nxt.p.ctl, target, pd(nxt.p, 'gain'), +nxt.p.gmin, +nxt.p.gmax, +nxt.p.pmax, nxt.p.tiltCtl !== false); }
+      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false); }
       else if (t === 'roadm') {
         const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
@@ -378,7 +381,8 @@ const MODEL = (() => {
     if (!eol && !rv && !opts.single) {
       const r2 = simulate(S, launchOverride, { reverse: true });
       res.rev = r2;
-      if (r2.mode) {
+      if (r2.status === 'nopath') { res.status = 'down'; res.headline = `${Z.name} to ${A.name}: no path for the return direction. A one-way fiber may be missing its pair.`; }
+      else if (r2.mode) {
         const seen = new Set(res.alarms.map(a => a.text));
         r2.alarms.filter(a => a.sev !== 'info' && !seen.has(a.text)).forEach(a => res.alarms.push({ ...a, text: `${Z.name} to ${A.name}: ${a.text}` }));
         if ((STATUS_RANK[r2.status] ?? 0) > (STATUS_RANK[res.status] ?? 0)) { res.status = r2.status; res.headline = `${Z.name} to ${A.name}: ${r2.headline}`; }

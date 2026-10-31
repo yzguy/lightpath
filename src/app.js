@@ -108,7 +108,8 @@ function renderCanvas() {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       const fb = PHY.FIBERS[l.p.fiber];
       const t = sv('text', { x: mx, y: my - 10, class: 'llabel', 'text-anchor': 'middle' });
-      t.textContent = l.kind === 'fiber' ? `${l.p.len} km · ${f1(fb.att * l.p.len + +l.p.extra)} dB` + (+l.p.raman > 0 ? ` · Raman ${l.p.raman} mW` : '') : 'patch';
+      const arrow = l.p.dir === 'ab' || l.p.dir === 'ba' ? (() => { const dx = b.x - a.x, dy = b.y - a.y, f = l.p.dir === 'ab' ? 1 : -1; return ' ' + (Math.abs(dx) >= Math.abs(dy) ? (dx * f > 0 ? '→' : '←') : (dy * f > 0 ? '↓' : '↑')); })() : '';
+      t.textContent = (l.kind === 'fiber' ? `${l.p.len} km · ${f1(fb.att * l.p.len + +l.p.extra)} dB` + (+l.p.raman > 0 ? ` · Raman ${l.p.raman} mW` : '') : 'patch') + arrow;
       g.append(t);
       if (l.p.cut) { const x = sv('text', { x: mx, y: my + 7, class: 'cutmark', 'text-anchor': 'middle' }); x.textContent = '✕'; g.append(x); }
     }
@@ -254,6 +255,7 @@ function renderInspector() {
     const nm = el('input', { value: n.name, id: 'f-name' }); nm.addEventListener('input', () => { n.name = nm.value; renderCanvas(); renderResults(); });
     box.append(el('h3', { text: TYPES[n.type].label }), field('Name', nm));
     const p = n.p;
+    { const d = TYPES[n.type].def(); for (const k in d) if (p[k] === undefined) p[k] = d[k]; } // fields added since this lab was saved
     if (isEnd(n)) {
       box.append(field(n.type === 'mxp' ? 'Line port mode' : 'Mode', selIn(p, 'mode', Object.entries(PHY.MODES).map(([k, m]) => [k, m.name]))));
       const m = PHY.MODES[p.mode];
@@ -275,6 +277,9 @@ function renderInspector() {
       box.append(field('Noise figure (dB)', numIn(p, 'nf', 0.1, 3, 12), 'Quantum limit is 3 dB. Real EDFAs: 4.5–6 dB'));
       box.append(field('Gain range min / max (dB)', el('div', { class: 'pair' }, [numIn(p, 'gmin', 1, 0, 40), numIn(p, 'gmax', 1, 0, 40)])));
       box.append(field('Max total output (dBm)', numIn(p, 'pmax', 0.5, 10, 30), 'Shared by every channel in the fiber'));
+      box.append(field('Return direction: noise figure (dB)', numIn(p, 'nfRev', 0.1, 3, 12, true, String(p.nf)), 'Blank = same as forward. Also below: gain range and max output for the other amplifier in this box.'));
+      box.append(field('Return: gain range min / max (dB)', el('div', { class: 'pair' }, [numIn(p, 'gminRev', 1, 0, 40, true, String(p.gmin)), numIn(p, 'gmaxRev', 1, 0, 40, true, String(p.gmax))])));
+      box.append(field('Return: max total output (dBm)', numIn(p, 'pmaxRev', 0.5, 10, 30, true, String(p.pmax))));
       box.append(field('Gain-tilt control', selIn(p, 'tiltCtl', [['true', 'On: re-flatten the band'], ['false', 'Off: SRS tilt accumulates']]), 'Counters Raman tilt from the span before it'));
     } else if (n.type === 'roadm') {
       box.append(field('WSS loss per pass (dB)', numIn(p, 'wss', 0.5, 0, 15)));
@@ -285,6 +290,8 @@ function renderInspector() {
     } else if (n.type === 'dcm') {
       box.append(field('Dispersion (ps/nm)', numIn(p, 'cd', 10, -8000, 8000)));
       box.append(field('Insertion loss (dB)', numIn(p, 'il', 0.5, 0, 20)));
+      box.append(field('Return direction: dispersion (ps/nm)', numIn(p, 'cdRev', 10, -8000, 8000, true, String(p.cd)), 'Blank = same as forward. Set 0 for a return fiber that has no compensator.'));
+      box.append(field('Return direction: insertion loss (dB)', numIn(p, 'ilRev', 0.5, 0, 20, true, String(p.il))));
       box.append(el('p', { class: 'muted small', text: 'Negative dispersion cancels the fiber\'s positive dispersion: about -1360 ps/nm for 80 km of SMF (17 ps/nm/km). A DCF module costs ~7 dB, a fibre Bragg grating ~3 dB. Put it between amplifier stages so the loss does not hurt OSNR.' }));
     } else if (n.type === 'voa') {
       box.append(field('Attenuation (dB)', numIn(p, 'att', 0.5, 0, 30)));
@@ -294,6 +301,8 @@ function renderInspector() {
     const l = link(sel.id); if (!l) return;
     box.append(el('h3', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('p', { class: 'muted', text: linkName(l) }));
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
+    if (l.p.dir == null) l.p.dir = 'both';
+    { const na = node(l.a), nb = node(l.b); box.append(field('Carries light', selIn(l.p, 'dir', [['both', 'Both ways (a fiber pair)'], ['ab', `${na ? na.name : 'a'} → ${nb ? nb.name : 'b'} only`], ['ba', `${nb ? nb.name : 'b'} → ${na ? na.name : 'a'} only`]]), 'A one-way fiber lets each direction take a different route.')); }
     if (l.kind === 'fiber') {
       for (const k in linkDefaults('fiber')) if (l.p[k] == null) l.p[k] = linkDefaults('fiber')[k];
       box.append(field('Length (km)', numIn(l.p, 'len', 1, 0, 300)));
@@ -665,7 +674,7 @@ const LEARN = {
   client: ['Client ports and muxponders', `<p>A <b>transponder</b> carries one client signal over one coherent line port. A <b>muxponder</b> aggregates several client ports (for example 4 × 100GbE) into one line port (for example 400G ZR+). The line port is what the DWDM system sees. Everything upstream of it (host router, client optics) is a separate, short, grey-optics link.</p><p>Each client port has its own power budget: Tx power minus fiber and connector loss must land inside the module's Rx window. Too little and the client link is down. Too much (a long-reach optic on a short jumper) overloads the receiver and needs a pad. Running past rated reach adds dispersion penalty the model only flags.</p><p>The clients must also fit the line rate. 400ZR itself carries a single 400GbE client; OpenZR+ and OTN-based line modes can multiplex 100G and 200G clients.</p>`],
   srs: ['SRS tilt', `<p><b>Stimulated Raman scattering</b>: light in the fiber acts as a weak Raman pump, so high-frequency (short-wavelength) channels give power to low-frequency ones. With a full C-band load at +1 dBm per channel it is worth roughly 1 dB of tilt per 80 km span, growing with total power, span length and occupied bandwidth.</p><p>Amplifiers with gain-tilt control (and ROADM WSSs) re-flatten the band, so tilt does not pile up. Switch tilt control off on the long-haul scenario to watch it accumulate. The service channel sits mid-band and barely moves, so the <i>worst channel</i> Q margin tracks the highest-frequency channel, which ends up weakest. The model is a first-order approximation, not a measurement.</p>`],
   raman: ['Raman amplification', `<p>A <b>Raman pump</b> at the receiving end (about 1450 nm, backward) transfers power to the signal along the fiber itself. Unlike an EDFA, the gain is <i>distributed</i>: the signal is boosted before it has fallen as far, so less ASE-limited OSNR is lost. A 1 W pump gives roughly 15 dB of on-off gain on 80-110 km of SMF.</p><p>The trade-off: the signal stays stronger for longer, which raises nonlinear noise, and above ~1 W the pump is a Class 4 laser (eye safety, fiber fuse on a dirty connector). Here the benefit is modelled as a lumped amplifier sitting late in the span (about 40% of the on-off gain counts as OSNR benefit) with a 4.5 dB equivalent noise figure. Pump depletion, multi-pump flattening, double Rayleigh scattering and pump-to-signal RIN are not modelled.</p><p>Set it on a fiber span in the inspector. Try 110 km with 0, 500 and 1000 mW and watch ASE and NLI move in opposite directions in the "What is eating the SNR" bar.</p>`],
-  bidi: ['Two directions', `<p>A DWDM line is really <b>two</b> fibers (or two wavelength bands on one) carrying traffic in opposite directions, with <b>one amplifier per direction</b>. A box labelled "BST-A" holds the booster for A to Z and the preamp for Z to A. The results panel shows both: pick the direction with the buttons by the status pill. The service status is the worse of the two.</p><p>Directions differ when one fiber has a dirtier connector, a different loss, a different Raman pump, or an amplifier that is set up for the other direction. Cable-wise a transmitter's launch and a receiver's input both depend on which role the amplifier plays, so an amp tuned as a booster is often wrong as a preamp: use the "return direction" fields on amplifiers and fibers.</p><p>Not modelled: counter-propagating nonlinear interaction (negligible), and different fiber routes per direction.</p>`],
+  bidi: ['Two directions', `<p>A DWDM line is really <b>two</b> fibers (or two wavelength bands on one) carrying traffic in opposite directions, with <b>one amplifier per direction</b>. A box labelled "BST-A" holds the booster for A to Z and the preamp for Z to A. The results panel shows both: pick the direction with the buttons by the status pill. The service status is the worse of the two.</p><p>Directions differ when one fiber has a dirtier connector, a different loss, a different Raman pump, or an amplifier that is set up for the other direction. Cable-wise a transmitter's launch and a receiver's input both depend on which role the amplifier plays, so an amp tuned as a booster is often wrong as a preamp: use the "return direction" fields on amplifiers and fibers.</p><p>A fiber can also be set to carry one direction only (inspector, "Carries light"). Then each direction routes separately: A to Z can take the short way round a ring while Z to A takes the long way, and a one-way fiber with no return path takes the service down. A DCM and an amplifier's gain range, noise figure and output limit also have return-direction fields.</p><p>Not modelled: counter-propagating nonlinear interaction (negligible).</p>`],
   aging: ['End-of-life margin', `<p>Links are planned for the day they are worst, not the day they are lit. <b>End of life</b> here adds extra loss on every fiber span (splices from repairs, connector wear, fiber ageing; 1.0 dB by default) and a transceiver ageing penalty (0.5 dB by default). Both are editable in the inspector when nothing is selected. It then re-runs the whole simulation.</p><p>A link with a few dB of margin today can have none left at end of life. The "works today but fails at end of life" alarm is the early warning. Typical planning margin is 2-3 dB.</p>`],
   launch: ['Launch power', `<p>The per-channel power put into each span. Too low: amplifier noise dominates. Too high: nonlinearity dominates. Somewhere in between (often 0 to +2 dBm/ch for 60 GBd on SMF) GSNR peaks. Open the Launch sweep tab to see your link's curve.</p>`],
 };
