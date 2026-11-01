@@ -793,6 +793,9 @@ function planView(r) {
     el('button', { class: 'btn', text: 'Assign slots (first fit)', title: 'Give every channel except the service the lowest slot that is free on all the fibers of its route. Channels with no fiber in common end up sharing slots.', onclick: () => {
       const np = MODEL.assignSlots(S); if (!np) return toast('Nothing to assign: pick a service between two transponders first.');
       S.g.plan = np; S.g.nch = np.length; hiChan = null; renderAll(); toast(`${np.length} channels in ${new Set(np.map(c => c.slot)).size} slots`); } }),
+    el('button', { class: 'btn', text: 'Optimise power offsets', title: 'Search the power offsets of the other channels for the best worst-channel margin (the service stays at 0 dB)', onclick: () => {
+      const o = MODEL.optimiseOffsets(S); if (!o) return toast('Needs a channel plan with at least two channels.');
+      plan.forEach((c, i) => { c.off = o.offsets[i]; }); renderAll(); toast(`Worst channel margin ${f1(o.before.min)} → ${f1(o.after.min)} dB`); } }),
     el('button', { class: 'btn', text: 'Add channel', title: 'Add a channel in the first empty slot', onclick: () => { const free = [...Array(slots).keys()].find(k => !bySlot.has(k)); if (free == null) return toast('Every slot is taken: change a slot number to reuse one.'); plan.push({ slot: free, mode: brush, off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: free, prot: '' }); commit(); } }),
     el('button', { class: 'btn', text: 'Reset to uniform', onclick: () => { S.g.plan = null; hiChan = null; renderAll(); } })]));
   const strip = el('div', { class: 'planstrip', role: 'group', 'aria-label': 'C-band slots' });

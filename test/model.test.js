@@ -1384,3 +1384,43 @@ test('planner: demands are sanitised', () => {
   assert.equal(d.length, 2); assert.equal(d[0].count, 5); assert.equal(d[1].mode, 'zrp400'); assert.equal(d[1].count, 96);
   assert.deepEqual(M.sanitize(build('dci')).demands, []);
 });
+
+// ---- per-channel power-offset optimiser ----
+test('offset optimiser: lifts the worst channel and leaves the service at zero', () => {
+  const S = build('mix'); S.g.plan.forEach(c => (c.off = 0)); // flat plan: the 10G channels sit too high for their receivers
+  const before = M.simulate(S, undefined, { single: true }).channels, worst = a => Math.min(...a.filter(c => c.qMargin != null).map(c => c.qMargin));
+  const o = M.optimiseOffsets(S);
+  assert.ok(o.after.min >= o.before.min - 1e-9);
+  assert.ok(o.after.min > o.before.min + 0.05, `worst ${o.before.min.toFixed(2)} -> ${o.after.min.toFixed(2)}`);
+  assert.ok(o.offsets.filter((v, i) => S.g.plan[i].mode === 'dwdm10f' && !S.g.plan[i].svc).every(v => v < 0), 'the margin-rich 10G channels give power up to their 400G neighbours');
+  assert.equal(o.offsets[S.g.plan.findIndex(c => c.svc)], 0);
+  assert.ok(o.offsets.every(v => v >= -6 && v <= 3));
+  S.g.plan.forEach((c, i) => (c.off = o.offsets[i]));
+  assert.ok(Math.abs(worst(M.simulate(S, undefined, { single: true }).channels) - o.after.min) < 1e-9, 'what it reports is what the simulator gives');
+  assert.ok(worst(before) < o.after.min);
+  const again = M.optimiseOffsets(S);
+  assert.ok(Math.abs(again.after.min - o.after.min) < 0.05, 'a second run finds nothing more');
+  assert.equal(M.optimiseOffsets(build('dci')), null, 'needs a plan');
+});
+
+// ---- XPM walk-off ----
+test('xpm walk-off: neighbours further away matter less, and low-dispersion fiber matters more', () => {
+  const smf = PHY.FIBERS.smf, leaf = PHY.FIBERS.leaf;
+  assert.ok(Math.abs(PHY.xpmWalk(smf, 80, 75e9) - 1) < 1e-9, 'normalised to a neighbour 75 GHz away on 80 km of SMF');
+  const w = d => PHY.xpmWalk(smf, 80, d);
+  assert.ok(w(150e9) < w(75e9) && w(300e9) < w(150e9));
+  assert.ok(w(150e9) < 0.65 && w(150e9) > 0.35, `about half at twice the spacing: ${w(150e9)}`);
+  assert.ok(PHY.xpmWalk(leaf, 80, 75e9) > PHY.xpmWalk(smf, 80, 75e9) * 1.5, 'less dispersion, less walk-off, more XPM');
+  assert.ok(PHY.xpmWalk({ ...smf, D: 0 }, 80, 75e9) <= 8);
+});
+
+test('xpm walk-off: a 10G channel suffers more from a close coherent neighbour than from a far one, and more on NZ-DSF', () => {
+  const mk = (gap, fiber) => {
+    const S = build('mix'); S.links.filter(l => l.kind === 'fiber').forEach(l => { l.p.fiber = fiber; });
+    S.g.df = 75; S.g.plan = [{ slot: 20, mode: 'dwdm10f', off: 0, svc: true, from: '', to: '', via: '', conv: '', slot2: 20, prot: '' }, { slot: 20 + gap, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: 20 + gap, prot: '' }];
+    return M.simulate(S, 0, { single: true }).channels[0].xpmPen;
+  };
+  const near = mk(1, 'smf'), far = mk(4, 'smf'), nz = mk(1, 'leaf');
+  assert.ok(near > 0 && far < near * 0.6, `${near} vs ${far}`);
+  assert.ok(nz > near, `${nz} vs ${near}`);
+});

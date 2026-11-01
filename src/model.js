@@ -653,6 +653,33 @@ const MODEL = (() => {
     });
   }
 
+  // Per-channel power offsets (dB against the service) that maximise the worst channel's Q margin, then its average: coordinate descent over
+  // the offsets with shrinking steps, each trial a full forward simulation of the plan. The service stays at 0 dB.
+  function optimiseOffsets(S, opts = {}) {
+    const plan = S.g && S.g.plan; if (!Array.isArray(plan) || plan.length < 2) return null;
+    const lo = opts.min ?? -6, hi = opts.max ?? 3, offs = plan.map(c => (c.svc ? 0 : Math.max(lo, Math.min(hi, Number.isFinite(+c.off) ? +c.off : 0))));
+    const evalOffs = o => {
+      const r = simulate({ ...S, g: { ...S.g, plan: plan.map((c, i) => ({ ...c, off: o[i] })) } }, undefined, { single: true }), ms = (r.channels || []).filter(c => c.qMargin != null).map(c => c.qMargin);
+      return ms.length ? { min: Math.min(...ms), mean: ms.reduce((a, b) => a + b, 0) / ms.length } : { min: -Infinity, mean: -Infinity };
+    };
+    const better = (a, b) => a.min > b.min + 1e-6 || (Math.abs(a.min - b.min) <= 1e-6 && a.mean > b.mean + 1e-6);
+    const start = evalOffs(offs); let cur = start;
+    for (const step of [2, 1, 0.5, 0.25]) {
+      for (let pass = 0, improved = true; improved && pass < 6; pass++) {
+        improved = false;
+        plan.forEach((c, i) => {
+          if (c.svc) return;
+          for (const d of [step, -step]) {
+            const v = Math.round((offs[i] + d) * 4) / 4; if (v < lo || v > hi) continue;
+            const old = offs[i]; offs[i] = v; const t = evalOffs(offs);
+            if (better(t, cur)) { cur = t; improved = true; } else offs[i] = old;
+          }
+        });
+      }
+    }
+    return { offsets: offs, before: start, after: cur };
+  }
+
   // opts.eol: evaluate with end-of-life allowances (see PHY.EOL). The normal result carries the EoL outcome in res.eol.
   // opts.reverse: simulate Z -> A. Per-direction overrides (extraRev, ramanRev, targetRev, gainRev) apply; blank means "same as forward".
   // The forward result carries the reverse one in res.rev and its status is the worse of the two. opts.single skips the reverse run.
@@ -696,7 +723,8 @@ const MODEL = (() => {
     const maskAt = j => { const set = mesh.loads.get(path.links[j]); return chans.map((_, k) => !!set && set.has(k)); }, litCount = j => maskAt(j).filter(Boolean).length;
     const nchLine = Math.max(1, +g.nch), Rs = mode.Rs;
     const reachHz = PHY_.XPM.reachGHz * 1e9, nbWeight = c => (planOn ? (c.m.coh === false ? PHY_.XPM.same : PHY_.XPM.coh) : (g.neighbors === 'coh' ? PHY_.XPM.coh : PHY_.XPM.same));
-    const xpmWFor = (i, act) => (chans[i].m.coh === false ? chans.reduce((a, cj, j) => a + (j !== i && (!act || act[j]) && Math.abs(cj.f - chans[i].f) <= reachHz ? nbWeight(cj) * lin(cj.off - chans[i].off) : 0), 0) : 0);
+    // XPM neighbours within reach, weighted by who they are, their power and how far they walk off over this span (fb, Lk)
+    const xpmWFor = (i, act, fb, Lk) => (chans[i].m.coh === false ? chans.reduce((a, cj, j) => a + (j !== i && (!act || act[j]) && Math.abs(cj.f - chans[i].f) <= reachHz ? nbWeight(cj) * lin(cj.off - chans[i].off) * PHY_.xpmWalk(fb, Lk, Math.abs(cj.f - chans[i].f)) : 0), 0) : 0);
     const ev = []; // event log replayed per channel after the loop (plan mode only)
     let curAct = planOn ? maskAt(0) : null; // channels lit at the current point of the path (plan mode)
     const txDbm = W && A.type === 'roadm' ? +g.launch : (A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx) - (isEnd(A) ? degOf(A) : 0); // a channel added at a ROADM starts at the launch level; a degraded laser is weaker
@@ -770,7 +798,7 @@ const MODEL = (() => {
         const si = planOn ? actList.findIndex(c => c.k === svcIdx) : -1, nF = si >= 0 ? PHY_.nliPlanFactor(fbNl, actList, si, df, actList.length) : 1;
         const nNew = PHY_.etaNLI(fbNl, Lk, Rs, nch, df) * P ** 3 * fwdF * nF;
         if (mode.coh === false && nch > 1) { // cross-phase modulation from the other channels hits a direct-detection receiver
-          xpmPen = Math.min(PHY_.XPM.cap, xpmPen + PHY_.xpmSpanPenalty(fbNl, Lk, 1, P, xpmWFor(svcIdx, act)));
+          xpmPen = Math.min(PHY_.XPM.cap, xpmPen + PHY_.xpmSpanPenalty(fbNl, Lk, 1, P, xpmWFor(svcIdx, act, fbNl, Lk)));
         }
         const rho = PHY_.nliCorrelation(cd);
         Pnli += nNew + 2 * rho * Math.sqrt(Pnli * nNew); // coherent cross term when the dispersion map is flat
@@ -944,7 +972,7 @@ const MODEL = (() => {
             if (!alive[i]) continue;
             const nNew = PHY_.etaNLI(e.fbNl, e.Lk, chans[i].Rs, e.nch, df) * Pc[i] ** 3 * e.fwdF * PHY_.nliPlanFactor(e.fbNl, pl, at.indexOf(i), df, at.length);
             Pn[i] += nNew + 2 * PHY_.nliCorrelation(cdc[i]) * Math.sqrt(Pn[i] * nNew);
-            if (chans[i].m.coh === false && e.xpm) xp[i] = Math.min(PHY_.XPM.cap, xp[i] + PHY_.xpmSpanPenalty(e.fbNl, e.Lk, 1, Pc[i], xpmWFor(i, e.act)));
+            if (chans[i].m.coh === false && e.xpm) xp[i] = Math.min(PHY_.XPM.cap, xp[i] + PHY_.xpmSpanPenalty(e.fbNl, e.Lk, 1, Pc[i], xpmWFor(i, e.act, e.fbNl, e.Lk)));
             cdc[i] += e.dcd; dg2[i] += e.dg2;
           }
         }
@@ -1047,6 +1075,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

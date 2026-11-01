@@ -171,7 +171,17 @@ const PHY = (() => {
   }
   // Cross-phase modulation penalty (dB of SNR) one span adds to a direct-detection channel from n neighbours. w is dB per neighbour
   // per 80 km at 0 dBm/ch; scales with launch power and effective length. Representative, not derived from a full XPM model.
-  const XPM = { same: 0.02, coh: 0.06, reachGHz: 400, cap: 5 };
+  const XPM = { same: 0.02, coh: 0.06, reachGHz: 400, cap: 5, rxBw: 7e9 };
+  // Walk-off: a neighbour's intensity pattern slides past the channel by tau = D * Leff * dLambda while it travels, which low-passes the XPM
+  // it causes. For a direct-detection receiver of bandwidth B the noise it makes scales as atan(2 pi B tau) / (2 pi tau), falling as 1/spacing,
+  // and rising as the dispersion falls. Relative to a neighbour 75 GHz away on 80 km of standard fiber, where the constants above apply.
+  const xpmFilt = tau => (tau < 1e-15 ? XPM.rxBw : Math.atan(2 * Math.PI * XPM.rxBw * tau) / (2 * Math.PI * tau));
+  function xpmWalk(fiber, Lkm, dfHz) {
+    const leff = f => { const ap = f.att / 4.343; return (1 - Math.exp(-ap * Lkm)) / ap; };
+    const tau = (f, d) => Math.abs(f.D) * leff(f) * 0.00801 * (d / 1e9) * 1e-12, ref = FIBERS.smf;
+    const refTau = Math.abs(ref.D) * ((1 - Math.exp(-ref.att / 4.343 * 80)) / (ref.att / 4.343)) * 0.00801 * 75 * 1e-12;
+    return Math.min(8, xpmFilt(tau(fiber, dfHz)) / xpmFilt(refTau));
+  }
   function xpmSpanPenalty(fiber, Lkm, nNeigh, pchW, w) {
     const ap = fiber.att / 4.343, Leff = (1 - Math.exp(-ap * Lkm)) / ap;
     return w * nNeigh * lin(db(pchW * 1000)) * (Leff / 21.7);
@@ -208,6 +218,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmWalk, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;
