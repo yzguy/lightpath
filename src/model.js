@@ -278,7 +278,7 @@ const MODEL = (() => {
     const num = (v, d) => (Number.isFinite(+v) && v !== '' && v !== null ? +v : d);
     const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', reopt: gi.reopt === true, plan: null,
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))),
-      lossPct: Math.min(95, Math.max(1, num(gi.lossPct, PHY_.TRANSIENT.lossPct))), agcUs: Math.min(5000, Math.max(0, num(gi.agcUs, PHY_.TRANSIENT.agcUs))),
+      rampMs: Math.min(10000, Math.max(0, num(gi.rampMs, 0))), lossPct: Math.min(95, Math.max(1, num(gi.lossPct, PHY_.TRANSIENT.lossPct))), agcUs: Math.min(5000, Math.max(0, num(gi.agcUs, PHY_.TRANSIENT.agcUs))),
       cutRate: Math.min(50, Math.max(0, num(gi.cutRate, RESIL.cutRate))), mttr: Math.min(720, Math.max(0.5, num(gi.mttr, RESIL.mttr))), detectMs: Math.min(1000, Math.max(0, num(gi.detectMs, RESIL.detectMs))),
       switchMs: Math.min(10000, Math.max(0, num(gi.switchMs, RESIL.switchMs))), sharedSec: Math.min(600, Math.max(0, num(gi.sharedSec, RESIL.sharedSec))), restoreSec: Math.min(3600, Math.max(0, num(gi.restoreSec, RESIL.restoreSec))), devRate: Math.min(5, Math.max(0, num(gi.devRate, RESIL.devRate))) };
     g.plan = sanitizePlan(gi.plan, g.df);
@@ -928,12 +928,19 @@ const MODEL = (() => {
         cum += peak; rows.push({ name: h.name, n, lost, rawDb: raw, agcUs: agc, peakDb: peak, cumDb: cum });
       }
       if (rows.length) {
+        // Time domain at the receiver: each amplifier's excursion rises as 1 - exp(-t/tau) until its control engages at agcUs, then the loop pulls
+        // it back (recovery about twice the response time). The event, and every excursion it causes, travel with the signal, so all amplifiers'
+        // curves line up in time at the receiver and add. Channels returning can be ramped (rampMs): a ramp slower than tau lets the loop follow.
+        const tc = k => Math.max(k, 5) * 2, xr = (r, t) => { const td = r.agcUs; if (td <= 0) return 0; if (t <= td) return r.rawDb * (1 - Math.exp(-t / T.tauUs)); return r.rawDb * (1 - Math.exp(-td / T.tauUs)) * Math.exp(-(t - td) / tc(td)); };
+        const tEnd = Math.max(1000, ...rows.map(r => r.agcUs * 6 + 4 * T.tauUs)), tt = Array.from({ length: 121 }, (_, i) => tEnd * (i / 120) ** 2), surge = tt.map(t => rows.reduce((a, r) => a + xr(r, t), 0));
+        const rampUs = Math.max(0, Number.isFinite(+g.rampMs) && g.rampMs !== '' ? +g.rampMs : 0) * 1000, rampF = rampUs > T.tauUs ? (T.tauUs / rampUs) * (1 - Math.exp(-rampUs / T.tauUs)) : 1;
+        res.transientTrace = { t: tt, surge, dip: surge.map(v => -v * rampF), rampF, rampMs: rampUs / 1000, peakDb: Math.max(...surge) };
         const avg = rows.reduce((a, r) => a + r.cumDb, 0) / rows.length;
         // average excursion over the spans for the nonlinear and noise terms, end-of-line excursion for the receiver
         const qAt = s => { const ln = 1 / (1 / snrAse * lin(-s) + 1 / snrNli * lin(2 * s) + 1 / snrRx * lin(-s) + mpi), ov = Math.max(0, prx + s - mode.rxMax) * 1.5;
           return PHY_.qFromBer(PHY_.MODS[mode.mod].ber(PHY_.effSnr(mode, ln, basePen - over + ov))) - res.qThr; };
-        const s = cum, prxSurge = prx + s, prxDip = prx - cum;
-        res.transient = { lossPct: Math.round(frac * 100), tauUs: T.tauUs, rows, surgeDb: s, prxSurge, prxDip, overload: prxSurge > mode.rxMax, qMarginSurge: qAt(avg), qMarginDip: qAt(-avg), avgDb: avg };
+        const s = cum, prxSurge = prx + s, rf = res.transientTrace.rampF, prxDip = prx - cum * rf;
+        res.transient = { lossPct: Math.round(frac * 100), tauUs: T.tauUs, rows, surgeDb: s, peakDb: res.transientTrace.peakDb, prxSurge, prxDip, rampF: rf, overload: prxSurge > mode.rxMax, qMarginSurge: qAt(avg), qMarginDip: qAt(-avg * rf), avgDb: avg };
         const t = res.transient;
         if (t.overload) alarms.push({ sev: 'info', text: `Losing ${t.lossPct}% of the channels at once would lift the surviving channels by up to ${f1(s)} dB at the receiver (${f1(prxSurge)} dBm, past the ${mode.rxMax} dBm overload point) with these amplifier control speeds.` });
         else if (t.qMarginSurge < 0) alarms.push({ sev: 'info', text: `Losing ${t.lossPct}% of the channels at once would push the service below the FEC threshold for a moment (${f1(t.qMarginSurge)} dB Q margin during the surge).` });

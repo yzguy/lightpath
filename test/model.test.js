@@ -108,7 +108,7 @@ test('sanitize: drops junk, fills defaults, keeps valid data', () => {
   assert.deepEqual([v.name, v.x, v.y, v.p.att], ['7', 0, 0, 5]);
   assert.equal(c.nodes[0].p.mode, 'zr400');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.fiber, 'smf');
-  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, eolSpan: 1, eolTrx: 0.5, lossPct: 50, agcUs: 20, cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60, devRate: 0.02 });
+  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, eolSpan: 1, eolTrx: 0.5, rampMs: 0, lossPct: 50, agcUs: 20, cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60, devRate: 0.02 });
   assert.deepEqual(c.svc, { a: null, z: S.svc.z });
   assert.ok(M.simulate(c).status); // and the cleaned topology simulates without throwing
 });
@@ -1423,4 +1423,38 @@ test('xpm walk-off: a 10G channel suffers more from a close coherent neighbour t
   const near = mk(1, 'smf'), far = mk(4, 'smf'), nz = mk(1, 'leaf');
   assert.ok(near > 0 && far < near * 0.6, `${near} vs ${far}`);
   assert.ok(nz > near, `${nz} vs ${near}`);
+});
+
+// ---- time-domain transients and ramped adds ----
+test('transient trace: the excursion rises, peaks when the control engages and recovers', () => {
+  const r = M.simulate(build('lh'), undefined, { single: true }), tr = r.transientTrace, t = r.transient;
+  assert.equal(tr.t.length, tr.surge.length); assert.equal(tr.t[0], 0); assert.equal(tr.surge[0], 0);
+  assert.ok(Math.abs(tr.peakDb - t.surgeDb) < 0.02, 'amplifiers with the same response peak together: the peak is the sum of their peaks');
+  assert.ok(tr.surge[tr.surge.length - 1] < tr.peakDb * 0.05, 'the loop has pulled it back by the end');
+  const iPk = tr.surge.indexOf(tr.peakDb); assert.ok(tr.t[iPk] > 0 && tr.t[iPk] < 80, `peaks around the 20 us response time: ${tr.t[iPk]}`);
+  assert.ok(tr.dip.every(v => v <= 0) && Math.abs(Math.min(...tr.dip) + tr.peakDb) < 1e-9, 'channels returning mirror it');
+});
+
+test('transient trace: a slow amplifier peaks later and lower than the sum of the peaks; ideal control shows nothing', () => {
+  const S = build('lh'); S.nodes.find(n => n.name === 'ILA-2').p.agcUs = 3000;
+  const r = M.simulate(S, undefined, { single: true });
+  assert.ok(r.transient.peakDb < r.transient.surgeDb, 'the peaks do not coincide');
+  assert.ok(r.transientTrace.t[r.transientTrace.surge.indexOf(r.transientTrace.peakDb)] > 100);
+  const Z = build('lh'); Z.g.agcUs = 0;
+  assert.equal(M.simulate(Z, undefined, { single: true }).transient.surgeDb, 0);
+  assert.equal(M.simulate(Z, undefined, { single: true }).transientTrace.peakDb, 0);
+});
+
+test('ramped adds: a ramp slower than the amplifier time constant shrinks the dip, and never the surge', () => {
+  const S = build('lh'); S.g.agcUs = 400; // a slower control loop, so there is a real dip to reduce
+  const inst = M.simulate(S, undefined, { single: true });
+  S.g.rampMs = 5;
+  const ramp = M.simulate(S, undefined, { single: true });
+  assert.equal(inst.transient.rampF, 1);
+  assert.ok(ramp.transient.rampF < 0.1 && Math.abs(ramp.transient.rampF - (200 / 5000) * (1 - Math.exp(-25))) < 1e-9);
+  assert.equal(ramp.transient.surgeDb, inst.transient.surgeDb);
+  assert.ok(ramp.transient.prxDip > inst.transient.prxDip + 1, 'the dip is much shallower');
+  assert.ok(ramp.transient.qMarginDip > inst.transient.qMarginDip);
+  const T = build('lh'); T.g.rampMs = -4; assert.equal(M.sanitize(T).g.rampMs, 0);
+  T.g.rampMs = 1e9; assert.equal(M.sanitize(T).g.rampMs, 10000);
 });

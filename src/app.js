@@ -257,8 +257,8 @@ function renderInspector() {
     box.append(el('h3', { text: 'Line loading' }), field('Launch power', selIn(S.g, 'reopt', [['false', 'Fixed: amplifier targets and the global launch'], ['true', 'Re-optimised for the load on each span']]), 'Re-optimised: every amplifier whose output target is blank sets the GN-optimal power for the span after it, given the channels actually lit there, so the setting follows channels as they are added and dropped. Amplifiers with an explicit target keep it.'), field('Neighbouring channels', selIn(S.g, 'neighbors', [['same', 'Same type as the service'], ['coh', '60 GBd coherent channels']]), 'Only matters for direct-detection optics (10G DWDM): cross-phase modulation from neighbours is stronger when they are wide coherent channels.'));
     box.append(el('h3', { text: 'End-of-life allowances' }), field('Extra loss per fiber span (dB)', numIn(S.g, 'eolSpan', 0.1, 0, 5)), field('Transceiver ageing (dB)', numIn(S.g, 'eolTrx', 0.1, 0, 3)),
       el('p', { class: 'muted small', text: 'Used for the end-of-life margin: repairs, connector wear and laser ageing. Typical planning values are 0.5 to 1.5 dB per span.' }));
-    S.g.lossPct ??= PHY.TRANSIENT.lossPct; S.g.agcUs ??= PHY.TRANSIENT.agcUs;
-    box.append(el('h3', { text: 'Transients' }), field('Channels lost at once (%)', numIn(S.g, 'lossPct', 5, 1, 95), 'The event the Transients tab analyses: this share of the channels vanishes at every amplifier together (an upstream cut, a protection switch). The service survives.'), field('Amplifier control response (µs)', numIn(S.g, 'agcUs', 5, 0, 5000), 'How fast an amplifier\'s gain control reacts. About 10 to 50 µs is a fast AGC loop; milliseconds is slow and lets the surge through. A single amplifier can override it.'));
+    S.g.lossPct ??= PHY.TRANSIENT.lossPct; S.g.agcUs ??= PHY.TRANSIENT.agcUs; S.g.rampMs ??= 0;
+    box.append(el('h3', { text: 'Transients' }), field('Channels lost at once (%)', numIn(S.g, 'lossPct', 5, 1, 95), 'The event the Transients tab analyses: this share of the channels vanishes at every amplifier together (an upstream cut, a protection switch). The service survives.'), field('Channel add ramp (ms)', numIn(S.g, 'rampMs', 0.5, 0, 10000), 'How slowly returning channels are brought up. 0 = all at once. A ramp longer than the amplifiers\' ~200 µs time constant lets their control loops follow, so the dip shrinks; the surge when channels vanish cannot be ramped.'), field('Amplifier control response (µs)', numIn(S.g, 'agcUs', 5, 0, 5000), 'How fast an amplifier\'s gain control reacts. About 10 to 50 µs is a fast AGC loop; milliseconds is slow and lets the surge through. A single amplifier can override it.'));
     S.g.cutRate ??= MODEL.RESIL.cutRate; for (const k in MODEL.RESIL) S.g[k] ??= MODEL.RESIL[k];
     box.append(el('h3', { text: 'Resilience assumptions' }), field('Fiber cuts per 1000 km per year', numIn(S.g, 'cutRate', 0.5, 0, 50)), field('Mean time to repair (h)', numIn(S.g, 'mttr', 1, 0.5, 720)),
       field('Loss detection (ms)', numIn(S.g, 'detectMs', 1, 0, 1000)), field('1+1 switch time (ms)', numIn(S.g, 'switchMs', 5, 0, 10000)), field('Shared protection turn-up (s)', numIn(S.g, 'sharedSec', 0.5, 0, 600), 'Extra time to light a dark protection route: laser turn-up, WSS configuration and amplifier settling.'), field('Restoration time (s)', numIn(S.g, 'restoreSec', 5, 0, 3600), 'How long an unprotected channel takes to re-route over another path.'), field('Device failures per year', numIn(S.g, 'devRate', 0.01, 0, 5), 'Per amplifier or ROADM on a route. A failed ROADM at the end of a channel keeps it down until repaired; one in the middle is bypassed by protection or restoration if another route avoids it.'),
@@ -577,6 +577,25 @@ function resilView() {
   wrap.append(el('div', { style: 'overflow:auto;max-height:460px' }, [tbl]), el('p', { class: 'muted small', text: 'Expected values from the planned routes on the intact network, not a simulation of events. Unprotected channels restore over another route if one exists (restoration time) and otherwise wait for the repair. 1+1 costs loss detection plus switch time per cut on the working route; shared protection adds the turn-up of the dark route. Both add the small chance that both routes are down at the same time. Cut rate, repair, detection, switch and restoration times are in the inspector (nothing selected).' }));
   return wrap;
 }
+// Rx power of a surviving channel against time after the event: the surge when channels vanish, the dip when they come back
+function traceChart(r) {
+  const tr = r.transientTrace, t = r.transient; if (!tr) return el('span');
+  const W = 900, H = 240, ml = 52, mr = 16, mt = 16, mb = 40, tEnd = tr.t[tr.t.length - 1], mode = r.mode;
+  const up = tr.surge.map(v => r.prx + v), dn = tr.dip.map(v => r.prx + v * 1);
+  const lo = Math.min(...dn, mode.rxMin) - 2, hi = Math.max(...up, mode.rxMax) + 2;
+  const X = v => ml + v / tEnd * (W - ml - mr), Y = v => mt + (hi - v) / (hi - lo) * (H - mt - mb);
+  const s = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Receiver power against time after the event' });
+  const step = Math.max(1, Math.round((hi - lo) / 6));
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) { s.append(sv('line', { x1: ml, x2: W - mr, y1: Y(v), y2: Y(v), class: 'grid' })); const x = sv('text', { x: ml - 6, y: Y(v) + 4, class: 'ax', 'text-anchor': 'end' }); x.textContent = v; s.append(x); }
+  const tick = Math.pow(10, Math.floor(Math.log10(tEnd / 4))) * (tEnd / 4 / Math.pow(10, Math.floor(Math.log10(tEnd / 4))) > 5 ? 5 : tEnd / 4 / Math.pow(10, Math.floor(Math.log10(tEnd / 4))) > 2 ? 2 : 1);
+  for (let v = 0; v <= tEnd; v += tick) { const x = sv('text', { x: X(v), y: H - mb + 16, class: 'ax', 'text-anchor': 'middle' }); x.textContent = v >= 1000 ? (v / 1000) + ' ms' : v + ' µs'; s.append(x); }
+  s.append(sv('line', { x1: ml, x2: W - mr, y1: Y(mode.rxMax), y2: Y(mode.rxMax), class: 'pl l-ase dashed' }), sv('line', { x1: ml, x2: W - mr, y1: Y(mode.rxMin), y2: Y(mode.rxMin), class: 'pl l-ase dashed' }), sv('line', { x1: ml, x2: W - mr, y1: Y(r.prx), y2: Y(r.prx), class: 'nowline' }));
+  const lab = (y, txt) => { const x = sv('text', { x: W - mr - 4, y: Y(y) - 4, class: 'ax bad', 'text-anchor': 'end' }); x.textContent = txt; s.append(x); };
+  lab(mode.rxMax, `overload ${mode.rxMax} dBm`); lab(mode.rxMin, `sensitivity ${mode.rxMin} dBm`);
+  s.append(sv('path', { d: tr.t.map((v, i) => `${i ? 'L' : 'M'}${X(v)},${Y(up[i])}`).join(' '), class: 'pl l-sig' }), sv('path', { d: tr.t.map((v, i) => `${i ? 'L' : 'M'}${X(v)},${Y(dn[i])}`).join(' '), class: 'pl l-nli' }));
+  const xl = sv('text', { x: (ml + W - mr) / 2, y: H - 6, class: 'ax', 'text-anchor': 'middle' }); xl.textContent = 'Time after the event'; s.append(xl);
+  return el('div', { class: 'chartwrap' }, [el('h3', { text: 'Receiver power through the event' }), s, el('div', { class: 'legend' }, [lg('l-sig', `Channels vanish: peak +${f1(tr.peakDb)} dB`), lg('l-nli', `Channels return${t.rampF < 1 ? ` over ${tr.rampMs} ms` : ' at once'}: dip −${f1(-Math.min(...tr.dip))} dB`), el('span', { class: 'muted', text: 'A surviving channel at the receiver. All amplifiers\' excursions line up in time (the event travels with the signal) and add; each is pulled back once its control loop engages.' })])]);
+}
 // what happens to the surviving channels when many vanish at once
 function transView(r) {
   const wrap = el('div', { class: 'planwrap pad' }), t = r.transient;
@@ -594,6 +613,7 @@ function transView(r) {
       el('span', {}, ['Q margin during the surge: ', el('b', { class: ok(t.qMarginSurge), text: `${f1(t.qMarginSurge)} dB` })]),
       el('span', {}, ['Rx power when they return: ', el('b', { text: `${f1(t.prxDip)} dBm` }), ` (sensitivity ${mode.rxMin} dBm)`]),
       el('span', {}, ['Q margin during that dip: ', el('b', { class: ok(t.qMarginDip), text: `${f1(t.qMarginDip)} dB` })])]),
+    traceChart(r),
     el('p', { class: 'muted small', text: `A gain-controlled EDFA would raise the survivors by 10·log10(channels / survivors) if it did not react; its control loop holds off all but a fraction 1 − exp(−response / ${t.tauUs} µs) of that. The excursions of a cascade add. Raman pumps and ROADM wavelength blockers are not modelled. The event size and amplifier response are in the inspector (nothing selected); an amplifier can override the response.` }));
   return wrap;
 }
