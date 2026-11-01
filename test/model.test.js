@@ -1026,3 +1026,79 @@ test('protection of a converted channel: first-fit gives each protected half one
   S.g.plan = M.assignSlots(S);
   assert.ok(M.simulate(S).channels.every(x => x.status === 'up'));
 });
+
+// ---- shared (1:N) protection ----
+// Two working fibers (A1-B1, A2-B2) whose protection routes both cross the one middle fiber M1-M2.
+function sharedTopo(prot) {
+  const n = (id, type, name, x, y, p) => ({ id, type, name, x, y, p: { ...M.TYPES[type].def(), ...p } }), f = (id, a, b, len) => ({ id, a, b, kind: 'fiber', p: { ...M.linkDefaults('fiber'), len } });
+  const nodes = ['A1', 'B1', 'A2', 'B2', 'M1', 'M2'].map((nm, i) => n(nm, 'roadm', nm, 100 + i * 80, 100)).concat([n('TA', 'trx', 'TA', 0, 200, { mode: 'zrp400' }), n('TB', 'trx', 'TB', 600, 200, { mode: 'zrp400' })]);
+  const links = [f('wx', 'A1', 'B1', 80), f('wy', 'A2', 'B2', 80), f('a1m', 'A1', 'M1', 60), f('a2m', 'A2', 'M1', 60), f('mm', 'M1', 'M2', 60), f('m1b', 'M2', 'B1', 60), f('m2b', 'M2', 'B2', 60),
+    { id: 'pa', a: 'TA', b: 'A1', kind: 'patch', p: M.linkDefaults('patch') }, { id: 'pb', a: 'TB', b: 'B1', kind: 'patch', p: M.linkDefaults('patch') }];
+  const ch = (slot, o) => ({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: slot, prot: '', ...o });
+  const plan = [ch(30, { svc: true }), ch(31, { from: 'A1', to: 'B1', prot }), ch(31, { from: 'A2', to: 'B2', prot })];
+  return { nodes, links, g: { nch: 3, df: 75, launch: 0, plan }, svc: { a: 'TA', z: 'TB' } };
+}
+
+test('shared protection: the standby is dark, shares a slot, and is checked by simulating the failure', () => {
+  const r = M.simulate(sharedTopo('shared')), load = Object.fromEntries(r.linkLoad.map(l => [l.name, l.n]));
+  assert.equal(r.status, 'up');
+  assert.ok(!('M1–M2' in load), 'a dark standby does not load the middle fiber');
+  for (const i of [1, 2]) {
+    const c = r.channels[i];
+    assert.equal(c.status, 'up'); assert.equal(c.protection.active, 'work');
+    assert.ok(c.protection.protect.predicted, 'the margin is predicted, not measured');
+    assert.equal(c.protection.protect.status, 'up'); assert.ok(c.protection.protect.route.includes('M1') && c.protection.protect.route.includes('M2'));
+  }
+  assert.equal(r.segments.filter(s => s.status === 'standby').length, 2);
+});
+
+test('shared protection: two 1+1 protections would collide where two shared ones do not', () => {
+  const dedicated = M.simulate(sharedTopo('1+1')), blocked = dedicated.channels.filter(c => c.protection && c.protection.protect.status === 'blocked');
+  assert.equal(blocked.length, 1, 'both lit copies need slot 31 on M1-M2');
+  assert.ok(dedicated.channels.some(c => c.status === 'degraded' && /no protection/.test(c.notes.join(' '))));
+  const shared = M.simulate(sharedTopo('shared'));
+  assert.ok(shared.channels.every(c => c.status === 'up'));
+});
+
+test('shared protection: a cut lights the standby; two failures at once contend for it', () => {
+  const S = sharedTopo('shared'); S.links.find(l => l.id === 'wx').p.cut = true;
+  let r = M.simulate(S);
+  assert.equal(r.channels[1].protection.active, 'protect'); assert.equal(r.channels[1].status, 'degraded');
+  assert.equal(r.channels[2].protection.active, 'work');
+  assert.equal(r.linkLoad.find(l => l.name === 'M1–M2').n, 2, 'the activated protection and the restored service (its own fiber is cut) light the middle fiber');
+  assert.ok(r.segments.filter(x => x.lg === 1).every(x => x.status !== 'standby'), 'the protection copy is lit now');
+  S.links.find(l => l.id === 'wy').p.cut = true; // both working fibers fail
+  r = M.simulate(S);
+  const states = [r.channels[1], r.channels[2]].map(c => c.status).sort();
+  assert.ok(states.includes('blocked') || states.includes('los'), 'one of them cannot get the shared slot: ' + states);
+});
+
+test('shared protection: a protected service predicts its margin and keeps the fibers free', () => {
+  const S = build('mesh'); S.g.plan.find(c => c.svc).prot = 'shared';
+  const base = Object.fromEntries(M.simulate(build('mesh')).linkLoad.map(l => [l.name, l.n]));
+  const r = M.simulate(S), sv = r.channels.find(c => c.svc), load = Object.fromEntries(r.linkLoad.map(l => [l.name, l.n]));
+  assert.equal(r.status, 'up'); assert.ok(sv.protection.protect.predicted && sv.protection.protect.status === 'up');
+  assert.deepEqual(load, base, 'no extra load: the protection route is dark');
+  S.links.find(l => l.kind === 'fiber' && l.p.len === 70).p.cut = true;
+  const c = M.simulate(S);
+  assert.equal(c.channels.find(x => x.svc).protection.active, 'protect');
+  assert.ok(c.alarms.some(a => /switched to the protection route/.test(a.text)));
+});
+
+test('shared protection: first-fit lets protection copies share a slot but keeps lit channels clear of them', () => {
+  const S = sharedTopo('shared'); S.g.plan[1].slot = 10; S.g.plan[2].slot = 20; S.g.plan.forEach(c => { c.slot2 = c.slot; });
+  const plan = M.assignSlots(S);
+  const own = pl => pl.filter(c => !c.svc).map(c => c.slot);
+  assert.equal(own(plan)[0], own(plan)[1], 'disjoint working routes, overlapping backups: one slot is enough');
+  S.g.plan = plan;
+  assert.ok(M.simulate(S).channels.every(c => c.status === 'up'));
+  // with 1+1 the two protection copies cannot share
+  const D = sharedTopo('1+1'); D.g.plan[1].slot = 10; D.g.plan[2].slot = 20; D.g.plan.forEach(c => { c.slot2 = c.slot; });
+  const dp = M.assignSlots(D); assert.notEqual(own(dp)[0], own(dp)[1]);
+});
+
+test('shared protection: sanitize accepts it', () => {
+  const S = build('mesh'); S.g.plan[0].prot = 'shared'; S.g.plan[1].prot = 'bogus';
+  const p = M.sanitize(S).g.plan;
+  assert.equal(p[0].prot, 'shared'); assert.equal(p[1].prot, '');
+});

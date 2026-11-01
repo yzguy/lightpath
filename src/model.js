@@ -394,17 +394,26 @@ const MODEL = (() => {
       const m = memo.get(key); why[c.idx] = m.why; return m.r;
     };
     const why = [], cutOff = [];
-    const routes0 = chans.map(routeFor), routes = routes0.slice(), loads = new Map(), blocked = [];
+    const routes0 = chans.map(routeFor), routes = routes0.slice(), loads = new Map(), blocked = [], dark = [];
+    // Shared (1:N) protection: the protection copy is dark while its working copy is up, so it does not load the line and it may use a slot
+    // that other channels' protection copies also use (their working routes cannot be lit in that slot together, so one failure never needs both).
+    chans.forEach((c, k) => { if (c.shared && !c.svc && routes0[chans.findIndex(x => x.lg === c.lg && x.sec === c.sec && x.pc === 'w')]) dark[k] = true; });
     // Wavelength continuity: a slot can carry one channel per fiber. The service has priority, then plan order; a channel that meets a lit slot is blocked.
     if (!noBlock) {
       const used = new Map();
       chans.map((_, k) => k).sort((a, b) => (chans[b].svc ? 1 : 0) - (chans[a].svc ? 1 : 0) || a - b).forEach(k => {
-        const r = routes0[k]; if (!r) return;
+        const r = routes0[k]; if (!r || dark[k]) return;
         const hit = r.links.find(id => { const o = used.get(chans[k].slot + '|' + id); return o != null && chans[o].lg !== chans[k].lg; }); // the two copies of a 1+1 channel are one signal
         if (hit) { routes[k] = null; blocked[k] = true; why[k] = `slot ${chans[k].slot + 1} is already lit on ${linkName(link(hit))} by another channel`; }
         else r.links.forEach(id => used.set(chans[k].slot + '|' + id, k));
       });
     }
+    if (!noBlock) chans.forEach((c, k) => { // a dark protection route must still be free of lit channels in its slot
+      const r = routes0[k]; if (!dark[k] || !r) return;
+      const hit = r.links.find(id => { const o = chans.findIndex((x, j) => !dark[j] && routes[j] && x.slot === c.slot && x.lg !== c.lg && routes[j].links.includes(id)); return o >= 0; });
+      if (hit) { blocked[k] = true; why[k] = `shared protection: slot ${c.slot + 1} is lit on ${linkName(link(hit))} by another channel`; }
+    });
+    dark.forEach((d, k) => { if (d) routes[k] = null; });
     routes.forEach((r, k) => { if (r) for (const id of r.links) { if (!loads.has(id)) loads.set(id, new Set()); loads.get(id).add(k); } });
     const hosts = [{ path, members: [] }];
     const place = (h, k) => {
@@ -417,7 +426,7 @@ const MODEL = (() => {
     routes.map((r, k) => k).filter(k => routes[k] && routes[k] !== path).sort((a, b) => routes[b].links.length - routes[a].links.length).forEach(k => {
       if (!hosts.some(h => place(h, k))) { const h = { path: routes[k], members: [] }; hosts.push(h); place(h, k); }
     });
-    return { routes, loads, hosts, why, blocked, cutOff };
+    return { routes, routes0, loads, hosts, why, blocked, cutOff, dark };
   }
 
   // First-fit wavelength assignment: the service keeps its slot; the other channels, longest route first, each take the lowest slot that is
@@ -432,13 +441,16 @@ const MODEL = (() => {
     // A unit is what must share one slot: a plain channel, or a 1+1 pair (both copies use the same slot). A converter's two segments are separate units.
     const units = [];
     chans.forEach((c, k) => { const u = c.pc === 'p' ? units.find(x => x.lg === c.lg && x.sec === c.sec) : null; if (u) u.ks.push(k); else units.push({ lg: c.lg, sec: c.sec, ks: [k], svc: c.svc }); });
-    units.forEach(u => { u.links = new Set(u.ks.flatMap(k => (mesh.routes[k] ? mesh.routes[k].links : []))); u.svc = u.ks.some(k => chans[k].svc); });
-    const used = Array.from({ length: slotsN }, () => new Set()), slot = chans.map(c => c.slot);
+    // Lit copies need their slot free on their route; a shared (dark) protection copy only needs it free of lit channels, and may reuse a slot
+    // that other protection copies use. The two copies of a pair always take the same slot.
+    const rt = k => (mesh.routes0[k] ? mesh.routes0[k].links : []);
+    units.forEach(u => { u.links = new Set(u.ks.filter(k => !chans[k].shared || chans[k].svc).flatMap(rt)); u.dlinks = new Set(u.ks.filter(k => chans[k].shared && !chans[k].svc).flatMap(rt)); u.svc = u.ks.some(k => chans[k].svc); });
+    const prim = Array.from({ length: slotsN }, () => new Set()), dk = Array.from({ length: slotsN }, () => new Set()), slot = chans.map(c => c.slot);
     units.map((u, i) => i).sort((a, b) => (units[b].svc ? 1 : 0) - (units[a].svc ? 1 : 0) || units[b].links.size - units[a].links.size || a - b).forEach(i => {
-      const u = units[i]; if (!u.links.size) return;
+      const u = units[i]; if (!u.links.size && !u.dlinks.size) return;
       let s = slot[u.ks[0]];
-      if (!u.svc) { const f = used.findIndex(x => [...u.links].every(id => !x.has(id))); if (f >= 0) s = f; }
-      u.ks.forEach(k => (slot[k] = s)); u.links.forEach(id => used[s].add(id));
+      if (!u.svc) { const f = prim.findIndex((_, x) => [...u.links].every(id => !prim[x].has(id) && !dk[x].has(id)) && [...u.dlinks].every(id => !prim[x].has(id))); if (f >= 0) s = f; }
+      u.ks.forEach(k => (slot[k] = s)); u.links.forEach(id => prim[s].add(id)); u.dlinks.forEach(id => dk[s].add(id));
     });
     const plan = g.plan.map((c, lg) => { const ks = chans.map((x, k) => (x.lg === lg ? k : -1)).filter(k => k >= 0), k2 = ks.find(k => chans[k].sec === 1); return { ...c, slot: slot[ks[0]], slot2: c.conv && k2 != null ? slot[k2] : slot[ks[0]] }; });
     return sanitizePlan(plan, +g.df);
@@ -494,7 +506,7 @@ const MODEL = (() => {
     const modeKey = W ? W.svcMode : A.p.mode, mode = PHY_.MODES[modeKey];
     // A 1+1 protected service runs on its planned working route, and on the planned fiber-disjoint protection route once the working one
     // has a cut fiber (or, see below, when it is down). Otherwise the shortest route over the fibers that are not cut, with a fallback across a cut.
-    const svcEntry = !W && Array.isArray(g.plan) ? g.plan.find(c => c.svc) : null, svcProt = !!svcEntry && svcEntry.prot === '1+1';
+    const svcEntry = !W && Array.isArray(g.plan) ? g.plan.find(c => c.svc) : null, svcProt = !!svcEntry && (svcEntry.prot === '1+1' || svcEntry.prot === 'shared');
     let path, rerouteCut = false, svcOnProt = W ? !!W.svcOnProt : false, protWhy = '';
     if (W) path = W.path;
     else if (svcProt) {
@@ -774,11 +786,29 @@ const MODEL = (() => {
         for (const m of h.members) res.segments[m.k] = w.segments ? w.segments[m.k] : null;
       }
       res.segments = res.segments.map((c, i) => c || { idx: i, lg: chans[i].lg, role: chans[i].role, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
-        status: mesh.blocked[i] ? 'blocked' : mesh.routes[i] || mesh.cutOff[i] ? 'los' : 'nopath', notes: [mesh.routes[i] || mesh.cutOff[i] ? 'the route crosses a cut fiber' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
+        status: mesh.blocked[i] ? 'blocked' : mesh.dark[i] ? 'standby' : mesh.routes[i] || mesh.cutOff[i] ? 'los' : 'nopath', notes: [mesh.blocked[i] ? mesh.why[i] : mesh.dark[i] ? 'shared protection: dark until the working route fails' : mesh.routes[i] || mesh.cutOff[i] ? 'the route crosses a cut fiber' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
       res.channels = logicalChannels(g.plan, chans, res.segments);
+      // Shared protection is dark, so its margin is predicted by failing the first fiber of the working route and reading the protection copy.
+      if (!opts.predict && !opts.single && mesh.dark.some(Boolean)) {
+        const isFiber = id => (link(id) || {}).kind === 'fiber', groups = new Map();
+        res.channels.forEach((e, i) => {
+          const ids = [...new Set(chans.map((x, k) => (x.lg === i && mesh.dark[k] && !mesh.blocked[k] ? chans.findIndex(y => y.lg === i && y.sec === x.sec && y.pc === 'w') : -1)).filter(w => w >= 0).map(w => mesh.routes0[w].links.find(isFiber)).filter(Boolean))].sort();
+          if (ids.length) { const key = ids.join('+'); if (!groups.has(key)) groups.set(key, { ids, lgs: [] }); groups.get(key).lgs.push(i); }
+        });
+        for (const gr of groups.values()) {
+          const Sf = { ...S, links: S.links.map(l => (gr.ids.includes(l.id) ? { ...l, p: { ...l.p, cut: true } } : l)) };
+          const r2 = simulate(Sf, launchOverride, { single: true, reverse: rv, predict: true });
+          for (const i of gr.lgs) {
+            const e = res.channels[i], pe = r2.channels && r2.channels[i] && r2.channels[i].protection ? r2.channels[i].protection.protect : null;
+            if (!pe) continue;
+            e.protection = { ...e.protection, protect: { ...pe, predicted: true } };
+            if ((SEG_RANK[pe.status] ?? 0) >= 2) { e.notes = [...e.notes, `shared protection would not carry it: ${pe.notes[0] || pe.status}`]; if (e.status === 'up') e.status = 'degraded'; }
+          }
+        }
+      }
       res.linkLoad = [...mesh.loads].map(([id, set]) => ({ id, name: linkName(link(id)), n: new Set([...set].map(k => chans[k].lg + ':' + chans[k].sec)).size }));
       const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los' || c.status === 'nopath' || c.status === 'blocked'));
-      const unprot = res.channels.filter(c => c.protection && !c.svc && c.protection.active === 'work' && STATUS_RANK[c.protection.protect.status] >= 2);
+      const unprot = res.channels.filter(c => c.protection && !c.svc && c.protection.active === 'work' && STATUS_RANK[c.protection.protect.status] >= 2 && c.protection.protect.status !== 'standby');
       if (unprot.length) alarms.push({ sev: 'warn', text: `${unprot.length} protected channel${unprot.length > 1 ? 's have' : ' has'} no usable protection route (slot ${unprot.slice(0, 3).map(c => c.slot + 1).join(', ')}${unprot.length > 3 ? '…' : ''}): ${unprot[0].protection.protect.notes[0] || 'it is down'}.` });
       const sp = res.channels.find(c => c.svc && c.protection);
       if (sp && !svcOnProt && STATUS_RANK[sp.protection.protect.status] >= 2) alarms.push({ sev: 'warn', text: `The service is 1+1 protected but its protection route is unusable: ${sp.protection.protect.notes[0] || 'it is down'}.` });
