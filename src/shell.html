@@ -91,6 +91,10 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .lightpath { stroke: var(--sig); stroke-width: 2.5; stroke-dasharray: 3 9; stroke-linecap: round; fill: none; pointer-events: none; animation: flow 0.9s linear infinite }
 .lightpath.down, .lightpath.los { stroke: var(--bad) }
 .lightpath.degraded { stroke: var(--warn) }
+.node.failed .body, .node.failed circle:first-child, .node.failed path { stroke: var(--bad) !important; opacity: .55 }
+.node.degraded .body, .node.degraded circle:first-child, .node.degraded path { stroke: var(--warn) !important; stroke-width: 3 }
+.failmark { fill: var(--bad); font: 700 26px var(--mono, monospace); pointer-events: none }
+.degmark { fill: var(--warn); font-size: 12px; pointer-events: none }
 .chroute.stby { stroke-dasharray: 2 9; opacity: .8 }
 .chroute { stroke: var(--mpi); stroke-width: 6; stroke-linecap: round; fill: none; opacity: 0.55; pointer-events: none }
 .node.chnode .body, .node.chnode circle:first-child { stroke: var(--mpi); stroke-width: 3 }
@@ -222,7 +226,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div class="brand"><h1>Light<span>path</span></h1><small>C-band · GN-model physics</small></div>
   <div class="globals">
     <label class="g" for="preset">Lab
-      <select id="preset"><option value="">Load a scenario…</option><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="ring">ROADM triangle with restoration</option><option value="protect">Protection and converters on a triangle</option><option value="mesh">Mesh: channels on different routes</option><option value="adddrop">ROADM line with add/drop at the middle node</option><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="mix">Mixed line: 10G beside 400G</option><option value="dark">Dark fiber: unamplified ZR</option></select></label>
+      <select id="preset"><option value="">Load a scenario…</option><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="ring">ROADM triangle with restoration</option><option value="srlg">Shared duct: two fibers that fail together</option><option value="protect">Protection and converters on a triangle</option><option value="mesh">Mesh: channels on different routes</option><option value="adddrop">ROADM line with add/drop at the middle node</option><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="mix">Mixed line: 10G beside 400G</option><option value="dark">Dark fiber: unamplified ZR</option></select></label>
     <label class="g" for="g-nch" title="How many channels are lit in each fiber. Affects amplifier power sharing and nonlinearity.">Channels <input type="range" id="g-nch" min="1" max="96" step="1"><output id="g-nch-v"></output></label>
     <label class="g" for="g-df">Grid <select id="g-df"><option value="50">50 GHz</option><option value="75">75 GHz</option><option value="100">100 GHz</option><option value="150">150 GHz</option></select></label>
     <label class="g" for="g-launch" title="Per-channel output target for every amplifier in Auto mode">Launch <input type="range" id="g-launch" min="-6" max="6" step="0.5"><output id="g-launch-v"></output><span style="text-transform:none">dBm/ch</span></label>

@@ -108,7 +108,7 @@ test('sanitize: drops junk, fills defaults, keeps valid data', () => {
   assert.deepEqual([v.name, v.x, v.y, v.p.att], ['7', 0, 0, 5]);
   assert.equal(c.nodes[0].p.mode, 'zr400');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.fiber, 'smf');
-  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, eolSpan: 1, eolTrx: 0.5, lossPct: 50, agcUs: 20, cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60 });
+  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, eolSpan: 1, eolTrx: 0.5, lossPct: 50, agcUs: 20, cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60, devRate: 0.02 });
   assert.deepEqual(c.svc, { a: null, z: S.svc.z });
   assert.ok(M.simulate(c).status); // and the cleaned topology simulates without throwing
 });
@@ -1105,7 +1105,7 @@ test('shared protection: sanitize accepts it', () => {
 
 // ---- resilience: switching time and expected downtime ----
 test('resilience: an unprotected channel restores over another route and is down for the restoration time', () => {
-  const S = build('mesh'), r = M.resilience(S), sv = r[S.g.plan.findIndex(c => c.svc)];
+  const S = build('mesh'); S.g.devRate = 0; const r = M.resilience(S), sv = r[S.g.plan.findIndex(c => c.svc)];
   assert.equal(sv.kind, 'restoration'); assert.equal(sv.km, 70);
   assert.ok(Math.abs(sv.failures - 3 * 70 / 1000) < 1e-9);
   assert.ok(Math.abs(sv.downSec - 0.21 * 60) < 1e-6, `${sv.downSec}`);
@@ -1115,13 +1115,13 @@ test('resilience: an unprotected channel restores over another route and is down
 });
 
 test('resilience: with no other route a cut lasts until it is repaired', () => {
-  const S = build('adddrop'), sv = M.resilience(S)[S.g.plan.findIndex(c => c.svc)];
+  const S = build('adddrop'); S.g.devRate = 0; const sv = M.resilience(S)[S.g.plan.findIndex(c => c.svc)];
   assert.equal(sv.kind, 'unprotected'); assert.equal(sv.outageSec, 12 * 3600);
   assert.ok(Math.abs(sv.downSec - 3 * 160 / 1000 * 12 * 3600) < 1e-3);
 });
 
 test('resilience: 1+1 costs detect plus switch per failure and a small double-failure term; shared adds the turn-up time', () => {
-  const S = build('mesh'), k = S.g.plan.findIndex(c => c.svc);
+  const S = build('mesh'); S.g.devRate = 0; const k = S.g.plan.findIndex(c => c.svc);
   S.g.plan[k].prot = '1+1';
   const d = M.resilience(S)[k], lw = 0.21, Uw = lw * 12 / 8760, Up = 3 * 210 / 1000 * 12 / 8760;
   assert.equal(d.kind, '1+1'); assert.equal(d.km, 70); assert.equal(d.protKm, 210);
@@ -1137,7 +1137,7 @@ test('resilience: 1+1 costs detect plus switch per failure and a small double-fa
 });
 
 test('resilience: a converted channel is the sum of its halves, and protection halves each side', () => {
-  const S = build('mesh'), { ra, rb, rc } = meshIds(S);
+  const S = build('mesh'); S.g.devRate = 0; const { ra, rb, rc } = meshIds(S);
   const k = addCh(S, { slot: 40, slot2: 41, from: ra, to: rc, conv: rb });
   const plain = M.resilience(S)[k];
   assert.equal(plain.km, 210); assert.ok(Math.abs(plain.failures - 3 * 210 / 1000) < 1e-9);
@@ -1153,7 +1153,7 @@ test('resilience: no route is reported, availability defaults load, and sanitize
   assert.equal(M.resilience(S)[k].kind, 'no route');
   const T = build('mesh'); T.g.cutRate = 1e9; T.g.mttr = 'x'; T.g.switchMs = -5;
   const g = M.sanitize(T).g; assert.equal(g.cutRate, 50); assert.equal(g.mttr, 12); assert.equal(g.switchMs, 0);
-  assert.deepEqual(Object.keys(M.RESIL).sort(), ['cutRate', 'detectMs', 'mttr', 'restoreSec', 'sharedSec', 'switchMs']);
+  assert.deepEqual(Object.keys(M.RESIL).sort(), ['cutRate', 'detectMs', 'devRate', 'mttr', 'restoreSec', 'sharedSec', 'switchMs']);
   assert.equal(M.resilience(build('dci')).length, 1, 'no plan: just the service');
 });
 
@@ -1194,4 +1194,119 @@ test('transients: one slow amplifier shows up in its own row; losing fewer chann
   assert.equal(M.simulate(one, undefined, { single: true }).transient, undefined);
   const T = build('lh'); T.g.lossPct = 500; T.g.agcUs = -3; const g = M.sanitize(T).g;
   assert.equal(g.lossPct, 95); assert.equal(g.agcUs, 0);
+});
+
+// ---- failures other than fiber cuts ----
+function diamond(prot) { // R1 - R2 - R4 (120 km) and R1 - R3 - R4 (160 km), a transponder at each end
+  const n = (id, type, p) => ({ id, type, name: id, x: 0, y: 0, p: { ...M.TYPES[type].def(), ...p } }), f = (id, a, b, len) => ({ id, a, b, kind: 'fiber', p: { ...M.linkDefaults('fiber'), len } });
+  return { nodes: [n('R1', 'roadm'), n('R2', 'roadm'), n('R3', 'roadm'), n('R4', 'roadm'), n('TA', 'trx', { mode: 'zrp400' }), n('TB', 'trx', { mode: 'zrp400' })],
+    links: [f('a', 'R1', 'R2', 60), f('b', 'R2', 'R4', 60), f('c', 'R1', 'R3', 80), f('d', 'R3', 'R4', 80), { id: 'pa', a: 'TA', b: 'R1', kind: 'patch', p: M.linkDefaults('patch') }, { id: 'pb', a: 'TB', b: 'R4', kind: 'patch', p: M.linkDefaults('patch') }],
+    g: { nch: 1, df: 75, launch: 0, plan: [{ slot: 30, mode: 'zrp400', off: 0, svc: true, from: '', to: '', via: '', conv: '', slot2: 30, prot }] }, svc: { a: 'TA', z: 'TB' } };
+}
+
+test('a failed amplifier breaks the line: LOS at the far end, both ways', () => {
+  const S = build('lh'), amp = S.nodes.find(n => n.type === 'edfa' && n.name === 'ILA-2'); amp.p.fail = 'dead';
+  const r = M.simulate(S);
+  assert.equal(r.status, 'los'); assert.match(r.headline, /ILA-2 has failed/);
+  assert.ok(r.hops.some(h => h.kind === 'cut' && h.note === 'Device failed'));
+  assert.equal(M.simulate(build('lh')).status, 'up');
+});
+
+test('a failed transponder is reported at once, whichever end', () => {
+  for (const nm of ['TRX-A', 'TRX-Z']) {
+    const S = build('lh'); S.nodes.find(n => n.name === nm).p.fail = 'dead';
+    const r = M.simulate(S);
+    assert.equal(r.status, 'los'); assert.match(r.headline, new RegExp(nm + ' has failed'));
+  }
+});
+
+test('a failed ROADM is routed around, and takes down the channels that end there', () => {
+  const S = build('mesh'), rb = S.nodes.find(n => n.name === 'ROADM-B'); rb.p.fail = 'dead';
+  const r = M.simulate(S);
+  assert.equal(r.channels.find(c => c.svc).status, 'up', 'the service does not touch B');
+  const lost = r.channels.filter(c => c.status === 'los');
+  assert.ok(lost.length >= 8, 'A to B, B to C and the via-B channels are down: ' + lost.length);
+  assert.ok(r.channels.filter(c => c.route.join('>') === 'TRX-A>ROADM-A>ROADM-C>TRX-C').every(c => c.status === 'up'));
+  assert.ok(r.alarms.some(a => /failing/.test(a.text)));
+});
+
+test('a failed ROADM in the middle of a service re-routes it, or switches it to protection', () => {
+  const S = diamond(''); S.nodes.find(n => n.id === 'R2').p.fail = 'dead';
+  let r = M.simulate(S);
+  assert.deepEqual(r.path.nodes, ['TA', 'R1', 'R3', 'R4', 'TB']); assert.equal(r.status, 'up'); // restoration around the failure
+  const P = diamond('1+1'); P.nodes.find(n => n.id === 'R2').p.fail = 'dead';
+  r = M.simulate(P);
+  assert.deepEqual(r.path.nodes, ['TA', 'R1', 'R3', 'R4', 'TB']);
+  assert.ok(r.alarms.some(a => /failed device/.test(a.text) && /switched to the protection route/.test(a.text)));
+  assert.equal(r.channels[0].protection.active, 'protect');
+  P.nodes.find(n => n.id === 'R3').p.fail = 'dead'; // now both routes have a dead device
+  assert.equal(M.simulate(P).status, 'los');
+});
+
+test('a degraded device costs margin by type', () => {
+  const base = M.simulate(build('lh'), undefined, { single: true });
+  const amp = build('lh'); amp.nodes.find(n => n.name === 'ILA-2').p.fail = 'degraded'; amp.nodes.find(n => n.name === 'ILA-2').p.degDb = 6;
+  const a = M.simulate(amp, undefined, { single: true });
+  assert.ok(a.qMargin < base.qMargin && a.gosnr < base.gosnr, 'less output and a worse noise figure');
+  assert.ok(a.alarms.some(x => /ILA-2 is degraded/.test(x.text)));
+  assert.match(a.hops.find(h => h.name === 'ILA-2').note, /Degraded/);
+  const tx = build('lh'); const t = tx.nodes.find(n => n.name === 'TRX-A'); t.p.fail = 'degraded'; t.p.degDb = 4;
+  const tr = M.simulate(tx, undefined, { single: true });
+  assert.ok(tr.gosnr < base.gosnr && Math.abs(tr.prx - base.prx) < 1e-6, 'an amplified line re-levels the power; the booster just has more gain to make up and so more noise');
+  const dk = build('dark'), d0 = M.simulate(dk, undefined, { single: true }).prx, ta = dk.nodes.find(n => n.type === 'trx'); ta.p.fail = 'degraded'; ta.p.degDb = 4;
+  assert.ok(Math.abs(M.simulate(dk, undefined, { single: true }).prx - (d0 - 4)) < 1e-6, 'an unamplified link loses exactly the laser degradation');
+  const rx = build('lh'); const z = rx.nodes.find(n => n.name === 'TRX-Z'); z.p.fail = 'degraded'; z.p.degDb = 3;
+  const rr = M.simulate(rx, undefined, { single: true });
+  assert.ok(rr.qMargin < base.qMargin - 1 && Math.abs(rr.prx - base.prx) < 1e-6, 'a degraded receiver does not change power but costs SNR');
+  const ro = build('adddrop'); const b = ro.nodes.find(n => n.name === 'ROADM-B'); const g0 = M.simulate(ro, undefined, { single: true }).hops.find(h => h.name === 'ROADM-B express').gain;
+  b.p.fail = 'degraded'; b.p.degDb = 5;
+  assert.ok(Math.abs(M.simulate(ro, undefined, { single: true }).hops.find(h => h.name === 'ROADM-B express').gain - (g0 - 5)) < 1e-9, 'a ROADM with a partly blocked WSS adds that much loss');
+});
+
+test('failure state is sanitised', () => {
+  const S = build('lh'); S.nodes[0].p.fail = 'on fire'; S.nodes[1].p.fail = 'dead'; S.nodes[2].p.fail = 'degraded'; S.nodes[2].p.degDb = 99; S.nodes[3].p.degDb = 'x';
+  const n = M.sanitize(S).nodes;
+  assert.equal(n[0].p.fail, ''); assert.equal(n[1].p.fail, 'dead'); assert.equal(n[2].p.degDb, 30); assert.equal(n[3].p.degDb, 3);
+  const T = build('lh'); const f = T.links.find(l => l.kind === 'fiber'); f.p.srlg = 'duct 1; drop'; 
+  assert.equal(M.sanitize(T).links.find(l => l.id === f.id).p.srlg, '');
+  f.p.srlg = 'duct-1'; assert.equal(M.sanitize(T).links.find(l => l.id === f.id).p.srlg, 'duct-1');
+});
+
+// ---- shared risk link groups ----
+test('srlg: cutting one fiber of a duct cuts them all', () => {
+  const S = build('srlg'), ac = S.links.find(l => l.kind === 'fiber' && l.p.srlg === 'duct1' && l.p.len === 70), ab = S.links.find(l => l.kind === 'fiber' && l.p.srlg === 'duct1' && l.p.len === 80);
+  assert.ok(!M.isCut(S, ab));
+  ac.p.cut = true;
+  assert.ok(M.isCut(S, ab) && M.isCut(S, ac), 'the neighbour in the duct goes with it');
+  assert.ok(!M.isCut(S, S.links.find(l => l.p.len === 90)), 'other fibers are not affected');
+  const r = M.simulate(S);
+  assert.ok(r.channels.filter(c => c.route.join('>') === 'ROADM-A>ROADM-B').length === 0 || r.channels.filter(c => c.status === 'los').length >= 3, 'A to B channels cannot use A-B either');
+});
+
+test('srlg: protection planning avoids the whole duct, not just the working fiber', () => {
+  const S = build('srlg'), r = M.simulate(S), sv = r.channels.find(c => c.svc);
+  assert.deepEqual(sv.protection.work.route, ['TRX-A', 'ROADM-A', 'ROADM-C', 'TRX-C']);
+  assert.deepEqual(sv.protection.protect.route, ['TRX-A', 'ROADM-A', 'ROADM-D', 'ROADM-C', 'TRX-C'], 'A-B is in the same duct as A-C so the long way round through D is used');
+  assert.equal(r.status, 'up');
+  S.links.forEach(l => { delete l.p.srlg; });
+  assert.ok(M.simulate(S).channels.find(c => c.svc).protection.protect.route.includes('ROADM-B'), 'without the duct, A-B-C is the protection route');
+  // a cut anywhere in the duct switches the service to the route that avoids it
+  const T = build('srlg'); T.links.find(l => l.p.srlg === 'duct1' && l.p.len === 80).p.cut = true;
+  const c = M.simulate(T);
+  assert.ok(c.path.nodes.some(id => T.nodes.find(n => n.id === id).name === 'ROADM-D'));
+  assert.ok(c.alarms.some(a => /switched to the protection route/.test(a.text)));
+});
+
+test('failures: device failures enter the availability estimate; protection bypasses an interior device', () => {
+  const base = diamond('1+1'); base.g.devRate = 0;
+  const noDev = M.resilience(base)[0];
+  const S = diamond('1+1'); S.g.devRate = 0.02; // R1 and R4 are single-homed access nodes (12 h repair); R2 is bypassed by the protection route
+  const withDev = M.resilience(S)[0];
+  assert.ok(Math.abs(withDev.downSec - noDev.downSec - (2 * 0.02 * 12 * 3600 + 0.02 * 0.035)) < 1e-6, `${withDev.downSec - noDev.downSec}`);
+  const U = diamond(''); U.g.devRate = 0.02;
+  const un = M.resilience(U)[0];
+  assert.equal(un.kind, 'restoration');
+  const U0 = diamond(''); U0.g.devRate = 0;
+  assert.ok(Math.abs(un.downSec - M.resilience(U0)[0].downSec - (2 * 0.02 * 12 * 3600 + 0.02 * 60)) < 1e-6, 'R2 restores over R3 in 60 s, the access ROADMs wait for repair');
+  assert.ok(withDev.failures > noDev.failures);
 });

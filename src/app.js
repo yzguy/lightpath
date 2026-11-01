@@ -51,7 +51,7 @@ function applyView() { gRoot.setAttribute('transform', `scale(${S.view.k}) trans
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
 
 function nodeShape(n) {
-  const g = sv('g', { class: 'node t-' + n.type + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0 });
+  const g = sv('g', { class: 'node t-' + n.type + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0 });
   if (n.type === 'trx') {
     g.append(sv('rect', { x: -46, y: -22, width: 92, height: 44, rx: 4, class: 'body' }));
     g.append(sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' }));
@@ -85,6 +85,8 @@ function nodeShape(n) {
   if (isEnd(n) && (S.svc.a === n.id || S.svc.z === n.id)) {
     const b = sv('text', { x: 0, y: n.type === 'mxp' ? -38 : -30, class: 'endtag', 'text-anchor': 'middle' }); b.textContent = S.svc.a === n.id ? 'A end' : 'Z end'; g.append(b);
   }
+  if (n.p && n.p.fail === 'dead') { const x = sv('text', { x: 0, y: 9, class: 'failmark', 'text-anchor': 'middle' }); x.textContent = '✕'; g.append(x); }
+  else if (n.p && n.p.fail === 'degraded') { const x = sv('text', { x: 0, y: -26, class: 'degmark', 'text-anchor': 'middle' }); x.textContent = '▼'; g.append(x); }
   return g;
 }
 let lastRes = null;
@@ -98,7 +100,8 @@ function renderCanvas() {
   const hc = hiChan && S.g.plan && vr && vr.channels ? vr.channels[S.g.plan.indexOf(hiChan)] : null, hiLinks = new Set(hc ? hc.routeLinks : []), hiNodes = new Set(hc ? hc.routeNodes : []), sb = hc && hc.protection ? (hc.protection.active === 'work' ? hc.protection.protect : hc.protection.work) : null, stbyLinks = new Set(sb ? sb.routeLinks : []);
   for (const l of S.links) {
     const a = node(l.a), b = node(l.b); if (!a || !b) continue;
-    const g = sv('g', { class: 'link k-' + l.kind + (l.p.cut ? ' cut' : '') + (sel && sel.id === l.id ? ' sel' : ''), 'data-id': l.id });
+    const cutNow = MODEL.isCut(S, l);
+    const g = sv('g', { class: 'link k-' + l.kind + (cutNow ? ' cut' : '') + (sel && sel.id === l.id ? ' sel' : ''), 'data-id': l.id });
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'hit' }));
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'wire' }));
     if (hiLinks.has(l.id)) og.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'chroute' }));
@@ -108,14 +111,14 @@ function renderCanvas() {
       const rev = from.id !== a.id;
       og.append(sv('line', { x1: rev ? b.x : a.x, y1: rev ? b.y : a.y, x2: rev ? a.x : b.x, y2: rev ? a.y : b.y, class: 'lightpath ' + (vr.status || '') }));
     }
-    if (l.kind === 'fiber' || l.p.cut) {
+    if (l.kind === 'fiber' || cutNow) {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
       const fb = PHY.FIBERS[l.p.fiber];
       const t = sv('text', { x: mx, y: my - 10, class: 'llabel', 'text-anchor': 'middle' });
       const arrow = l.p.dir === 'ab' || l.p.dir === 'ba' ? (() => { const dx = b.x - a.x, dy = b.y - a.y, f = l.p.dir === 'ab' ? 1 : -1; return ' ' + (Math.abs(dx) >= Math.abs(dy) ? (dx * f > 0 ? '→' : '←') : (dy * f > 0 ? '↓' : '↑')); })() : '';
-      t.textContent = (l.kind === 'fiber' ? `${l.p.len} km · ${f1(fb.att * l.p.len + +l.p.extra)} dB` + (+l.p.raman > 0 ? ` · Raman ${l.p.raman} mW` : '') : 'patch') + arrow;
+      t.textContent = (l.kind === 'fiber' ? `${l.p.len} km · ${f1(fb.att * l.p.len + +l.p.extra)} dB` + (+l.p.raman > 0 ? ` · Raman ${l.p.raman} mW` : '') + (l.p.srlg ? ` · ${l.p.srlg}` : '') : 'patch') + arrow;
       g.append(t);
-      if (l.p.cut) { const x = sv('text', { x: mx, y: my + 7, class: 'cutmark', 'text-anchor': 'middle' }); x.textContent = '✕'; g.append(x); }
+      if (cutNow) { const x = sv('text', { x: mx, y: my + 7, class: 'cutmark', 'text-anchor': 'middle' }); x.textContent = '✕'; g.append(x); }
     }
     lg.append(g);
   }
@@ -258,7 +261,7 @@ function renderInspector() {
     box.append(el('h3', { text: 'Transients' }), field('Channels lost at once (%)', numIn(S.g, 'lossPct', 5, 1, 95), 'The event the Transients tab analyses: this share of the channels vanishes at every amplifier together (an upstream cut, a protection switch). The service survives.'), field('Amplifier control response (µs)', numIn(S.g, 'agcUs', 5, 0, 5000), 'How fast an amplifier\'s gain control reacts. About 10 to 50 µs is a fast AGC loop; milliseconds is slow and lets the surge through. A single amplifier can override it.'));
     S.g.cutRate ??= MODEL.RESIL.cutRate; for (const k in MODEL.RESIL) S.g[k] ??= MODEL.RESIL[k];
     box.append(el('h3', { text: 'Resilience assumptions' }), field('Fiber cuts per 1000 km per year', numIn(S.g, 'cutRate', 0.5, 0, 50)), field('Mean time to repair (h)', numIn(S.g, 'mttr', 1, 0.5, 720)),
-      field('Loss detection (ms)', numIn(S.g, 'detectMs', 1, 0, 1000)), field('1+1 switch time (ms)', numIn(S.g, 'switchMs', 5, 0, 10000)), field('Shared protection turn-up (s)', numIn(S.g, 'sharedSec', 0.5, 0, 600), 'Extra time to light a dark protection route: laser turn-up, WSS configuration and amplifier settling.'), field('Restoration time (s)', numIn(S.g, 'restoreSec', 5, 0, 3600), 'How long an unprotected channel takes to re-route over another path.'),
+      field('Loss detection (ms)', numIn(S.g, 'detectMs', 1, 0, 1000)), field('1+1 switch time (ms)', numIn(S.g, 'switchMs', 5, 0, 10000)), field('Shared protection turn-up (s)', numIn(S.g, 'sharedSec', 0.5, 0, 600), 'Extra time to light a dark protection route: laser turn-up, WSS configuration and amplifier settling.'), field('Restoration time (s)', numIn(S.g, 'restoreSec', 5, 0, 3600), 'How long an unprotected channel takes to re-route over another path.'), field('Device failures per year', numIn(S.g, 'devRate', 0.01, 0, 5), 'Per amplifier or ROADM on a route. A failed ROADM at the end of a channel keeps it down until repaired; one in the middle is bypassed by protection or restoration if another route avoids it.'),
       el('p', { class: 'muted small', text: 'Expectations for the Resilience tab. Typical terrestrial fiber sees 2 to 4 cuts per 1000 km per year.' }));
     box.append(el('div', { class: 'keys' }, [el('div', { html: '<kbd>V</kbd> select / move' }), el('div', { html: '<kbd>P</kbd> patch cord' }), el('div', { html: '<kbd>F</kbd> fiber span' }), el('div', { html: '<kbd>Del</kbd> delete' }), el('div', { html: 'Drag empty space to pan, scroll to zoom' })]));
     return;
@@ -267,7 +270,9 @@ function renderInspector() {
     const n = node(sel.id); if (!n) return;
     const nm = el('input', { value: n.name, id: 'f-name' }); nm.addEventListener('input', () => { n.name = nm.value; renderCanvas(); renderResults(); });
     box.append(el('h3', { text: TYPES[n.type].label }), field('Name', nm));
-    const p = n.p;
+    const p = n.p; p.fail ??= ''; p.degDb ??= 3;
+    box.append(field('Condition', selIn(p, 'fail', [['', 'Working'], ['degraded', 'Degraded'], ['dead', 'Failed (no light passes)']]), 'Failed: the device passes no light, so routes avoid it (restoration or protection) and a service through it is LOS. Degraded: an amplifier loses output (pump ageing) and gets noisier, a laser gets weaker, a receiver loses SNR, a ROADM, mux, VOA or DCM adds loss.'));
+    if (p.fail === 'degraded') box.append(field('Degradation (dB)', numIn(p, 'degDb', 0.5, 0, 30)));
     { const d = TYPES[n.type].def(); for (const k in d) if (p[k] === undefined) p[k] = d[k]; } // fields added since this lab was saved
     if (isEnd(n)) {
       box.append(field(n.type === 'mxp' ? 'Line port mode' : 'Mode', selIn(p, 'mode', Object.entries(PHY.MODES).map(([k, m]) => [k, m.name]))));
@@ -336,6 +341,11 @@ function renderInspector() {
     } else {
       if (l.p.il == null) l.p.il = linkDefaults('patch').il;
       box.append(field('Loss (dB)', numIn(l.p, 'il', 0.1, 0, 10)));
+    }
+    if (l.kind === 'fiber') {
+      const gi = el('input', { value: l.p.srlg || '', id: 'f-srlg', placeholder: 'e.g. duct1', maxlength: 24 });
+      gi.addEventListener('change', () => { l.p.srlg = gi.value.trim().replace(/[^\w-]/g, ''); renderAll(); });
+      box.append(field('Shared risk group', gi, 'Fibers with the same name share a duct or a trench: cutting one cuts all of them, and protection routes are planned to avoid the whole group.'));
     }
     box.append(el('div', { class: 'row' }, [
       el('button', { class: 'btn ' + (l.p.cut ? '' : 'danger'), text: l.p.cut ? 'Splice it back' : 'Cut this fiber', onclick: () => { l.p.cut = !l.p.cut; renderAll(); } }),
@@ -849,6 +859,7 @@ const LEARN = {
   bidi: ['Two directions', `<p>A DWDM line is really <b>two</b> fibers (or two wavelength bands on one) carrying traffic in opposite directions, with <b>one amplifier per direction</b>. A box labelled "BST-A" holds the booster for A to Z and the preamp for Z to A. The results panel shows both: pick the direction with the buttons by the status pill. The service status is the worse of the two.</p><p>Directions differ when one fiber has a dirtier connector, a different loss, a different Raman pump, or an amplifier that is set up for the other direction. Cable-wise a transmitter's launch and a receiver's input both depend on which role the amplifier plays, so an amp tuned as a booster is often wrong as a preamp: use the "return direction" fields on amplifiers and fibers.</p><p>A fiber can also be set to carry one direction only (inspector, "Carries light"). Then each direction routes separately: A to Z can take the short way round a ring while Z to A takes the long way, and a one-way fiber with no return path takes the service down. A DCM and an amplifier's gain range, noise figure and output limit also have return-direction fields.</p><p>Counter-propagating signals barely interact nonlinearly because they walk through each other too fast, so each direction is simulated independently.</p>`],
   xpm: ['Cross-phase modulation', `<p><b>XPM</b> is the nonlinear effect where the intensity of one channel changes the phase of its neighbours. A coherent receiver sorts out phase, but a <b>direct-detection</b> receiver (a 10G NRZ optic) turns phase wobble into amplitude errors after dispersion, so legacy 10G channels are the ones that suffer, especially beside wide, high-power coherent channels.</p><p>The penalty here grows with the number of neighbours inside about 400 GHz, with launch power and with effective fiber length, summed over spans. The "Neighbouring channels" setting (inspector, nothing selected) chooses between same-type and coherent neighbours. Real fixes: lower the launch power, leave a gap of empty slots around the 10G channels, or give them their own band. The numbers are representative, not a full XPM model.</p>`],
   resil: ['Protection, switching time and availability', `<p>A fiber cut takes every channel on it down. What happens next depends on how the channel is protected.</p><ul><li><b>Unprotected:</b> the control plane notices, finds another route, and the ROADMs and amplifiers are reconfigured: tens of seconds to minutes. If there is no other route it stays down until the splice is repaired (hours).</li><li><b>1+1 dedicated:</b> a second copy of the signal is lit on a route that shares no fiber with the first; the receiver just picks the survivor after loss detection and a switch (tens of milliseconds). It costs the second route's wavelength and amplifier power all the time.</li><li><b>1:N shared:</b> the protection route is dark and may be shared by several channels whose working routes cannot fail together, so it costs nothing in normal operation, but it has to be lit after the failure: a second or more. Its margin is predicted by simulating the failure.</li><li><b>Wavelength converters:</b> regenerate a channel into another slot, resetting its noise; a protected converted channel is protected on each side of the converter separately.</li></ul><p>The Resilience tab turns cut rate, repair time and these switching times into expected downtime per year: each cut on the route happens at the cut rate times its length, then costs the switching or restoration time, plus the chance that both routes are down at once (the product of their unavailabilities, which is why a longer protection route matters less than its existence).</p>`],
+  fail: ['Failures other than fiber cuts', `<p>Fibers are not the only thing that breaks. Select any device and set its <b>Condition</b>.</p><ul><li><b>Failed:</b> the device passes no light (a dead amplifier pump absorbs the signal, a ROADM loses power, a transponder goes dark). Routes avoid it: an unprotected channel restores around it if the network has another way, a 1+1 or shared protected channel switches to its protection route, and a service with no way round shows LOS and names the device. Channels that start or end at a failed ROADM are lost.</li><li><b>Degraded:</b> still lit but worse. An amplifier's output falls below its setting and its noise figure rises (pump ageing); a laser is weaker; a receiver loses SNR; a ROADM, mux, VOA or DCM adds loss (a partly stuck WSS or a dirty connector). Amplifiers downstream re-level the power, so what you see is mostly extra noise.</li></ul><p><b>Shared risk link groups:</b> two fibers in the same duct or trench do not fail independently. Give them the same group name on the cable inspector and cutting one cuts all of them. Protection planning then looks for a route that avoids the whole group, which is often a lot longer than the fiber-disjoint route that happens to share a trench. Try the \"Shared duct\" scenario.</p><p>The Resilience tab includes device failures (a rate per amplifier or ROADM): a device that has to be passed (the access ROADM of a single-homed transponder) costs the full repair time, an interior one costs only the switch or restoration time if another route avoids it.</p>`],
   trans: ['Power transients', `<p>An EDFA amplifies all channels from one pool of inverted erbium ions. If many channels vanish suddenly (an upstream fiber cut, a protection switch, a failed transponder), the pool no longer has to feed them, so the gain per surviving channel jumps toward <code>10·log<sub>10</sub>(N / survivors)</code> within about a hundred microseconds. A fast gain-control loop (AGC) cancels most of it; a slow one does not. In a cascade of amplifiers each one adds its excursion, so the surviving channels can surge by many dB by the end of the line, into receiver overload and into nonlinearity (3 dB of nonlinear noise for each dB of power), and dip equally when the channels come back.</p><p>That is why added channels are ramped up slowly and why long amplified systems need fast gain control on every amplifier. The Transients tab evaluates a sudden loss of a share of the channels along the service path with the response time of each amplifier. Raman pumps and WSS blocking are not modelled.</p>`],
   aging: ['End-of-life margin', `<p>Links are planned for the day they are worst, not the day they are lit. <b>End of life</b> here adds extra loss on every fiber span (splices from repairs, connector wear, fiber ageing; 1.0 dB by default) and a transceiver ageing penalty (0.5 dB by default). Both are editable in the inspector when nothing is selected. It then re-runs the whole simulation.</p><p>A link with a few dB of margin today can have none left at end of life. The "works today but fails at end of life" alarm is the early warning. Typical planning margin is 2-3 dB.</p>`],
   launch: ['Launch power', `<p>The per-channel power put into each span. Too low: amplifier noise dominates. Too high: nonlinearity dominates. Somewhere in between (often 0 to +2 dBm/ch for 60 GBd on SMF) GSNR peaks. Open the Launch sweep tab to see your link's curve.</p><p><b>Re-optimisation:</b> the optimum is not one number for the whole line. It depends on each span's loss and on how many channels are lit on it, so when channels are added or dropped it moves. Switch "Launch power" to re-optimised in the inspector (nothing selected) and every amplifier with a blank output target sets <code>P = (A / 2η)^(1/3)</code>, the GN optimum for the span after it, where A is the amplifier noise and η the nonlinear coefficient of that span at its current load. The sweep tab shows margin against channels lit for a fixed and a re-optimised line. The total-output limit of the amplifier still applies, and Raman gain is not included in the optimum.</p>`],

@@ -19,7 +19,7 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, dir: 'both', cut: false } : { il: 0.5, dir: 'both', cut: false });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, dir: 'both', cut: false, srlg: '' } : { il: 0.5, dir: 'both', cut: false });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -96,6 +96,18 @@ const MODEL = (() => {
         ch(31, { svc: true, prot: '1+1' });
         for (let k = 0; k < 4; k++) ch(32 + k);
         return { nodes: [ra, rb, rc, ta, tc], links: [L(ra, rc, 'fiber', { len: 70 }), L(ra, rb, 'fiber', { len: 100 }), L(rb, rc, 'fiber', { len: 110 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
+          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
+      }
+    },
+    srlg: {
+      name: 'Shared duct: two fibers that fail together', build() {
+        const ra = N('roadm', 'ROADM-A', 200, 300), rb = N('roadm', 'ROADM-B', 520, 110), rc = N('roadm', 'ROADM-C', 840, 300), rd = N('roadm', 'ROADM-D', 520, 440);
+        const ta = N('trx', 'TRX-A', 200, 440, { mode: 'zrp400' }), tc = N('trx', 'TRX-C', 840, 440, { mode: 'zrp400' });
+        // A-C and A-B leave A in the same duct (risk group duct1). Without that, the shortest fiber-disjoint protection route for the
+        // A to C service would be A-B-C (180 km); with it, protection has to go the long way through D. Cut either fiber and both go dark.
+        const plan = [], ch = (slot, o = {}) => plan.push({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: slot, prot: '', ...o });
+        ch(31, { svc: true, prot: '1+1' }); for (let k = 0; k < 3; k++) ch(32 + k); for (let k = 0; k < 3; k++) ch(24 + k, { from: ra.id, to: rb.id });
+        return { nodes: [ra, rb, rc, rd, ta, tc], links: [L(ra, rc, 'fiber', { len: 70, srlg: 'duct1' }), L(ra, rb, 'fiber', { len: 80, srlg: 'duct1' }), L(rb, rc, 'fiber', { len: 80 }), L(ra, rd, 'fiber', { len: 90 }), L(rd, rc, 'fiber', { len: 90 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
           g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
       }
     },
@@ -179,7 +191,7 @@ const MODEL = (() => {
 
   // Resilience assumptions: fiber cuts per 1000 km per year, mean time to repair (h), loss-of-signal detection and switch time (ms) for 1+1,
   // extra turn-up time for a dark shared protection route (s), and control-plane restoration time for an unprotected channel (s).
-  const RESIL = { cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60 };
+  const RESIL = { cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60, devRate: 0.02 };
 
   // ---------- channel plan ----------
   // g.plan = null (identical channels, g.nch of them) or [{ slot, mode, off (dB vs the service), svc, from, to, via }]. Slots index the C-band grid.
@@ -240,6 +252,7 @@ const MODEL = (() => {
         const cs = Array.isArray(n.p && n.p.clients) ? n.p.clients.slice(0, 8) : defaultClients();
         p.clients = cs.map(c => { c = c && typeof c === 'object' ? c : {}; return { optic: PHY_.CLIENT_OPTICS[c.optic] ? c.optic : '100g-lr4', len: Number.isFinite(+c.len) && c.len !== '' && c.len !== null && +c.len >= 0 ? +c.len : 0.1, extra: Number.isFinite(+c.extra) && c.extra !== '' && c.extra !== null && +c.extra >= 0 ? +c.extra : 1 }; });
       }
+      { const raw = n.p && typeof n.p === 'object' ? n.p : {}; p.fail = raw.fail === 'dead' || raw.fail === 'degraded' ? raw.fail : ''; p.degDb = Number.isFinite(+raw.degDb) && raw.degDb !== '' && raw.degDb !== null && typeof raw.degDb !== 'boolean' ? Math.min(30, Math.max(0, +raw.degDb)) : 3; }
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
       if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev', 'nfRev', 'gminRev', 'gmaxRev', 'pmaxRev', 'agcUs']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
@@ -253,6 +266,7 @@ const MODEL = (() => {
       const kind = l.kind === 'fiber' ? 'fiber' : 'patch', p = fill(linkDefaults(kind), l.p);
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
       if (!['both', 'ab', 'ba'].includes(p.dir)) p.dir = 'both';
+      p.srlg = typeof p.srlg === 'string' && /^[\w-]{0,24}$/.test(p.srlg) ? p.srlg : '';
       if (kind === 'fiber') for (const k of ['extraRev', 'ramanRev']) if (!(p[k] === '' || (Number.isFinite(+p[k]) && p[k] !== null && +p[k] >= 0))) p[k] = '';
       if (kind === 'fiber') { if (!['back', 'fwd', 'both'].includes(p.ramanDir)) p.ramanDir = 'back'; p.ramanPumps = Math.min(3, Math.max(1, Math.round(+p.ramanPumps || 1))); }
       if (kind === 'fiber') p.raman = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +p.raman || 0));
@@ -266,7 +280,7 @@ const MODEL = (() => {
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))),
       lossPct: Math.min(95, Math.max(1, num(gi.lossPct, PHY_.TRANSIENT.lossPct))), agcUs: Math.min(5000, Math.max(0, num(gi.agcUs, PHY_.TRANSIENT.agcUs))),
       cutRate: Math.min(50, Math.max(0, num(gi.cutRate, RESIL.cutRate))), mttr: Math.min(720, Math.max(0.5, num(gi.mttr, RESIL.mttr))), detectMs: Math.min(1000, Math.max(0, num(gi.detectMs, RESIL.detectMs))),
-      switchMs: Math.min(10000, Math.max(0, num(gi.switchMs, RESIL.switchMs))), sharedSec: Math.min(600, Math.max(0, num(gi.sharedSec, RESIL.sharedSec))), restoreSec: Math.min(3600, Math.max(0, num(gi.restoreSec, RESIL.restoreSec))) };
+      switchMs: Math.min(10000, Math.max(0, num(gi.switchMs, RESIL.switchMs))), sharedSec: Math.min(600, Math.max(0, num(gi.sharedSec, RESIL.sharedSec))), restoreSec: Math.min(3600, Math.max(0, num(gi.restoreSec, RESIL.restoreSec))), devRate: Math.min(5, Math.max(0, num(gi.devRate, RESIL.devRate))) };
     g.plan = sanitizePlan(gi.plan, g.df);
     if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)), roadms = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; if (!roadms.has(c.via)) c.via = ''; if (!roadms.has(c.conv) || c.conv === c.from || c.conv === c.to) c.conv = ''; if (c.conv) c.via = ''; }); }
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
@@ -284,11 +298,18 @@ const MODEL = (() => {
     return { node, link, linksOf, other, linkName };
   };
 
+  // Failures. A fiber is cut if it is flagged cut or shares a risk group (p.srlg, a shared duct) with a fiber that is. A device (p.fail) is
+  // 'dead' (passes no light) or 'degraded' (p.degDb of extra loss, lower output or a worse receiver, by type).
+  const isCut = (S, l) => !!l.p.cut || (!!l.p.srlg && S.links.some(o => o !== l && o.p.srlg === l.p.srlg && o.p.cut));
+  const isDead = n => !!n && !!n.p && n.p.fail === 'dead';
+  const degOf = n => (n && n.p && n.p.fail === 'degraded' ? (Number.isFinite(+n.p.degDb) ? Math.min(30, Math.max(0, +n.p.degDb)) : 3) : 0);
+
   // Shortest path (km) from A to Z. Light never passes *through* a transponder. Cut fibers are only used if allowCut.
   // x.ignoreCut: plan on the intact network (cut flags are failures, not topology). x.exclude: link ids the route may not use.
   function route(S, aId, zId, allowCut, x = {}) {
     const { node, linksOf, other } = mkGraph(S);
-    const dist = { [aId]: 0 }, prev = {}, done = new Set();
+    const dist = { [aId]: 0 }, prev = {}, done = new Set(), plan = x.ignoreCut;
+    if (isDead(node(aId)) && !allowCut && !plan) return null;
     while (true) {
       let u = null, best = Infinity;
       for (const k in dist) if (!done.has(k) && dist[k] < best) { best = dist[k]; u = k; }
@@ -297,11 +318,14 @@ const MODEL = (() => {
       done.add(u);
       if (u !== aId && isEnd(node(u))) continue;
       for (const l of linksOf(u)) {
-        if (l.p.cut && !allowCut && !x.ignoreCut) continue;
+        const cut = isCut(S, l);
+        if (cut && !allowCut && !plan) continue;
         if (x.exclude && x.exclude.has(l.id)) continue;
         if ((l.p.dir === 'ab' && l.a !== u) || (l.p.dir === 'ba' && l.b !== u)) continue; // one-way fiber: light only travels the carried way
-        const v = other(l, u);
-        const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + (l.p.cut && !x.ignoreCut ? 1e6 : 0);
+        const v = other(l, u), dead = isDead(node(v));
+        if (dead && !allowCut && !plan) continue;
+        if (x.excludeNodes && x.excludeNodes.has(v) && v !== zId) continue;
+        const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0);
         if (dist[v] == null || dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = { u, l: l.id }; }
       }
     }
@@ -327,9 +351,11 @@ const MODEL = (() => {
     if (!W0) return { W0, P0: null, why: via ? 'no route through that waypoint' : 'no route between its add and drop nodes' };
     // the protection route avoids the fibers of the working route; the patch cords at a single-homed transponder are shared by necessity
     const fibers = new Set(W0.links.filter(id => (S.links.find(l => l.id === id) || {}).kind === 'fiber'));
+    for (const id of [...fibers]) { const grp = S.links.find(l => l.id === id).p.srlg; if (grp) S.links.forEach(o => { if (o.p.srlg === grp) fibers.add(o.id); }); } // fibers in the same duct fail together
     return { W0, P0: leg(x, y, fibers), why: '' };
   }
-  const routeCut = (S, r) => !!r && r.links.some(id => (S.links.find(l => l.id === id) || { p: {} }).p.cut);
+  // a route is unusable if it crosses a cut fiber (or one in the same risk group) or a dead device
+  const routeCut = (S, r) => !!r && (r.links.some(id => { const l = S.links.find(o => o.id === id); return l && isCut(S, l); }) || r.nodes.some(id => isDead(S.nodes.find(n => n.id === id))));
 
   // Channel table for a service. Plan mode: the stored plan, with the service channel forced to the service's own mode.
   // Otherwise: g.nch identical channels in a contiguous block centred in the C-band, service in the middle.
@@ -381,7 +407,7 @@ const MODEL = (() => {
         if (c.svc) return path; // the service's own copy is the walk's path (chosen by the caller)
         const r = c.pc === 'w' ? pp.W0 : pp.P0;
         if (!r) { why[c.idx] = c.pc === 'w' || !pp.W0 ? pp.why : 'no route that shares no fiber with the working route'; return null; }
-        if (routeCut(S, r)) { why[c.idx] = 'the route crosses a cut fiber'; cutOff[c.idx] = true; return null; }
+        if (routeCut(S, r)) { why[c.idx] = 'the route crosses a cut fiber or a failed device'; cutOff[c.idx] = true; return null; }
         return r;
       }
       if (c.svc || (ea === svcA && ez === svcZ && !via)) return path;
@@ -514,18 +540,31 @@ const MODEL = (() => {
       const pp = plannedPair(S, x, y, via), W = pp.W0;
       if (!W) return { none: true, why: pp.why };
       const wk = km(W.links), lw = lam(wk);
-      if (prot && pp.P0) {
-        const pk = km(pp.P0.links), sw = (P.detectMs + P.switchMs) / 1000 + (prot === 'shared' ? P.sharedSec : 0);
-        return { kind: prot === 'shared' ? 'shared' : '1+1', km: wk, protKm: pk, failures: lw, outageSec: sw, downSec: lw * sw + Uf(wk) * Uf(pk) * YEAR };
+      // line devices on the route (amplifiers, ROADMs): a failed add/drop ROADM keeps its channel down until repaired; an interior device is
+      // bypassed by protection if the protection route avoids it, otherwise by restoration if some route does, else it waits for repair
+      const sw = (P.detectMs + P.switchMs) / 1000 + (prot === 'shared' ? P.sharedSec : 0), isProt = !!(prot && pp.P0);
+      let devDown = 0, devFail = 0, devWorst = 0;
+      for (const d of W.nodes) {
+        const n = node(d); if (!n || !(n.type === 'edfa' || n.type === 'roadm') || !P.devRate) continue;
+        let t;
+        if (d === x || d === y) t = P.mttr * 3600;
+        else if (isProt && !pp.P0.nodes.includes(d)) t = sw;
+        else t = route(S, x, y, true, { ignoreCut: true, excludeNodes: new Set([d]) }) ? P.restoreSec : P.mttr * 3600;
+        devDown += P.devRate * t; devFail += P.devRate; devWorst = Math.max(devWorst, t);
+      }
+      if (isProt) {
+        const pk = km(pp.P0.links);
+        return { kind: prot === 'shared' ? 'shared' : '1+1', km: wk, protKm: pk, failures: lw + devFail, outageSec: Math.max(sw, devWorst), downSec: lw * sw + Uf(wk) * Uf(pk) * YEAR + devDown };
       }
       let down = 0, worst = 0, restorable = 0, fibers = 0;
       for (const id of W.links) {
         if (!len(id)) continue; fibers++;
-        const alt = route(S, x, y, true, { ignoreCut: true, exclude: new Set([id]) }), t = alt ? P.restoreSec : P.mttr * 3600;
+        const grp = (link(id).p || {}).srlg, mates = grp ? S.links.filter(o => o.p.srlg === grp).map(o => o.id) : [id];
+        const alt = route(S, x, y, true, { ignoreCut: true, exclude: new Set([id, ...mates]) }), t = alt ? P.restoreSec : P.mttr * 3600;
         if (alt) restorable++; down += lam(len(id)) * t; worst = Math.max(worst, t);
       }
       const kind = prot && !pp.P0 ? 'unprotected (no disjoint route)' : restorable === fibers ? 'restoration' : restorable ? 'partial restoration' : 'unprotected';
-      return { kind, km: wk, protKm: 0, failures: lw, outageSec: worst, downSec: down };
+      return { kind, km: wk, protKm: 0, failures: lw + devFail, outageSec: Math.max(worst, devWorst), downSec: down + devDown };
     };
     return plan.map(c => {
       const ea = c.svc || !c.from ? svc.a : c.from, ez = c.svc || !c.to ? svc.z : c.to, conv = c.svc ? '' : c.conv || '';
@@ -548,6 +587,9 @@ const MODEL = (() => {
     const g = { ...S.g }; if (launchOverride != null) g.launch = launchOverride;
     const A = node(W ? W.a : rv ? S.svc.z : S.svc.a), Z = node(W ? W.z : rv ? S.svc.a : S.svc.z);
     if (!W && (!isEnd(A) || !isEnd(Z) || A === Z)) return { status: 'none', headline: 'Pick two transponders or muxponders as the A and Z ends of a service.' };
+    if (!W && isDead(A)) return { status: 'los', headline: `${A.name} has failed: nothing is transmitted.` };
+    if (!W && isDead(Z)) return { status: 'los', headline: `${Z.name} has failed: nothing receives the signal.` };
+    if (W && (isDead(A) || isDead(Z))) return { status: 'los', headline: 'A device at the end of this route has failed.' }; // its channels report LOS
     const modeKey = W ? W.svcMode : A.p.mode, mode = PHY_.MODES[modeKey];
     // A 1+1 protected service runs on its planned working route, and on the planned fiber-disjoint protection route once the working one
     // has a cut fiber (or, see below, when it is down). Otherwise the shortest route over the fibers that are not cut, with a fallback across a cut.
@@ -580,7 +622,7 @@ const MODEL = (() => {
     const xpmWFor = (i, act) => (chans[i].m.coh === false ? chans.reduce((a, cj, j) => a + (j !== i && (!act || act[j]) && Math.abs(cj.f - chans[i].f) <= reachHz ? nbWeight(cj) * lin(cj.off - chans[i].off) : 0), 0) : 0);
     const ev = []; // event log replayed per channel after the loop (plan mode only)
     let curAct = planOn ? maskAt(0) : null; // channels lit at the current point of the path (plan mode)
-    const txDbm = W && A.type === 'roadm' ? +g.launch : A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx; // a channel added at a ROADM starts at the launch level
+    const txDbm = W && A.type === 'roadm' ? +g.launch : (A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx) - (isEnd(A) ? degOf(A) : 0); // a channel added at a ROADM starts at the launch level; a degraded laser is weaker
     let mpi = 0, xpmPen = 0, P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
     const tiltSeen = []; // tilt (dB, low- minus high-frequency channel) at every amplifier input and at the receiver
     const hops = [], alarms = [];
@@ -604,7 +646,7 @@ const MODEL = (() => {
       }
       return null;
     }
-    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl, look = -1, agc = '') {
+    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl, look = -1, agc = '', deg = 0) {
       const before = snap(), pin = before.sig;
       let info = '';
       if (g.reopt && look >= 0 && ctl === 'auto') { const o = optFor(look, nf); if (o) { target = o.dbm; info = `Launch re-optimised for ${o.n} channel${o.n > 1 ? 's' : ''}: ${f1(o.dbm)} dBm/ch`; } }
@@ -613,7 +655,8 @@ const MODEL = (() => {
       if (G > gmax) { note = `Needs ${f1(G)} dB but max gain is ${gmax} dB: output runs low`; G = gmax; }
       const tot = pin + G + db(nch);
       if (tot > pmax) { G -= tot - pmax; note = `Hit total output limit ${pmax} dBm (${nch} ch): per-channel power capped`; }
-      const nfe = PHY_.ampNfEff(+nf, G);
+      if (deg > 0) { G -= deg; note = `Degraded: output ${f1(deg)} dB below the setting`; } // pump ageing: less output and a worse noise figure
+      const nfe = PHY_.ampNfEff(+nf + 0.4 * deg, G);
       P *= lin(G); Pnli *= lin(G);
       tiltSeen.push(tilt);
       if (planOn) { ev.push({ k: 'A', G: lin(G), nfe }); if (tiltCtl) ev.push({ k: 'Z' }); }
@@ -627,7 +670,7 @@ const MODEL = (() => {
     let losAt = null;
     for (let i = 0; i < path.links.length; i++) {
       const l = link(path.links[i]), nxt = node(path.nodes[i + 1]), prv = node(path.nodes[i]);
-      if (l.p.cut) { losAt = l; hops.push({ name: linkName(l), kind: 'cut', in: snap(), out: { sig: -99, ase: -99, nli: -99 }, km, nch, note: 'Fiber cut' }); break; }
+      if (isCut(S, l)) { losAt = l; hops.push({ name: linkName(l), kind: 'cut', in: snap(), out: { sig: -99, ase: -99, nli: -99 }, km, nch, note: l.p.cut ? 'Fiber cut' : `Fiber cut (shared risk group ${l.p.srlg})` }); break; }
       if (l.kind === 'patch') { const b = snap(); loss(+l.p.il); rec('patch', 'patch', b, { gain: -l.p.il }); }
       else {
         const fb = PHY_.FIBERS[l.p.fiber], Lk = +l.p.len, b = snap();
@@ -677,18 +720,19 @@ const MODEL = (() => {
         if (gr > 0 && !eol && !rv && +l.p.raman > PHY_.RAMAN.maxMw) alarms.push({ sev: 'info', text: `${linkName(l)}: pump limited to ${PHY_.RAMAN.maxMw} mW.` });
       }
       if (i + 1 === path.links.length) break;
+      if (isDead(nxt)) { losAt = { node: nxt }; hops.push({ name: nxt.name, kind: 'cut', in: snap(), out: { sig: -99, ase: -99, nli: -99 }, km, nch, note: 'Device failed' }); break; }
       const t = nxt.type, nnext = node(path.nodes[i + 2]);
       const tv = pd(nxt.p, 'target'), target = tv === '' || tv == null ? +g.launch : +tv;
       if (t === 'mux') {
         const joins = isEnd(prv), drops = isEnd(nnext);
-        const b = snap(); loss(+nxt.p.il);
+        const b = snap(); loss(+nxt.p.il + degOf(nxt));
         if (joins) nch = nchLine;
         if (drops) nch = 1;
         if (planOn) { if (!drops) nch = litCount(i + 1); curAct = maskAt(i + 1); }
         rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
-      } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il'), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
-      else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
-      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs); }
+      } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il') + degOf(nxt), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
+      else if (t === 'voa') { const b = snap(), att = +nxt.p.att + degOf(nxt); loss(att); rec(nxt.name, 'voa', b, { gain: -att }); }
+      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs, degOf(nxt)); }
       else if (t === 'roadm') {
         const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
@@ -697,7 +741,7 @@ const MODEL = (() => {
         const k = i + 1, leaving = members.filter(m => m.hi === k && k < lastPos).map(m => m.k), joining = members.filter(m => m.lo === k).map(m => m.k);
         // Channels that leave here take the drop port (one WSS pass, the drop structure and a drop amplifier) instead of expressing through.
         if (leaving.length) { const dg = p.amps ? 4 : 0; ev.push({ k: 'D', idx: leaving, G: lin(dg), nfe: PHY_.ampNfEff(+p.nf, dg), f: lin(-(+p.wss + +p.ad)) }); }
-        const b = snap(); const lo = np * +p.wss + (add || drop ? +p.ad : 0); loss(lo); passes += np; tiltSeen.push(tilt); tilt = 0;
+        const b = snap(); const lo = np * +p.wss + (add || drop ? +p.ad : 0) + degOf(nxt); loss(lo); passes += np; tiltSeen.push(tilt); tilt = 0;
         if (planOn) { ev.push({ k: 'W', n: np }); ev.push({ k: 'Z' }); if (joining.length) ev.push({ k: 'J', idx: joining }); curAct = maskAt(k); } // the WSS equalises every channel, added ones join at the same level
         rec(nxt.name + (add ? ' add' : drop ? ' drop' : ' express'), 'roadm', b, { gain: -lo, note: `${np} WSS pass${np > 1 ? 'es' : ''}` + (leaving.length ? `, ${leaving.length} channel${leaving.length > 1 ? 's' : ''} dropped` : '') + (joining.length ? `, ${joining.length} added` : '') });
         if (planOn && !drop) nch = litCount(k);
@@ -741,7 +785,7 @@ const MODEL = (() => {
       }
       if (res.clients.length === 2 && res.clients[0].total !== res.clients[1].total) alarms.push({ sev: 'warn', text: `Client rates differ between the ends: ${A.name} carries ${res.clients[0].total}G, ${Z.name} carries ${res.clients[1].total}G.` });
     }
-    if (losAt) { res.status = 'los'; res.headline = `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}.`; res.prx = -Infinity; return res; }
+    if (losAt) { res.status = 'los'; res.headline = losAt.node ? `LOS at ${Z.name}: ${losAt.node.name} has failed.` : `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}.`; res.prx = -Infinity; return res; }
     const prx = db(P * 1000); res.prx = prx;
     if (prx < mode.rxMin - 12 && !W) {
       res.status = 'los'; res.headline = `LOS at ${Z.name}: ${f1(prx)} dBm is below what the receiver can detect.`;
@@ -756,7 +800,7 @@ const MODEL = (() => {
     const pmdPen = (res.dgd / mode.dgdTol) ** 2;
     tiltSeen.push(tilt);
     const peakTilt = Math.max(...tiltSeen), edgeTilt = tiltSeen.reduce((a, b) => a + b, 0) / tiltSeen.length;
-    const agePen = eol ? eolTrx : 0, cdPen = PHY_.cdPenalty(mode, cd), tiltPos = planOn ? tiltPenaltyFor(chans, svcIdx, edgeTilt) : 0, basePen = filt + over + pmdPen + cdPen + xpmPen + tiltPos + agePen;
+    const agePen = eol ? eolTrx : 0, cdPen = PHY_.cdPenalty(mode, cd), tiltPos = planOn ? tiltPenaltyFor(chans, svcIdx, edgeTilt) : 0, rxDeg = degOf(Z), basePen = filt + over + pmdPen + cdPen + xpmPen + tiltPos + agePen + rxDeg;
     const eff = PHY_.effSnr(mode, line, basePen);
     const ber = PHY_.MODS[mode.mod].ber(eff);
     // The service channel sits mid-band. The highest-frequency channel gives up half the SRS tilt to the lowest, so it is the worst one.
@@ -834,7 +878,7 @@ const MODEL = (() => {
         const prx = db(f.Pc * 1000), snrA = (f.Pc / f.Pa) * PHY_.BREF / m.Rs, snrN = f.Pn > 0 ? f.Pc / f.Pn : Infinity, snrR = lin(prx - m.rxMin + 25);
         const ln = 1 / (1 / snrA + 1 / snrN + 1 / snrR + mpi);
         const dgdC = Math.sqrt(f.dg2);
-        const pen = f.ps * PHY_.filterPenaltyPerPass(m.Rs, df) + Math.max(0, prx - m.rxMax) * 1.5 + (dgdC / m.dgdTol) ** 2 + PHY_.cdPenalty(m, f.cd) + f.xp + tiltPenaltyFor(chans, i, edgeTilt) + agePen;
+        const pen = f.ps * PHY_.filterPenaltyPerPass(m.Rs, df) + Math.max(0, prx - m.rxMax) * 1.5 + (dgdC / m.dgdTol) ** 2 + PHY_.cdPenalty(m, f.cd) + f.xp + tiltPenaltyFor(chans, i, edgeTilt) + agePen + (!W && lohi[i].hi === lastPos ? rxDeg : 0);
         const bER = PHY_.MODS[m.mod].ber(PHY_.effSnr(m, ln, pen)), q = PHY_.qFromBer(bER), qThr = PHY_.qFromBer(m.berThr), qm = q - qThr;
         const notes = [];
         let status = 'up';
@@ -855,7 +899,7 @@ const MODEL = (() => {
         for (const m of h.members) res.segments[m.k] = w.segments ? w.segments[m.k] : null;
       }
       res.segments = res.segments.map((c, i) => c || { idx: i, lg: chans[i].lg, role: chans[i].role, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
-        status: mesh.blocked[i] ? 'blocked' : mesh.dark[i] ? 'standby' : mesh.routes[i] || mesh.cutOff[i] ? 'los' : 'nopath', notes: [mesh.blocked[i] ? mesh.why[i] : mesh.dark[i] ? 'shared protection: dark until the working route fails' : mesh.routes[i] || mesh.cutOff[i] ? 'the route crosses a cut fiber' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
+        status: mesh.blocked[i] ? 'blocked' : mesh.dark[i] ? 'standby' : mesh.routes[i] || mesh.cutOff[i] ? 'los' : 'nopath', notes: [mesh.blocked[i] ? mesh.why[i] : mesh.dark[i] ? 'shared protection: dark until the working route fails' : mesh.routes[i] || mesh.cutOff[i] ? 'the route crosses a cut fiber or a failed device' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
       res.channels = logicalChannels(g.plan, chans, res.segments);
       // Shared protection is dark, so its margin is predicted by failing the first fiber of the working route and reading the protection copy.
       if (!opts.predict && !opts.single && mesh.dark.some(Boolean)) {
@@ -901,8 +945,12 @@ const MODEL = (() => {
     if (!eol && res.qMargin >= 0 && res.eol.qMargin < 0) alarms.push({ sev: 'warn', text: `Works today but fails at end of life: Q margin falls to ${f1(res.eol.qMargin)} dB with ${eolSpan} dB of extra loss per span and ${eolTrx} dB of transceiver ageing.` });
     if (res.qMargin >= 0 && res.worstQMargin < 0) alarms.push({ sev: 'warn', text: `SRS tilt of up to ${f1(peakTilt)} dB leaves the highest-frequency channel with ${f1(res.worstQMargin)} dB of Q margin while the middle channel still passes. Turn on amplifier tilt control or add a ROADM to re-equalise.` });
     if (xpmPen > 1.5) alarms.push({ sev: 'warn', text: `Cross-phase modulation from neighbouring channels costs ${f1(xpmPen)} dB. Lower the launch power, space the ${mode.short} channels apart or move them away from the ${g.neighbors === 'coh' ? 'coherent ' : ''}neighbours.` });
-    if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber.' });
-    if (svcOnProt && !W) alarms.push({ sev: 'warn', text: protWhy === 'cut' ? `A fiber on the working route is cut: traffic switched to the protection route (${Math.round(km)} km). There is no protection left until it is repaired.` : 'The working route is down: traffic switched to the protection route. There is no protection left.' });
+    if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber or a failed device.' });
+    if (!eol && !rv && !W) for (const id of path.nodes) {
+      const n = node(id), d = degOf(n);
+      if (d > 0) alarms.push({ sev: 'warn', text: `${n.name} is degraded: ${n.type === 'edfa' ? `its output is ${f1(d)} dB below the setting and its noise figure is worse` : isEnd(n) ? (id === A.id ? `its laser is ${f1(d)} dB weaker` : `its receiver loses ${f1(d)} dB of SNR`) : `${f1(d)} dB of extra loss`}.` });
+    }
+    if (svcOnProt && !W) alarms.push({ sev: 'warn', text: protWhy === 'cut' ? `The working route has failed (a cut fiber or a failed device): traffic switched to the protection route (${Math.round(km)} km). There is no protection left until it is repaired.` : 'The working route is down: traffic switched to the protection route. There is no protection left.' });
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }
     else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. Aging or a dirty connector will take it down.` : 'Up, with alarms to look at.'; }
     else { res.status = 'up'; res.headline = `Up with ${f1(res.qMargin)} dB Q margin.`; }
@@ -922,6 +970,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;
