@@ -96,6 +96,9 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .node.chnode .body, .node.chnode circle:first-child { stroke: var(--mpi); stroke-width: 3 }
 .plantbl tr.hirow td { background: color-mix(in srgb, var(--mpi) 16%, transparent) }
 .plantbl tbody tr { cursor: pointer }
+.transbar { display: inline-block; height: 10px; background: var(--nli); border-radius: 2px; min-width: 2px }
+.barcell { width: 140px }
+.transsum { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 12px 0; font-size: 13px }
 @keyframes flow { to { stroke-dashoffset: -12 } }
 @media (prefers-reduced-motion: reduce) { .lightpath { animation: none } }
 .rubber { stroke: var(--jacket); stroke-width: 3; stroke-dasharray: 6 4; pointer-events: none }
@@ -271,6 +274,8 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <button class="tab" data-tab="spectrum" role="tab">Spectrum</button>
     <button class="tab" data-tab="const" role="tab">Constellation</button>
     <button class="tab" data-tab="sweep" role="tab">Launch sweep</button>
+    <button class="tab" data-tab="resil" role="tab">Resilience</button>
+    <button class="tab" data-tab="trans" role="tab">Transients</button>
     <button class="tab" data-tab="learn" role="tab">Learn</button>
   </div>
   <div id="tabbody"></div>

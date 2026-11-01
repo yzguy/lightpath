@@ -10,7 +10,7 @@ const MODEL = (() => {
     trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 1, def: () => ({ mode: 'zr400', tx: null }) },
     mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 1, def: () => ({ mode: 'zrp400', tx: null, clients: defaultClients() }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
-    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true }) },
+    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
     dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, cdRev: '', il: 7, ilRev: '' }) },
     voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
@@ -177,6 +177,10 @@ const MODEL = (() => {
     return { topo: { nodes, links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } }, errors, spans };
   }
 
+  // Resilience assumptions: fiber cuts per 1000 km per year, mean time to repair (h), loss-of-signal detection and switch time (ms) for 1+1,
+  // extra turn-up time for a dark shared protection route (s), and control-plane restoration time for an unprotected channel (s).
+  const RESIL = { cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60 };
+
   // ---------- channel plan ----------
   // g.plan = null (identical channels, g.nch of them) or [{ slot, mode, off (dB vs the service), svc, from, to, via }]. Slots index the C-band grid.
   // A slot can be used by several channels as long as their routes share no fiber (wavelength reuse); on a shared fiber the later one is blocked.
@@ -238,7 +242,7 @@ const MODEL = (() => {
       }
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
-      if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev', 'nfRev', 'gminRev', 'gmaxRev', 'pmaxRev']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
+      if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev', 'nfRev', 'gminRev', 'gmaxRev', 'pmaxRev', 'agcUs']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
       if (n.type === 'dcm') for (const k of ['cdRev', 'ilRev']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
       seen.add(n.id);
       nodes.push({ id: n.id, type: n.type, name: String(n.name ?? n.id), x: Number.isFinite(+n.x) ? +n.x : 0, y: Number.isFinite(+n.y) ? +n.y : 0, p });
@@ -259,7 +263,10 @@ const MODEL = (() => {
     const gi = o.g && typeof o.g === 'object' ? o.g : {};
     const num = (v, d) => (Number.isFinite(+v) && v !== '' && v !== null ? +v : d);
     const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', reopt: gi.reopt === true, plan: null,
-      eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))) };
+      eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))),
+      lossPct: Math.min(95, Math.max(1, num(gi.lossPct, PHY_.TRANSIENT.lossPct))), agcUs: Math.min(5000, Math.max(0, num(gi.agcUs, PHY_.TRANSIENT.agcUs))),
+      cutRate: Math.min(50, Math.max(0, num(gi.cutRate, RESIL.cutRate))), mttr: Math.min(720, Math.max(0.5, num(gi.mttr, RESIL.mttr))), detectMs: Math.min(1000, Math.max(0, num(gi.detectMs, RESIL.detectMs))),
+      switchMs: Math.min(10000, Math.max(0, num(gi.switchMs, RESIL.switchMs))), sharedSec: Math.min(600, Math.max(0, num(gi.sharedSec, RESIL.sharedSec))), restoreSec: Math.min(3600, Math.max(0, num(gi.restoreSec, RESIL.restoreSec))) };
     g.plan = sanitizePlan(gi.plan, g.df);
     if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)), roadms = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; if (!roadms.has(c.via)) c.via = ''; if (!roadms.has(c.conv) || c.conv === c.from || c.conv === c.to) c.conv = ''; if (c.conv) c.via = ''; }); }
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
@@ -492,6 +499,44 @@ const MODEL = (() => {
     });
   }
 
+  // Expected outages from the planned routes (intact network), one result per plan entry (or one for the service without a plan).
+  // Unprotected: each fiber cut restores over another route if one exists (restoreSec), else lasts the repair time. 1+1: a cut on the working
+  // route costs detect + switch; shared protection adds the turn-up time of the dark route; both add the chance that both routes are down together.
+  // A converted channel is the sum of its halves. These are expectations from cut rates, not a simulation of events.
+  function resilience(S) {
+    const g = S.g || {}, num = (v, d) => (Number.isFinite(+v) && v !== '' && v !== null ? +v : d);
+    const P = {}; for (const k in RESIL) P[k] = num(g[k], RESIL[k]);
+    const { link, node } = mkGraph(S), YEAR = 8760 * 3600, svc = S.svc || {};
+    const len = id => { const l = link(id); return l && l.kind === 'fiber' ? +l.p.len : 0; }, km = ids => ids.reduce((a, id) => a + len(id), 0);
+    const lam = k => P.cutRate * k / 1000, Uf = k => lam(k) * P.mttr / 8760;
+    const plan = Array.isArray(g.plan) && g.plan.length ? g.plan : [{ svc: true, from: '', to: '', via: '', conv: '', prot: '' }];
+    const section = (x, y, via, prot) => { // one routed stretch, optionally protected
+      const pp = plannedPair(S, x, y, via), W = pp.W0;
+      if (!W) return { none: true, why: pp.why };
+      const wk = km(W.links), lw = lam(wk);
+      if (prot && pp.P0) {
+        const pk = km(pp.P0.links), sw = (P.detectMs + P.switchMs) / 1000 + (prot === 'shared' ? P.sharedSec : 0);
+        return { kind: prot === 'shared' ? 'shared' : '1+1', km: wk, protKm: pk, failures: lw, outageSec: sw, downSec: lw * sw + Uf(wk) * Uf(pk) * YEAR };
+      }
+      let down = 0, worst = 0, restorable = 0, fibers = 0;
+      for (const id of W.links) {
+        if (!len(id)) continue; fibers++;
+        const alt = route(S, x, y, true, { ignoreCut: true, exclude: new Set([id]) }), t = alt ? P.restoreSec : P.mttr * 3600;
+        if (alt) restorable++; down += lam(len(id)) * t; worst = Math.max(worst, t);
+      }
+      const kind = prot && !pp.P0 ? 'unprotected (no disjoint route)' : restorable === fibers ? 'restoration' : restorable ? 'partial restoration' : 'unprotected';
+      return { kind, km: wk, protKm: 0, failures: lw, outageSec: worst, downSec: down };
+    };
+    return plan.map(c => {
+      const ea = c.svc || !c.from ? svc.a : c.from, ez = c.svc || !c.to ? svc.z : c.to, conv = c.svc ? '' : c.conv || '';
+      const parts = conv ? [section(ea, conv, '', c.prot), section(conv, ez, '', c.prot)] : [section(ea, ez, c.svc ? '' : c.via || '', c.prot)];
+      if (parts.some(p => p.none)) return { svc: !!c.svc, kind: 'no route', note: (parts.find(p => p.none) || {}).why, km: 0, protKm: 0, failures: 0, outageSec: 0, downSec: YEAR, availability: 0 };
+      const downSec = parts.reduce((a, p) => a + p.downSec, 0), kinds = [...new Set(parts.map(p => p.kind))];
+      return { svc: !!c.svc, kind: kinds.join(' + '), km: parts.reduce((a, p) => a + p.km, 0), protKm: parts.reduce((a, p) => a + p.protKm, 0), failures: parts.reduce((a, p) => a + p.failures, 0),
+        outageSec: Math.max(...parts.map(p => p.outageSec)), downSec, availability: 1 - downSec / YEAR };
+    });
+  }
+
   // opts.eol: evaluate with end-of-life allowances (see PHY.EOL). The normal result carries the EoL outcome in res.eol.
   // opts.reverse: simulate Z -> A. Per-direction overrides (extraRev, ramanRev, targetRev, gainRev) apply; blank means "same as forward".
   // The forward result carries the reverse one in res.rev and its status is the worse of the two. opts.single skips the reverse run.
@@ -559,7 +604,7 @@ const MODEL = (() => {
       }
       return null;
     }
-    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl, look = -1) {
+    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl, look = -1, agc = '') {
       const before = snap(), pin = before.sig;
       let info = '';
       if (g.reopt && look >= 0 && ctl === 'auto') { const o = optFor(look, nf); if (o) { target = o.dbm; info = `Launch re-optimised for ${o.n} channel${o.n > 1 ? 's' : ''}: ${f1(o.dbm)} dBm/ch`; } }
@@ -574,7 +619,7 @@ const MODEL = (() => {
       if (planOn) { ev.push({ k: 'A', G: lin(G), nfe }); if (tiltCtl) ev.push({ k: 'Z' }); }
       if (tiltCtl) tilt = 0; // gain-tilt control re-flattens the band at the amp output
       Pase = Pase * lin(G) + lin(nfe) * PHY_.H * PHY_.NU * lin(G) * PHY_.BREF;
-      rec(name, 'amp', before, { gain: G, nf: nfe, note: note || info });
+      rec(name, 'amp', before, { gain: G, nf: nfe, note: note || info, agcUs: agc === '' || agc == null || !Number.isFinite(+agc) ? null : +agc });
       if (note) alarms.push({ sev: 'warn', text: `${name}: ${note}.` });
     }
 
@@ -643,7 +688,7 @@ const MODEL = (() => {
         rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
       } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il'), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
-      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1); }
+      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs); }
       else if (t === 'roadm') {
         const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
@@ -722,6 +767,30 @@ const MODEL = (() => {
       budget: { ase: 1 / snrAse, nli: 1 / snrNli, trx: 1 / snrTrx, rx: 1 / snrRx, mpi },
     });
     res.qMargin = res.q - res.qThr; res.osnrMargin = res.gosnr - res.req;
+    // Power transient: lose lossPct of the channels at every amplifier at once. A gain-controlled EDFA would raise the survivors by
+    // 10log10(N / survivors) if it did not react; its control loop (agcUs) holds off all but a fraction 1 - exp(-agcUs / tau) of that, and the
+    // excursions of a cascade add. The same amount of dip follows when the channels come back.
+    if (!eol && !W) {
+      const T = PHY_.TRANSIENT, frac = Math.min(95, Math.max(1, Number.isFinite(+g.lossPct) && g.lossPct !== '' ? +g.lossPct : T.lossPct)) / 100, agcG = Number.isFinite(+g.agcUs) && g.agcUs !== '' ? +g.agcUs : T.agcUs;
+      let cum = 0; const rows = [];
+      for (const h of hops) {
+        if (h.kind !== 'amp' || !(h.nch >= 2)) continue;
+        const n = Math.round(h.nch), lost = Math.max(1, Math.round(frac * (n - 1))), raw = db(n / (n - lost)), agc = h.agcUs ?? agcG, peak = raw * (1 - Math.exp(-agc / T.tauUs));
+        cum += peak; rows.push({ name: h.name, n, lost, rawDb: raw, agcUs: agc, peakDb: peak, cumDb: cum });
+      }
+      if (rows.length) {
+        const avg = rows.reduce((a, r) => a + r.cumDb, 0) / rows.length;
+        // average excursion over the spans for the nonlinear and noise terms, end-of-line excursion for the receiver
+        const qAt = s => { const ln = 1 / (1 / snrAse * lin(-s) + 1 / snrNli * lin(2 * s) + 1 / snrRx * lin(-s) + mpi), ov = Math.max(0, prx + s - mode.rxMax) * 1.5;
+          return PHY_.qFromBer(PHY_.MODS[mode.mod].ber(PHY_.effSnr(mode, ln, basePen - over + ov))) - res.qThr; };
+        const s = cum, prxSurge = prx + s, prxDip = prx - cum;
+        res.transient = { lossPct: Math.round(frac * 100), tauUs: T.tauUs, rows, surgeDb: s, prxSurge, prxDip, overload: prxSurge > mode.rxMax, qMarginSurge: qAt(avg), qMarginDip: qAt(-avg), avgDb: avg };
+        const t = res.transient;
+        if (t.overload) alarms.push({ sev: 'info', text: `Losing ${t.lossPct}% of the channels at once would lift the surviving channels by up to ${f1(s)} dB at the receiver (${f1(prxSurge)} dBm, past the ${mode.rxMax} dBm overload point) with these amplifier control speeds.` });
+        else if (t.qMarginSurge < 0) alarms.push({ sev: 'info', text: `Losing ${t.lossPct}% of the channels at once would push the service below the FEC threshold for a moment (${f1(t.qMarginSurge)} dB Q margin during the surge).` });
+        if (t.qMarginDip < 0 && !t.overload) alarms.push({ sev: 'info', text: `Restoring those channels at once would dip the service below the FEC threshold for a moment (${f1(t.qMarginDip)} dB Q margin).` });
+      }
+    }
     res.tilt = peakTilt; res.worstQMargin = PHY_.qFromBer(berEdge) - res.qThr;
     // Plan mode: replay the event log for every channel with its own mode, baud rate, power offset, frequency and neighbours.
     // A channel exists from the node where it is added to the node where it is dropped; its state is frozen (fin) when it leaves.
@@ -853,6 +922,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

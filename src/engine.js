@@ -98,6 +98,9 @@ const PHY = (() => {
   const cBandSlots = df => Math.floor(CBAND.width / df + 1e-9);
   // End-of-life allowances (ageing, repairs, dirty connectors): extra loss per fiber span, extra transceiver penalty.
   const EOL = { spanLoss: 1.0, trxPen: 0.5 };
+  // Power transients: after channels vanish, the surviving channels of a gain-controlled EDFA rise toward the uncontrolled surge with this time
+  // constant (hundreds of microseconds); a control loop that reacts within a fraction of it holds most of the surge off. Representative.
+  const TRANSIENT = { tauUs: 200, lossPct: 50, agcUs: 20 };
   // Stimulated Raman scattering tilt. Power moves from high- to low-frequency channels. Returns dB between the
   // lowest and highest channel added by one span (Zirngibl-style approximation: tilt ~ 4.34 * slope * Ptot * Leff * bandwidth).
   // Raman gain slope ~0.028 /W/km/THz on SMF at 80 um^2; scaled by gamma as a stand-in for 1/Aeff.
@@ -205,6 +208,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

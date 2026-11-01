@@ -108,7 +108,7 @@ test('sanitize: drops junk, fills defaults, keeps valid data', () => {
   assert.deepEqual([v.name, v.x, v.y, v.p.att], ['7', 0, 0, 5]);
   assert.equal(c.nodes[0].p.mode, 'zr400');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.fiber, 'smf');
-  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, eolSpan: 1, eolTrx: 0.5 });
+  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, eolSpan: 1, eolTrx: 0.5, lossPct: 50, agcUs: 20, cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60 });
   assert.deepEqual(c.svc, { a: null, z: S.svc.z });
   assert.ok(M.simulate(c).status); // and the cleaned topology simulates without throwing
 });
@@ -1101,4 +1101,97 @@ test('shared protection: sanitize accepts it', () => {
   const S = build('mesh'); S.g.plan[0].prot = 'shared'; S.g.plan[1].prot = 'bogus';
   const p = M.sanitize(S).g.plan;
   assert.equal(p[0].prot, 'shared'); assert.equal(p[1].prot, '');
+});
+
+// ---- resilience: switching time and expected downtime ----
+test('resilience: an unprotected channel restores over another route and is down for the restoration time', () => {
+  const S = build('mesh'), r = M.resilience(S), sv = r[S.g.plan.findIndex(c => c.svc)];
+  assert.equal(sv.kind, 'restoration'); assert.equal(sv.km, 70);
+  assert.ok(Math.abs(sv.failures - 3 * 70 / 1000) < 1e-9);
+  assert.ok(Math.abs(sv.downSec - 0.21 * 60) < 1e-6, `${sv.downSec}`);
+  assert.equal(sv.outageSec, 60);
+  assert.ok(Math.abs(sv.availability - (1 - sv.downSec / (8760 * 3600))) < 1e-12);
+  assert.equal(r.length, S.g.plan.length);
+});
+
+test('resilience: with no other route a cut lasts until it is repaired', () => {
+  const S = build('adddrop'), sv = M.resilience(S)[S.g.plan.findIndex(c => c.svc)];
+  assert.equal(sv.kind, 'unprotected'); assert.equal(sv.outageSec, 12 * 3600);
+  assert.ok(Math.abs(sv.downSec - 3 * 160 / 1000 * 12 * 3600) < 1e-3);
+});
+
+test('resilience: 1+1 costs detect plus switch per failure and a small double-failure term; shared adds the turn-up time', () => {
+  const S = build('mesh'), k = S.g.plan.findIndex(c => c.svc);
+  S.g.plan[k].prot = '1+1';
+  const d = M.resilience(S)[k], lw = 0.21, Uw = lw * 12 / 8760, Up = 3 * 210 / 1000 * 12 / 8760;
+  assert.equal(d.kind, '1+1'); assert.equal(d.km, 70); assert.equal(d.protKm, 210);
+  assert.ok(Math.abs(d.outageSec - 0.035) < 1e-9);
+  assert.ok(Math.abs(d.downSec - (lw * 0.035 + Uw * Up * 8760 * 3600)) < 1e-6);
+  S.g.plan[k].prot = 'shared';
+  const sh = M.resilience(S)[k];
+  assert.equal(sh.kind, 'shared'); assert.ok(Math.abs(sh.outageSec - 3.035) < 1e-9);
+  assert.ok(Math.abs(sh.downSec - d.downSec - lw * 3) < 1e-6, 'shared costs the extra turn-up per failure');
+  // slower switching hardware shows up directly
+  S.g.plan[k].prot = '1+1'; S.g.switchMs = 330;
+  assert.ok(Math.abs(M.resilience(S)[k].outageSec - 0.335) < 1e-9);
+});
+
+test('resilience: a converted channel is the sum of its halves, and protection halves each side', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S);
+  const k = addCh(S, { slot: 40, slot2: 41, from: ra, to: rc, conv: rb });
+  const plain = M.resilience(S)[k];
+  assert.equal(plain.km, 210); assert.ok(Math.abs(plain.failures - 3 * 210 / 1000) < 1e-9);
+  S.g.plan[k].prot = '1+1';
+  const prot = M.resilience(S)[k];
+  assert.equal(prot.kind, '1+1'); assert.equal(prot.km, 210); assert.ok(prot.protKm > prot.km);
+  assert.ok(prot.downSec < plain.downSec);
+});
+
+test('resilience: no route is reported, availability defaults load, and sanitize bounds the assumptions', () => {
+  const S = build('mesh'); S.nodes.push({ id: 'x', type: 'roadm', name: 'X', x: 0, y: 0, p: M.TYPES.roadm.def() });
+  const k = S.g.plan.findIndex(c => !c.svc && !c.from); S.g.plan[k].from = 'x';
+  assert.equal(M.resilience(S)[k].kind, 'no route');
+  const T = build('mesh'); T.g.cutRate = 1e9; T.g.mttr = 'x'; T.g.switchMs = -5;
+  const g = M.sanitize(T).g; assert.equal(g.cutRate, 50); assert.equal(g.mttr, 12); assert.equal(g.switchMs, 0);
+  assert.deepEqual(Object.keys(M.RESIL).sort(), ['cutRate', 'detectMs', 'mttr', 'restoreSec', 'sharedSec', 'switchMs']);
+  assert.equal(M.resilience(build('dci')).length, 1, 'no plan: just the service');
+});
+
+// ---- power transients when channels drop ----
+test('transients: a cascade of gain-controlled amplifiers adds up the surge each one lets through', () => {
+  const S = build('lh'), r = M.simulate(S, undefined, { single: true }), t = r.transient;
+  const amps = r.hops.filter(h => h.kind === 'amp');
+  assert.equal(t.rows.length, amps.length);
+  const T = PHY.TRANSIENT, f = 1 - Math.exp(-T.agcUs / T.tauUs), n = t.rows[0].n, lost = Math.max(1, Math.round(0.5 * (n - 1)));
+  assert.equal(n, 64); assert.equal(t.rows[0].lost, lost);
+  assert.ok(Math.abs(t.rows[0].rawDb - 10 * Math.log10(n / (n - lost))) < 1e-9);
+  assert.ok(Math.abs(t.rows[0].peakDb - t.rows[0].rawDb * f) < 1e-9);
+  assert.ok(t.rows.every((x, i) => i === 0 || x.cumDb > t.rows[i - 1].cumDb), 'excursions accumulate along the cascade');
+  assert.ok(Math.abs(t.surgeDb - t.rows.reduce((a, x) => a + x.peakDb, 0)) < 1e-9);
+  assert.equal(r.status, 'up', 'transient notes are advisory');
+});
+
+test('transients: slow amplifier control lets the whole surge through and can overload the receiver', () => {
+  const S = build('lh'), fast = M.simulate(S, undefined, { single: true }).transient;
+  S.g.agcUs = 5000;
+  const r = M.simulate(S, undefined, { single: true }), slow = r.transient;
+  assert.ok(slow.surgeDb > fast.surgeDb * 5);
+  assert.ok(Math.abs(slow.rows[0].peakDb - slow.rows[0].rawDb) < 0.01, 'a loop that never reacts passes the full surge');
+  assert.ok(slow.overload && slow.prxSurge > r.mode.rxMax);
+  assert.ok(r.alarms.some(a => a.sev === 'info' && /overload/.test(a.text)));
+  assert.ok(slow.qMarginSurge < fast.qMarginSurge);
+  assert.ok(slow.prxDip < fast.prxDip, 'and the dip when channels return is deeper');
+});
+
+test('transients: one slow amplifier shows up in its own row; losing fewer channels is gentler; a lone channel has nothing to surge', () => {
+  const S = build('lh'), amp = S.nodes.find(n => n.type === 'edfa'); amp.p.agcUs = 2000;
+  const t = M.simulate(S, undefined, { single: true }).transient, row = t.rows.find(x => x.name === amp.name);
+  assert.equal(row.agcUs, 2000); assert.ok(row.peakDb > 2.5);
+  const base = M.simulate(build('lh'), undefined, { single: true }).transient;
+  const gentle = build('lh'); gentle.g.lossPct = 10;
+  assert.ok(M.simulate(gentle, undefined, { single: true }).transient.surgeDb < base.surgeDb / 3);
+  const one = build('lh'); one.g.nch = 1;
+  assert.equal(M.simulate(one, undefined, { single: true }).transient, undefined);
+  const T = build('lh'); T.g.lossPct = 500; T.g.agcUs = -3; const g = M.sanitize(T).g;
+  assert.equal(g.lossPct, 95); assert.equal(g.agcUs, 0);
 });
