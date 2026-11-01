@@ -1494,3 +1494,49 @@ test('client protection in the availability estimate: spares and dual-homing cut
   const u = M.resilience(U)[U.g.plan.findIndex(c => c.svc)];
   assert.ok(Math.abs(u.downSec - (d.downSec + 2 * 0.03 * (12 * 3600 - 0.035))) < 1e-6, 'without spares the transponders wait for repair');
 });
+
+// ---- coupled-wave Raman solver in the line simulation ----
+const ramanLine = (opts = {}) => {
+  const S = build('dci'), f = S.links.find(l => l.kind === 'fiber'); f.p.len = 110; f.p.raman = opts.mw ?? 800; f.p.ramanPumps = opts.pumps ?? 1; f.p.ramanDir = opts.dir ?? 'back'; f.p.ramanFull = !!opts.full;
+  S.g.nch = opts.nch ?? 32; S.g.df = 75; S.g.launch = opts.launch ?? 0;
+  return { S, f };
+};
+
+test('raman solver in the line: gain close to the closed-form model, with a gain spectrum from the physics', () => {
+  const approx = ramanLine({}), full = ramanLine({ full: true });
+  const a = M.simulate(approx.S), b = M.simulate(full.S);
+  const ga = a.hops.find(h => h.kind === 'span').raman, gb = b.hops.find(h => h.kind === 'span').raman;
+  assert.ok(Math.abs(ga - gb) < 3.5, `closed form ${ga.toFixed(1)} dB, solver ${gb.toFixed(1)} dB`);
+  assert.equal(a.status, 'up'); assert.equal(b.status, 'up');
+  assert.ok(b.raman.length === 1 && b.raman[0].solver === true && a.raman[0].solver === false, 'the Raman tab data exists for both');
+  assert.ok(Math.abs(a.raman[0].gainSvcDb - ga) < 3.5);
+  assert.ok(b.raman[0].ripple > 0.5 && b.raman[0].ripple < 5, `ripple ${b.raman[0].ripple}`);
+  assert.equal(M.simulate(full.S, undefined, { single: true }).raman.length, 0, 'sweeps skip the profile');
+});
+
+test('raman solver in the line: more pump wavelengths flatten it, more channels deplete it', () => {
+  const rip = n => M.simulate(ramanLine({ full: true, pumps: n, mw: 900 }).S).raman[0].ripple;
+  assert.ok(rip(3) < rip(1) * 0.7, `${rip(3)} vs ${rip(1)}`);
+  const gain = n => M.simulate(ramanLine({ full: true, nch: n, launch: 3, mw: 500 }).S, undefined, { single: true }).hops.find(h => h.kind === 'span').raman;
+  assert.ok(gain(96) < gain(8) - 0.3, `${gain(96)} vs ${gain(8)}`);
+  const both = M.simulate(ramanLine({ full: true, dir: 'both', mw: 800 }).S);
+  assert.equal(both.status, 'up'); assert.ok(both.raman[0].pumps.some(p => p.dir === 'fwd') && both.raman[0].pumps.some(p => p.dir === 'back'));
+  assert.ok(both.raman[0].profile.pump.length === 2);
+});
+
+test('raman solver in the line: per-channel gain in a plan follows the physics, and the service row matches the headline', () => {
+  const { S } = ramanLine({ full: true, mw: 900, pumps: 1 });
+  S.g.plan = [0, 20, 40, 63].map((slot, i) => ({ slot, mode: 'zrp400', off: 0, svc: i === 1, from: '', to: '', via: '', conv: '', slot2: slot, prot: '' }));
+  S.links.find(l => l.kind === 'fiber').p.nch = 4;
+  const r = M.simulate(S), svc = r.channels.find(c => c.svc);
+  assert.ok(Math.abs(svc.qMargin - r.qMargin) < 1e-6);
+  const g = r.channels.map(c => c.gosnr), spread = Math.max(...g) - Math.min(...g); // the amplifier re-levels the power, so the gain difference shows up as noise
+  assert.ok(spread > 0.05, `channels at the band edges get different Raman gain and so different GSNR: ${spread}`);
+  assert.ok(r.raman[0].samples.length === 4);
+});
+
+test('raman solver: the option is sanitised', () => {
+  const S = build('dci'), f = S.links.find(l => l.kind === 'fiber'); f.p.ramanFull = 'yes';
+  assert.equal(M.sanitize(S).links.find(l => l.id === f.id).p.ramanFull, false);
+  f.p.ramanFull = true; assert.equal(M.sanitize(S).links.find(l => l.id === f.id).p.ramanFull, true);
+});

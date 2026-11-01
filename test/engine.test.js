@@ -127,3 +127,56 @@ test('XPM penalty grows with neighbours and launch power', () => {
   assert.ok(P.xpmSpanPenalty(f, 80, 4, 0.002, P.XPM.same) > a);
   assert.ok(P.xpmSpanPenalty(f, 80, 4, 0.001, P.XPM.coh) > a);
 });
+
+// ---- coupled-wave Raman solver ----
+const sigs = (fs, mw) => fs.map(f => ({ fTHz: f, mW: mw }));
+test('raman solver: a 1 W backward pump gives about 12 to 15 dB on 80 km of SMF, more power gives more gain', () => {
+  const smf = P.FIBERS.smf, r1 = P.ramanSolve(smf, 80, [{ fTHz: 206.8, mW: 1000, dir: 'back' }], sigs([192.5, 194.5, 196], 0.05));
+  r1.gainDb.forEach(g => assert.ok(g > 11 && g < 16, `gain ${g}`));
+  assert.ok(Math.abs(r1.gain0Db[1] - r1.gainDb[1]) < 0.2, 'small signals do not deplete the pump');
+  const r2 = P.ramanSolve(smf, 80, [{ fTHz: 206.8, mW: 500, dir: 'back' }], sigs([194.5], 0.05));
+  assert.ok(r1.gainDb[1] > r2.gainDb[0] * 1.7, 'gain grows about linearly with pump power');
+  assert.ok(Math.abs(r2.gainDb[0] / r1.gainDb[1] - 0.5) < 0.06);
+  // the gain curve peaks about 13 THz below the pump: the 196 THz channel is nearer the pump and past the peak? no: lower frequencies are further, so ripple is a few dB
+  assert.ok(Math.max(...r1.gainDb) - Math.min(...r1.gainDb) > 0.5 && Math.max(...r1.gainDb) - Math.min(...r1.gainDb) < 4);
+});
+
+test('raman solver: strong signals deplete the pump and lose gain', () => {
+  const smf = P.FIBERS.smf, pump = [{ fTHz: 206.8, mW: 1000, dir: 'back' }];
+  const weak = P.ramanSolve(smf, 80, pump, sigs([194.5], 0.05)), strong = P.ramanSolve(smf, 80, pump, sigs([194.5], 100));
+  assert.ok(weak.depletion < 0.02 && strong.depletion > 0.2, `${weak.depletion} ${strong.depletion}`);
+  assert.ok(strong.gainDb[0] < weak.gainDb[0] - 0.7, `${strong.gainDb[0]} vs ${weak.gainDb[0]}`);
+  assert.ok(Math.abs(strong.gain0Db[0] - weak.gain0Db[0]) < 0.2, 'the small-signal gain does not depend on the signal power');
+});
+
+test('raman solver: photons are conserved without loss, and the long-wave pump gains from the short-wave one', () => {
+  const lossless = { ...P.FIBERS.smf }, pumps = [{ fTHz: 208.0, mW: 600, dir: 'back' }, { fTHz: 204.8, mW: 400, dir: 'fwd' }, { fTHz: 207.0, mW: 300, dir: 'back' }], s = sigs([193, 195, 196], 5);
+  const r = P.ramanSolve(lossless, 60, pumps, s, { att0: true });
+  const flux = (i0, i1) => i0 - i1;
+  const fIn = [...s.map(x => [x.fTHz, x.mW / 1000]), ...pumps.filter(p => p.dir === 'fwd').map(p => [p.fTHz, p.mW / 1000])], bIn = pumps.filter(p => p.dir === 'back').map(p => [p.fTHz, p.mW / 1000]);
+  const fOut = [...s.map((x, i) => [x.fTHz, r.sigOutW[i]]), ...pumps.map((p, j) => [p, r.pumpOutW[j]]).filter(([p]) => p.dir === 'fwd').map(([p, w]) => [p.fTHz, w])], bOut = pumps.map((p, j) => [p, r.pumpOutW[j]]).filter(([p]) => p.dir === 'back').map(([p, w]) => [p.fTHz, w]);
+  const sum = a => a.reduce((t, [f, w]) => t + w / f, 0);
+  const net0 = sum(fIn) - sum(bOut), netL = sum(fOut) - sum(bIn);
+  assert.ok(Math.abs(net0 - netL) / Math.abs(net0) < 2e-3, `photon flux in ${net0} vs out ${netL}`);
+  assert.ok(flux(0, 0) === 0);
+  // pump-to-pump transfer: with no signals, the 204.8 THz pump ends up stronger than its attenuation-free launch
+  const pp = P.ramanSolve(lossless, 80, [{ fTHz: 208, mW: 800, dir: 'fwd' }, { fTHz: 204.8, mW: 100, dir: 'fwd' }], [], { att0: true });
+  assert.ok(pp.pumpOutW[1] > 0.1 * 1.5, `the weaker, longer-wavelength pump grew: ${pp.pumpOutW[1]}`);
+  assert.ok(pp.pumpOutW[0] < 0.8);
+});
+
+test('raman solver: forward and backward pumping give about the same gain, and the profiles have the right shape', () => {
+  const smf = P.FIBERS.smf, s = sigs([194.5], 0.05);
+  const b = P.ramanSolve(smf, 80, [{ fTHz: 206.8, mW: 800, dir: 'back' }], s), f = P.ramanSolve(smf, 80, [{ fTHz: 206.8, mW: 800, dir: 'fwd' }], s);
+  assert.ok(Math.abs(b.gainDb[0] - f.gainDb[0]) < 1.5);
+  const pf = f.profile.pump[0], pb = b.profile.pump[0];
+  assert.ok(pf[0] > pf[pf.length - 1] * 10, 'a forward pump decays along the span');
+  assert.ok(pb[pb.length - 1] > pb[0] * 10, 'a backward pump is strongest at the far end');
+  const sg = b.profile.sig[0], off = b.profile.off[0];
+  assert.ok(sg[sg.length - 1] > off[off.length - 1] * 10, 'the signal arrives well above its passive level');
+  assert.ok(b.profile.z.length === 61 && b.profile.z[60] === 80);
+  // a bidirectional pair and three pump wavelengths solve too
+  const t = P.ramanSolve(smf, 80, [{ fTHz: 209.6, mW: 150, dir: 'back' }, { fTHz: 207.2, mW: 150, dir: 'back' }, { fTHz: 204.4, mW: 150, dir: 'back' }, { fTHz: 209.6, mW: 150, dir: 'fwd' }, { fTHz: 207.2, mW: 150, dir: 'fwd' }, { fTHz: 204.4, mW: 150, dir: 'fwd' }], sigs([192, 193, 194, 195, 196], 0.05));
+  assert.ok(Math.max(...t.gainDb) - Math.min(...t.gainDb) < Math.max(...b.gainDb) * 0.5, 'more pump wavelengths flatten the gain');
+  assert.ok(t.gainDb.every(g => g > 5));
+});

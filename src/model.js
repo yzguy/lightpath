@@ -19,7 +19,7 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, dir: 'both', cut: false, srlg: '' } : { il: 0.5, dir: 'both', cut: false });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '' } : { il: 0.5, dir: 'both', cut: false });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -279,6 +279,7 @@ const MODEL = (() => {
       const kind = l.kind === 'fiber' ? 'fiber' : 'patch', p = fill(linkDefaults(kind), l.p);
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
       if (!['both', 'ab', 'ba'].includes(p.dir)) p.dir = 'both';
+      p.ramanFull = p.ramanFull === true;
       p.srlg = typeof p.srlg === 'string' && /^[\w-]{0,24}$/.test(p.srlg) ? p.srlg : '';
       if (kind === 'fiber') for (const k of ['extraRev', 'ramanRev']) if (!(p[k] === '' || (Number.isFinite(+p[k]) && p[k] !== null && +p[k] >= 0))) p[k] = '';
       if (kind === 'fiber') { if (!['back', 'fwd', 'both'].includes(p.ramanDir)) p.ramanDir = 'back'; p.ramanPumps = Math.min(3, Math.max(1, Math.round(+p.ramanPumps || 1))); }
@@ -762,6 +763,23 @@ const MODEL = (() => {
       hops.push({ name, kind, in: before, out: snap(), km, nch, tilt, osnr: osnrNow(), gosnr: gosnrNow(), ...(curAct ? { lit: curAct.slice() } : {}), ...extra });
     }
     const loss = d => { const f = lin(-d); P *= f; Pase *= f; Pnli *= f; if (planOn) ev.push({ k: 'L', f }); };
+    const ramanViews = [];
+    // Solve one Raman span with the coupled-wave solver: the lit channels (binned to at most 12 samples) enter at the launch power, the pump
+    // wavelengths split the pump power equally, and the gain at any frequency is interpolated between the samples.
+    function ramanSpanSolve(fb, Lk, pb, pf, npump, act) {
+      let list = planOn ? chans.map((c, k) => (act[k] ? { f: c.fTHz, w: lin(c.off) } : null)).filter(Boolean) : Array.from({ length: Math.max(1, nch) }, (_, i) => ({ f: PHY_.slotFreqTHz(Math.floor(Math.max(0, slotsN - Math.max(1, nch)) / 2) + i, df), w: 1 }));
+      list.sort((a, b) => a.f - b.f);
+      if (list.length > 12) { const bins = []; for (let b = 0; b < 12; b++) { const part = list.slice(Math.floor(b * list.length / 12), Math.floor((b + 1) * list.length / 12)), w = part.reduce((t, x) => t + x.w, 0); bins.push({ f: part.reduce((t, x) => t + x.f * x.w, 0) / w, w }); } list = bins; }
+      const sigs = list.map(x => ({ fTHz: x.f, mW: 1000 * P * x.w })), freqs = PHY_.RAMAN_PUMPS[npump];
+      const mk = (mw, dir) => (mw > 0 ? freqs.map(f => ({ fTHz: f, mW: mw / npump, dir })) : []);
+      const pumps = [...mk(pb, 'back'), ...mk(pf, 'fwd')], r = PHY_.ramanSolve(fb, Lk, pumps, sigs);
+      const interp = (arr, f) => { if (f <= sigs[0].fTHz) return arr[0]; for (let i = 1; i < sigs.length; i++) if (f <= sigs[i].fTHz) { const t = (f - sigs[i - 1].fTHz) / (sigs[i].fTHz - sigs[i - 1].fTHz); return arr[i - 1] + t * (arr[i] - arr[i - 1]); } return arr[sigs.length - 1]; };
+      const fS = chans[svcIdx].fTHz, gS = interp(r.gainDb, fS), g0S = interp(r.gain0Db, fS);
+      let fracF = pf > 0 && pb > 0 ? 0.5 : pf > 0 ? 1 : 0; // split of the gain between the forward and backward pumps
+      if (pf > 0 && pb > 0) { const gF = interp(PHY_.ramanSolve(fb, Lk, mk(pf, 'fwd'), sigs, { noSmall: true }).gainDb, fS), gB = interp(PHY_.ramanSolve(fb, Lk, mk(pb, 'back'), sigs, { noSmall: true }).gainDb, fS); fracF = gF / Math.max(1e-9, gF + gB); }
+      return { gb: gS * (1 - fracF), gf: gS * fracF, g0b: g0S * (1 - fracF), g0f: g0S * fracF, gS, depl: r.depletion, relFn: f => interp(r.gainDb, f) / Math.max(1e-9, gS), spread: Math.max(...r.gainDb) - Math.min(...r.gainDb),
+        pumps, samples: sigs.map(s => s.fTHz), gainDb: r.gainDb, profile: { z: r.profile.z, sig: r.profile.sig, off: r.profile.off, pump: r.profile.pump } };
+    }
     // Launch re-optimisation (g.reopt): an amplifier whose output target is left blank sets the GN-optimal per-channel power for the span
     // after it, given the channels actually lit there, so the setting follows the load as channels come and go. `look` = path link index.
     function optFor(look, nf) {
@@ -812,8 +830,12 @@ const MODEL = (() => {
         const rdir = ['back', 'fwd', 'both'].includes(l.p.ramanDir) ? l.p.ramanDir : 'back', npump = Math.min(3, Math.max(1, Math.round(+l.p.ramanPumps || 1)));
         const pb = rdir === 'fwd' ? 0 : rdir === 'both' ? pump / 2 : pump, pf = rdir === 'back' ? 0 : rdir === 'both' ? pump / 2 : pump;
         const sigW = nch * P; // total signal power entering the span; the backward pump sees the signal after the span loss
-        const sb = PHY_.ramanGainSat(fb, Lk, pb, sigW, sl), sf = PHY_.ramanGainSat(fb, Lk, pf, sigW, sl);
+        // The coupled-wave solver (per fiber, "ramanFull") replaces the closed-form gain, depletion and gain-spectrum approximations.
+        const act0 = planOn ? curAct : null, wantView = pump > 0 && !eol && !rv && !W && !opts.single;
+        const solved = pump > 0 && (l.p.ramanFull || wantView) ? ramanSpanSolve(fb, Lk, pb, pf, npump, act0) : null, useSolver = !!(solved && l.p.ramanFull);
+        const sb = useSolver ? { gain: solved.gb, g0: solved.g0b, depletion: solved.depl } : PHY_.ramanGainSat(fb, Lk, pb, sigW, sl), sf = useSolver ? { gain: solved.gf, g0: solved.g0f, depletion: solved.depl } : PHY_.ramanGainSat(fb, Lk, pf, sigW, sl);
         const gb = sb.gain, gf = sf.gain, gr = gb + gf, depl = Math.max(sb.depletion, sf.depletion);
+        if (wantView && solved) ramanViews.push({ id: l.id, name: linkName(l), km: Lk, solver: useSolver, npump, pumps: solved.pumps, gainSvcDb: solved.gS, approxDb: useSolver ? null : gr, depletion: solved.depl, samples: solved.samples, gainDb: solved.gainDb, profile: solved.profile, svcTHz: chans[svcIdx].fTHz, ripple: solved.spread });
         // Raman lifts the power profile along the span, so the fiber looks less lossy to the nonlinearity (more so when pumped forward).
         const fbNl = gr > 0 ? { ...fb, att: Math.max(0.05, (fb.att * Lk - gr) / Lk) } : fb;
         const act = planOn ? curAct : null, full = planOn || nch === nChan, fwdF = PHY_.ramanFwdNliFactor(gf);
@@ -827,7 +849,7 @@ const MODEL = (() => {
         const rho = PHY_.nliCorrelation(cd);
         Pnli += nNew + 2 * rho * Math.sqrt(Pnli * nNew); // coherent cross term when the dispersion map is flat
         // Raman gain spectrum: channels at different frequencies see different gain, relative to the service channel.
-        const rel = gr > 0 && full ? chans.map(c => PHY_.ramanRel(npump, c.fTHz, chans[svcIdx].fTHz)) : null;
+        const rel = gr > 0 && full ? (useSolver ? chans.map(c => solved.relFn(c.fTHz)) : chans.map(c => PHY_.ramanRel(npump, c.fTHz, chans[svcIdx].fTHz))) : null;
         const relAct = rel && act ? rel.filter((_, k) => act[k]) : rel;
         const ripplePP = relAct ? gr * (Math.max(...relAct) - Math.min(...relAct)) : 0;
         if (planOn) ev.push({ k: 'S', fbNl, Lk, nch, act: act.slice(), fwdF, rho, dcd: fb.D * Lk, dg2: fb.pmd ** 2 * Lk, xpm: nch > 1 });
@@ -895,7 +917,7 @@ const MODEL = (() => {
       r2.switched = true; return r2;
     };
     if (isEnd(Z) && spareLoss(Z)) loss(spareLoss(Z)); // the switch or y-cable in front of the receiver
-    const res = { mode, modeKey, A, Z, path, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
+    const res = { mode, modeKey, A, Z, path, raman: ramanViews, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
     // Muxponder client ports: per-port optical budget plus rate aggregation into the line port.
     const clientFatal = [];
     res.clients = [];

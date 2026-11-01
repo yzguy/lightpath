@@ -152,6 +152,64 @@ const PHY = (() => {
   // A forward pump lifts the signal power over the first ~20 km: peak rise ~ 0.45 * gain - 1 dB. NLI goes as power cubed over about
   // half the effective length, so the span's NLI is scaled by 10^(1.5 * rise / 10).
   const ramanFwdNliFactor = gfDb => lin(1.5 * Math.max(0, 0.45 * gfDb - 1));
+  // Coupled-wave solver. Every wave (signal samples and pumps, forward or backward) obeys
+  //   +-dP_i/dz = -a_i P_i + P_i * sum_{j above i} c(f_j - f_i) P_j - P_i * sum_{j below i} (f_i / f_j) c(f_i - f_j) P_j
+  // with c the Raman gain per watt and km (the triangular shape of ramanShape times RAMAN.cr scaled by the fiber's gamma). Higher-frequency waves feed
+  // lower ones: pump to signal, pump to pump (the long-wave pump gains from the short-wave one), signal to signal (SRS tilt). The photon-energy ratio
+  // f_i / f_j conserves photon number. Forward waves are integrated from z = 0, backward ones from z = L, alternately until the profiles settle.
+  // pumps: [{ fTHz, mW, dir: 'fwd' | 'back' }]; sigs: [{ fTHz, mW }] at z = 0. Returns powers out (W), the on-off gain (dB) of each signal against the
+  // same signals without pumps, the pump depletion and sampled profiles. opts.att0 removes the attenuation (for conservation checks).
+  function ramanSolve(fiber, Lkm, pumps, sigs, opts = {}) {
+    const N = opts.steps || 160, dz = Lkm / N, cr = RAMAN.cr * (fiber.gamma / 1.3);
+    const att = f => (opts.att0 ? 0 : (fiber.att + (RAMAN.pumpAtt - fiber.att) * Math.min(1, Math.max(0, (f - 194) / 13))) / 4.343);
+    const run = (pumpScale, sigScale) => {
+      const W = [...sigs.map(s => ({ f: s.fTHz, p0: s.mW / 1000 * sigScale, dir: 1, sig: true })), ...pumps.map(p => ({ f: p.fTHz, p0: p.mW / 1000 * pumpScale, dir: p.dir === 'fwd' ? 1 : -1, sig: false }))];
+      const M = W.length, a = W.map(w => att(w.f));
+      const C = Array.from({ length: M }, (_, i) => W.map((w, j) => (w.f > W[i].f ? cr * ramanShape(w.f - W[i].f) : 0))), R = W.map((w, i) => W.map((x, j) => (x.f < w.f ? w.f / x.f : 0)));
+      const P = W.map(w => { const row = new Float64Array(N + 1); for (let k = 0; k <= N; k++) row[k] = w.p0 * Math.exp(-a[W.indexOf(w)] * (w.dir > 0 ? k * dz : (N - k) * dz)); return row; });
+      const rhs = (i, col) => { // d ln P_i / dz without the direction sign, from the powers at one z
+        let g = -a[i];
+        for (let j = 0; j < M; j++) { if (j === i) continue; if (C[i][j]) g += C[i][j] * col[j]; else if (R[i][j]) g -= R[i][j] * C[j][i] * col[j]; }
+        return g;
+      };
+      const fwd = W.map((w, i) => (w.dir > 0 ? i : -1)).filter(i => i >= 0), bwd = W.map((w, i) => (w.dir < 0 ? i : -1)).filter(i => i >= 0);
+      // Gauss-Seidel with under-relaxation: the forward waves are integrated against the current backward profile, then the backward waves
+      // against the new forward one; blending the old and new profiles keeps a strongly saturated span from flipping between two states.
+      for (let it = 0; it < 120; it++) {
+        const Tf = P.map((row, i) => (W[i].dir > 0 ? Float64Array.from(row) : row));
+        const colF = k => P.map((row, i) => (W[i].dir > 0 ? Tf[i][k] : row[k]));
+        for (let k = 0; k < N; k++) {
+          const c0 = colF(k), c1 = colF(k + 1); // the frozen (backward) waves at the far end of the step: second order
+          fwd.forEach(i => { c1[i] = c0[i] * Math.exp(rhs(i, c0) * dz); });
+          fwd.forEach(i => { Tf[i][k + 1] = c0[i] * Math.exp(0.5 * (rhs(i, c0) + rhs(i, c1)) * dz); });
+        }
+        let change = 0;
+        const w = it < 4 ? 0.5 : 0.6;
+        fwd.forEach(i => { for (let k = 1; k <= N; k++) { const v = (1 - w) * P[i][k] + w * Tf[i][k]; change = Math.max(change, Math.abs(v - P[i][k]) / (P[i][k] + 1e-30)); P[i][k] = v; } });
+        if (bwd.length) {
+          const Tb = P.map((row, i) => (W[i].dir < 0 ? Float64Array.from(row) : row));
+          const colB = k => P.map((row, i) => (W[i].dir < 0 ? Tb[i][k] : row[k]));
+          for (let k = N; k > 0; k--) {
+            const c0 = colB(k), c1 = colB(k - 1);
+            bwd.forEach(i => { c1[i] = c0[i] * Math.exp(rhs(i, c0) * dz); });
+            bwd.forEach(i => { Tb[i][k - 1] = c0[i] * Math.exp(0.5 * (rhs(i, c0) + rhs(i, c1)) * dz); });
+          }
+          bwd.forEach(i => { for (let k = 0; k < N; k++) { const v = (1 - w) * P[i][k] + w * Tb[i][k]; change = Math.max(change, Math.abs(v - P[i][k]) / (P[i][k] + 1e-30)); P[i][k] = v; } });
+        } else if (it > 0) break;
+        if (change < 1e-5) break;
+      }
+      return { W, P };
+    };
+    const on = run(1, 1), nS = sigs.length, small = opts.noSmall ? null : run(1, 1e-4);
+    const passive = (i, z) => sigs[i].mW / 1000 * Math.exp(-att(sigs[i].fTHz) * z); // the same signal with the pumps off
+    const out = on.P.map(row => row[N]), outOff = sigs.map((s, i) => passive(i, Lkm));
+    const gain = sigs.map((s, i) => db(out[i] / outOff[i])), gain0 = small ? sigs.map((s, i) => db(small.P[i][N] / 1e-4 / outOff[i])) : gain;
+    const pOut = pumps.map((p, j) => (pumps[j].dir === 'fwd' ? on.P[nS + j][N] : on.P[nS + j][0])), pFree = small ? pumps.map((p, j) => (pumps[j].dir === 'fwd' ? small.P[nS + j][N] : small.P[nS + j][0])) : pOut;
+    const depletion = pumps.length && small ? Math.max(0, ...pumps.map((p, j) => 1 - pOut[j] / Math.max(1e-30, pFree[j]))) : 0;
+    const zs = Array.from({ length: 61 }, (_, i) => Lkm * i / 60), pick = k => Math.round(k * N / 60);
+    return { gainDb: gain, gain0Db: gain0, depletion, sigOutW: out.slice(0, nS), pumpOutW: pOut,
+      profile: { z: zs, sig: sigs.map((s, i) => zs.map((_, k) => on.P[i][pick(k)])), pump: pumps.map((p, j) => zs.map((_, k) => on.P[nS + j][pick(k)])), off: sigs.map((s, i) => zs.map(z => passive(i, z))) }, N };
+  }
   function ramanGain(fiber, Lkm, pumpMw) {
     if (!(pumpMw > 0)) return 0;
     const ap = RAMAN.pumpAtt / 4.343, Leffp = (1 - Math.exp(-ap * Lkm)) / ap;
@@ -218,6 +276,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmWalk, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmWalk, xpmSpanPenalty, ramanGainSat, ramanSolve, ramanShape, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;
