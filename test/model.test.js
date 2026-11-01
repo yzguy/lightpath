@@ -1540,3 +1540,17 @@ test('raman solver: the option is sanitised', () => {
   assert.equal(M.sanitize(S).links.find(l => l.id === f.id).p.ramanFull, false);
   f.p.ramanFull = true; assert.equal(M.sanitize(S).links.find(l => l.id === f.id).p.ramanFull, true);
 });
+
+test('two muxponders per side share passive muxes, one wave each', () => {
+  const S = build('mxp2'), r = M.simulate(S);
+  assert.equal(r.status, 'up');
+  const a2 = S.nodes.find(n => n.name === 'MXP-A2').id, b2 = S.nodes.find(n => n.name === 'MXP-B2').id;
+  const second = r.channels.find(c => c.from === a2 && c.to === b2);
+  assert.ok(second && second.status === 'up', 'second muxponder pair is carried');
+  assert.notEqual(second.slot, r.channels.find(c => c.svc).slot);
+  assert.ok(r.channels.every(c => c.status === 'up'));
+  S.nodes.find(n => n.name === 'MXP-B2').p.fail = 'dead'; // losing one far-end muxponder takes down only its own wave
+  const r2 = M.simulate(S);
+  assert.equal(r2.channels.find(c => c.svc).status, 'up');
+  assert.notEqual(r2.channels.find(c => c.from === a2).status, 'up');
+});

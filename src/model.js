@@ -131,6 +131,17 @@ const MODEL = (() => {
           g: { nch: 16, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } };
       }
     },
+    mxp2: {
+      name: 'Two muxponders per side on passive muxes', build() {
+        const a1 = N('mxp', 'MXP-A1', 80, 150), a2 = N('mxp', 'MXP-A2', 80, 290), ma = N('mux', 'MUX-A', 260, 220), ba = N('edfa', 'BST-A', 400, 220, { gmin: 5 });
+        const pb = N('edfa', 'PRE-B', 670, 220, { gmin: 5 }), mb = N('mux', 'MUX-B', 810, 220), z1 = N('mxp', 'MXP-B1', 960, 150), z2 = N('mxp', 'MXP-B2', 960, 290);
+        // Each muxponder is one wave. A1-B1 is the service (slot 31) and A2-B2 rides slot 32 on the same line; the other waves stand for further muxponders.
+        const plan = [], ch = (slot, o = {}) => plan.push({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: slot, prot: '', ...o });
+        ch(31, { svc: true, from: a1.id, to: z1.id }); ch(32, { from: a2.id, to: z2.id }); for (let k = 0; k < 6; k++) ch(24 + k);
+        return { nodes: [a1, a2, ma, ba, pb, mb, z1, z2], links: [L(a1, ma, 'patch'), L(a2, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, z1, 'patch'), L(mb, z2, 'patch')],
+          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: a1.id, z: z1.id } };
+      }
+    },
     sfp10: {
       name: 'Switch 10G DWDM optics over 60 km', build() {
         const a1 = N('trx', 'SW-A1', 80, 150, { mode: 'dwdm10' }), a2 = N('trx', 'SW-A2', 80, 290, { mode: 'dwdm10' });
