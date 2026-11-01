@@ -707,7 +707,7 @@ function planView(r) {
       (key === 'via' || key === 'conv' ? pathRoadms.filter(n => n.type === 'roadm') : pathRoadms).forEach(n => sel.append(el('option', { value: n.id, text: n.name })));
       if (c[key] && !pathRoadms.some(n => n.id === c[key])) sel.append(el('option', { value: c[key], text: '(missing device)' }));
       sel.value = c[key] || ''; sel.disabled = !!c.svc || (key === 'via' && !!c.conv); sel.title = c.svc ? 'The service channel runs end to end' : '';
-      sel.addEventListener('change', () => { c[key] = sel.value; if (c.from && c.from === c.to) c[key === 'from' ? 'to' : 'from'] = ''; if (c.conv && (c.conv === c.from || c.conv === c.to)) c.conv = ''; if (c.conv) { c.via = ''; c.prot = ''; if (!Number.isFinite(c.slot2)) c.slot2 = c.slot; } commit(); });
+      sel.addEventListener('change', () => { c[key] = sel.value; if (c.from && c.from === c.to) c[key === 'from' ? 'to' : 'from'] = ''; if (c.conv && (c.conv === c.from || c.conv === c.to)) c.conv = ''; if (c.conv) { c.via = ''; if (!Number.isFinite(c.slot2)) c.slot2 = c.slot; } commit(); });
       if (key === 'via') sel.title = c.svc ? 'The service channel takes the shortest route' : c.conv ? 'A converted channel takes the shortest route on each side of the converter' : 'Force the route through this ROADM instead of taking the shortest path';
       if (key === 'conv') sel.title = c.svc ? 'The service channel is not converted' : 'Regenerate the channel at this ROADM into another slot: clears accumulated noise and lets the two sides use different slots';
       return sel;
@@ -717,8 +717,8 @@ function planView(r) {
     slot2In.hidden = !c.conv;
     const convCell = el('div', { class: 'pair' }, [nodeSel('conv', 'None', 'Convert at'), slot2In]);
     const protSel = el('select', { 'aria-label': `Protection for slot ${c.slot + 1}` }); [['', 'None'], ['1+1', '1+1']].forEach(([v, t]) => protSel.append(el('option', { value: v, text: t })));
-    protSel.value = c.prot === '1+1' ? '1+1' : ''; protSel.disabled = !!c.conv;
-    protSel.title = c.conv ? 'A converted channel is not protected' : '1+1: a second copy runs on the shortest route that shares no fiber with the working one. Both are lit; the receiver takes the working copy until it fails.';
+    protSel.value = c.prot === '1+1' ? '1+1' : ''; protSel.disabled = false;
+    protSel.title = c.conv ? '1+1 on each side of the converter, separately (the converter ROADM itself is shared). ' + '1+1:' : '1+1: a second copy runs on the shortest route that shares no fiber with the working one. Both are lit; the receiver takes the working copy until it fails.';
     protSel.addEventListener('change', () => { c.prot = protSel.value; commit(); });
     const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, 'aria-label': `Power offset for slot ${c.slot + 1}` }); off.addEventListener('change', () => { if (isFinite(+off.value)) { c.off = Math.max(-10, Math.min(10, +off.value)); commit(); } });
     const del = el('button', { class: 'btn', text: '×', title: 'Remove channel', disabled: c.svc, onclick: () => { plan.splice(plan.indexOf(c), 1); commit(); } });

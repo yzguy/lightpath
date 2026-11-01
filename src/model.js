@@ -190,13 +190,13 @@ const MODEL = (() => {
       const key = slot + '|' + nodeId(c.from) + '|' + nodeId(c.to) + '|' + nodeId(c.via) + '|' + nodeId(c.conv); // the same slot may repeat on different routes
       if (!Number.isFinite(slot) || slot < 0 || slot >= slots || seen.has(key)) continue;
       seen.add(key);
-      out.push({ slot, mode: PHY_.MODES[c.mode] ? c.mode : 'zrp400', off: Math.min(10, Math.max(-10, Number.isFinite(+c.off) && c.off !== '' && c.off !== null ? +c.off : 0)), svc: !!c.svc, from: nodeId(c.from), to: nodeId(c.to), via: nodeId(c.via), conv: nodeId(c.conv), slot2: Number.isFinite(+c.slot2) && c.slot2 !== '' && c.slot2 !== null && +c.slot2 >= 0 && +c.slot2 < slots ? Math.round(+c.slot2) : slot, prot: c.prot === '1+1' ? '1+1' : '' });
+      out.push({ slot, mode: PHY_.MODES[c.mode] ? c.mode : 'zrp400', off: Math.min(10, Math.max(-10, Number.isFinite(+c.off) && c.off !== '' && c.off !== null ? +c.off : 0)), svc: !!c.svc, from: nodeId(c.from), to: nodeId(c.to), via: nodeId(c.via), conv: nodeId(c.conv), slot2: Number.isFinite(+c.slot2) && c.slot2 !== '' && c.slot2 !== null && +c.slot2 >= 0 && +c.slot2 < slots ? Math.round(+c.slot2) : slot, prot: c.prot === '1+1' ? '1+1' : c.prot === 'shared' ? 'shared' : '' });
       if (out.length >= 96) break;
     }
     if (!out.length) return null;
     out.sort((a, b) => a.slot - b.slot);
     const first = out.findIndex(c => c.svc);
-    out.forEach((c, i) => { c.svc = i === (first >= 0 ? first : Math.floor(out.length / 2)); if (c.svc || c.from === c.to) { if (c.svc) c.from = c.to = ''; else c.to = ''; } if (c.svc) { c.via = ''; c.conv = ''; } if (c.conv) { c.via = ''; c.prot = ''; } });
+    out.forEach((c, i) => { c.svc = i === (first >= 0 ? first : Math.floor(out.length / 2)); if (c.svc || c.from === c.to) { if (c.svc) c.from = c.to = ''; else c.to = ''; } if (c.svc) { c.via = ''; c.conv = ''; } if (c.conv) c.via = ''; });
     return out;
   }
   // Turn the uniform line into an editable plan: the same block of channels, service in the middle.
@@ -261,7 +261,7 @@ const MODEL = (() => {
     const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', reopt: gi.reopt === true, plan: null,
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))) };
     g.plan = sanitizePlan(gi.plan, g.df);
-    if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)), roadms = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; if (!roadms.has(c.via)) c.via = ''; if (!roadms.has(c.conv) || c.conv === c.from || c.conv === c.to) c.conv = ''; if (c.conv) { c.via = ''; c.prot = ''; } }); }
+    if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)), roadms = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; if (!roadms.has(c.via)) c.via = ''; if (!roadms.has(c.conv) || c.conv === c.from || c.conv === c.to) c.conv = ''; if (c.conv) c.via = ''; }); }
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
     const svc = { a: seen.has(si.a) ? si.a : null, z: seen.has(si.z) ? si.z : null };
     return { nodes, links, g, svc };
@@ -336,18 +336,19 @@ const MODEL = (() => {
       g.plan.forEach((c, lg) => {
         const svc = !!c.svc, base = { mode: svc ? svcKey : c.mode, off: Number.isFinite(+c.off) ? +c.off : 0, lg };
         const from = svc ? '' : c.from || '', to = svc ? '' : c.to || '', via = svc ? '' : c.via || '', conv = svc ? '' : c.conv || '', slot = +c.slot;
+        const prot = c.prot === '1+1' || c.prot === 'shared', shared = c.prot === 'shared';
+        // pc: '' unprotected, 'w' working copy, 'p' protection copy; sec: which side of the converter (0 before, 1 after)
+        const mk = (sec, sl, f, t, v, pc, svcFlag) => ({ ...base, slot: sl, svc: svcFlag, from: f, to: t, via: v, sec, pc, shared: shared && pc === 'p', hasConv: !!conv, role: pc === 'w' ? 'work' : pc === 'p' ? 'prot' : 'only' });
         if (conv) {
-          list.push({ ...base, slot, svc: false, from, to: conv, via: '', role: 'conv1' });
-          list.push({ ...base, slot: Number.isFinite(+c.slot2) && c.slot2 !== '' && c.slot2 !== null ? +c.slot2 : slot, svc: false, from: conv, to, via: '', role: 'conv2' });
-        } else if (c.prot === '1+1') {
-          list.push({ ...base, slot, svc: svc && !svcOnProt, from, to, via, role: 'work' });
-          list.push({ ...base, slot, svc: svc && svcOnProt, from, to, via, role: 'prot' });
-        } else list.push({ ...base, slot, svc, from, to, via, role: 'only' });
+          const s2 = Number.isFinite(+c.slot2) && c.slot2 !== '' && c.slot2 !== null ? +c.slot2 : slot;
+          [[slot, from, conv], [s2, conv, to]].forEach(([sl, f, t], sec) => { if (prot) { list.push(mk(sec, sl, f, t, '', 'w', false)); list.push(mk(sec, sl, f, t, '', 'p', false)); } else list.push(mk(sec, sl, f, t, '', '', false)); });
+        } else if (prot) { list.push(mk(0, slot, from, to, via, 'w', svc && !svcOnProt)); list.push(mk(0, slot, from, to, via, 'p', svc && svcOnProt)); }
+        else list.push(mk(0, slot, from, to, via, '', svc));
       });
       if (!list.some(c => c.svc)) list[Math.floor(list.length / 2)].svc = true;
     } else {
       const n = Math.max(1, Math.round(+g.nch)), start = Math.floor(Math.max(0, slotsN - n) / 2), mid = Math.floor(n / 2);
-      list = Array.from({ length: n }, (_, i) => ({ slot: start + i, mode: svcKey, off: 0, svc: i === mid, from: '', to: '', via: '', lg: i, role: 'only' }));
+      list = Array.from({ length: n }, (_, i) => ({ slot: start + i, mode: svcKey, off: 0, svc: i === mid, from: '', to: '', via: '', lg: i, sec: 0, pc: '', shared: false, hasConv: false, role: 'only' }));
     }
     return list.map((c, i) => { const m = PHY_.MODES[c.mode] || PHY_.MODES[svcKey], fTHz = PHY_.slotFreqTHz(c.slot, df); return { ...c, idx: i, m, mode: PHY_.MODES[c.mode] ? c.mode : svcKey, Rs: m.Rs, fTHz, f: fTHz * 1e12 }; });
   }
@@ -366,13 +367,13 @@ const MODEL = (() => {
     const svcA = S.svc.a, svcZ = S.svc.z, memo = new Map(), { link, linkName } = mkGraph(S);
     const routeFor = c => {
       const ea = c.from || svcA, ez = c.to || svcZ, via = c.svc ? '' : c.via || '';
-      if (c.role === 'work' || c.role === 'prot') { // 1+1: the planned working route and the planned fiber-disjoint protection route
+      if (c.pc) { // 1+1: the planned working route and the planned fiber-disjoint protection route
         const key = 'P' + ea + '>' + via + '>' + ez;
         if (!memo.has(key)) memo.set(key, plannedPair(S, ...(rv ? [ez, ea] : [ea, ez]), via));
         const pp = memo.get(key);
         if (c.svc) return path; // the service's own copy is the walk's path (chosen by the caller)
-        const r = c.role === 'work' ? pp.W0 : pp.P0;
-        if (!r) { why[c.idx] = c.role === 'work' || !pp.W0 ? pp.why : 'no route that shares no fiber with the working route'; return null; }
+        const r = c.pc === 'w' ? pp.W0 : pp.P0;
+        if (!r) { why[c.idx] = c.pc === 'w' || !pp.W0 ? pp.why : 'no route that shares no fiber with the working route'; return null; }
         if (routeCut(S, r)) { why[c.idx] = 'the route crosses a cut fiber'; cutOff[c.idx] = true; return null; }
         return r;
       }
@@ -430,7 +431,7 @@ const MODEL = (() => {
     const mesh = planMesh(S, chans, path, false, true);
     // A unit is what must share one slot: a plain channel, or a 1+1 pair (both copies use the same slot). A converter's two segments are separate units.
     const units = [];
-    chans.forEach((c, k) => { const u = c.role === 'prot' ? units.find(x => x.lg === c.lg) : null; if (u) u.ks.push(k); else units.push({ lg: c.lg, ks: [k], svc: c.svc }); });
+    chans.forEach((c, k) => { const u = c.pc === 'p' ? units.find(x => x.lg === c.lg && x.sec === c.sec) : null; if (u) u.ks.push(k); else units.push({ lg: c.lg, sec: c.sec, ks: [k], svc: c.svc }); });
     units.forEach(u => { u.links = new Set(u.ks.flatMap(k => (mesh.routes[k] ? mesh.routes[k].links : []))); u.svc = u.ks.some(k => chans[k].svc); });
     const used = Array.from({ length: slotsN }, () => new Set()), slot = chans.map(c => c.slot);
     units.map((u, i) => i).sort((a, b) => (units[b].svc ? 1 : 0) - (units[a].svc ? 1 : 0) || units[b].links.size - units[a].links.size || a - b).forEach(i => {
@@ -439,31 +440,43 @@ const MODEL = (() => {
       if (!u.svc) { const f = used.findIndex(x => [...u.links].every(id => !x.has(id))); if (f >= 0) s = f; }
       u.ks.forEach(k => (slot[k] = s)); u.links.forEach(id => used[s].add(id));
     });
-    const plan = g.plan.map((c, lg) => { const ks = chans.map((x, k) => (x.lg === lg ? k : -1)).filter(k => k >= 0); return { ...c, slot: slot[ks[0]], slot2: c.conv ? slot[ks[1]] : slot[ks[0]] }; });
+    const plan = g.plan.map((c, lg) => { const ks = chans.map((x, k) => (x.lg === lg ? k : -1)).filter(k => k >= 0), k2 = ks.find(k => chans[k].sec === 1); return { ...c, slot: slot[ks[0]], slot2: c.conv && k2 != null ? slot[k2] : slot[ks[0]] }; });
     return sanitizePlan(plan, +g.df);
   }
 
-  // Plan-entry results from segment results. A converted channel is judged on its worst segment; a 1+1 channel on the copy that carries it
-  // (the service's own copy for the service; otherwise the working copy unless it is unusable and the protection copy is not).
+  // Plan-entry results from segment results. A converted channel is judged on its worst half; a 1+1 copy pair on the copy that carries it
+  // (the service's own copy for the service; otherwise the working copy unless it is unusable and the protection copy is not). A protected
+  // converted channel is protected on each side of the converter separately.
   const SEG_RANK = { up: 0, degraded: 1, blocked: 2, nopath: 2, down: 2, los: 3 };
   function logicalChannels(plan, chans, seg) {
     const worse = (a, b) => (SEG_RANK[b.status] > SEG_RANK[a.status] || (SEG_RANK[b.status] === SEG_RANK[a.status] && (b.qMargin ?? -1e9) < (a.qMargin ?? -1e9)) ? b : a);
+    // two halves of a converted channel as one entry: worst half, joined route
+    const joinHalves = (e1, e2, notes) => {
+      const w = worse(e1, e2);
+      return { ...w, converted: true, segments: [e1, e2], slot: e1.slot, slot2: e2.slot, svc: false, from: e1.from, to: e2.to, fromName: e1.fromName, toName: e2.toName,
+        route: [...e1.route, ...e2.route.slice(1)], routeLinks: [...e1.routeLinks, ...e2.routeLinks], routeNodes: [...e1.routeNodes, ...e2.routeNodes.slice(1)],
+        notes: notes || (w.status !== 'up' ? [`${w === e1 ? 'before' : 'after'} the converter: ${w.notes[0] || w.status}`] : []) };
+    };
     return plan.map((c, i) => {
-      const ents = [], roles = [];
-      chans.forEach((x, k) => { if (x.lg === i) { ents.push(seg[k]); roles.push(x.role); } });
-      if (ents.length === 1) return { ...ents[0], idx: i, lg: i };
-      if (roles[0] === 'conv1') {
-        const [e1, e2] = ents, w = ents.reduce(worse), n = ents.indexOf(w) + 1;
-        const bad = w.status !== 'up';
-        return { ...w, idx: i, lg: i, converted: true, segments: ents, slot: e1.slot, slot2: e2.slot, svc: false, from: e1.from, to: e2.to, fromName: e1.fromName, toName: e2.toName,
-          route: [...e1.route, ...e2.route.slice(1)], routeLinks: [...e1.routeLinks, ...e2.routeLinks], routeNodes: [...e1.routeNodes, ...e2.routeNodes.slice(1)],
-          notes: bad ? [`${n === 1 ? 'before' : 'after'} the converter: ${w.notes[0] || w.status}`] : [] };
+      const ks = []; chans.forEach((x, k) => { if (x.lg === i) ks.push(k); });
+      const secs = [0, 1].map(s => ks.filter(k => chans[k].sec === s)).filter(g => g.length);
+      const res = secs.map(group => {
+        if (group.length === 1) return { act: seg[group[0]] };
+        const [wk, pr] = [seg[group[0]], seg[group[1]]], act = wk.svc || pr.svc ? (wk.svc ? wk : pr) : SEG_RANK[wk.status] >= 2 && SEG_RANK[pr.status] <= 1 ? pr : wk;
+        const stby = act === wk ? pr : wk, onP = act === pr, out = { ...act, notes: [...act.notes] };
+        if (onP) { out.notes.unshift('on the protection route'); if (out.status === 'up') out.status = 'degraded'; }
+        else if (SEG_RANK[stby.status] >= 2 && !c.svc && stby.status !== 'standby') { out.notes.push(`no protection: ${stby.notes[0] || stby.status}`); if (out.status === 'up') out.status = 'degraded'; }
+        return { act: out, wk, pr, onP };
+      });
+      if (res.length === 1) {
+        const r = res[0];
+        return r.wk ? { ...r.act, idx: i, lg: i, svc: !!c.svc, protection: { active: r.onP ? 'protect' : 'work', work: r.wk, protect: r.pr } } : { ...r.act, idx: i, lg: i };
       }
-      const [wk, pr] = ents, act = ents.find(e => e.svc) || (SEG_RANK[wk.status] >= 2 && SEG_RANK[pr.status] <= 1 ? pr : wk), stby = act === wk ? pr : wk, onP = act === pr;
-      const out = { ...act, idx: i, lg: i, svc: !!c.svc, protection: { active: onP ? 'protect' : 'work', work: wk, protect: pr }, notes: [...act.notes] };
-      if (onP) { out.notes.unshift('on the protection route'); if (out.status === 'up') out.status = 'degraded'; }
-      else if (SEG_RANK[stby.status] >= 2 && !c.svc) { out.notes.push(`no protection: ${stby.notes[0] || stby.status}`); if (out.status === 'up') out.status = 'degraded'; }
-      return out;
+      const joined = joinHalves(res[0].act, res[1].act, null);
+      joined.idx = i; joined.lg = i;
+      if (res[0].wk) joined.protection = { active: res.some(r => r.onP) ? 'protect' : 'work', work: joinHalves(res[0].wk, res[1].wk), protect: joinHalves(res[0].pr, res[1].pr), sections: res };
+      if (joined.status !== 'up' && !joined.notes.length) joined.notes = [res.find(r => r.act === worse(res[0].act, res[1].act)).act.notes[0] || joined.status];
+      return joined;
     });
   }
 
@@ -763,7 +776,7 @@ const MODEL = (() => {
       res.segments = res.segments.map((c, i) => c || { idx: i, lg: chans[i].lg, role: chans[i].role, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
         status: mesh.blocked[i] ? 'blocked' : mesh.routes[i] || mesh.cutOff[i] ? 'los' : 'nopath', notes: [mesh.routes[i] || mesh.cutOff[i] ? 'the route crosses a cut fiber' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
       res.channels = logicalChannels(g.plan, chans, res.segments);
-      res.linkLoad = [...mesh.loads].map(([id, set]) => ({ id, name: linkName(link(id)), n: new Set([...set].map(k => chans[k].lg)).size }));
+      res.linkLoad = [...mesh.loads].map(([id, set]) => ({ id, name: linkName(link(id)), n: new Set([...set].map(k => chans[k].lg + ':' + chans[k].sec)).size }));
       const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los' || c.status === 'nopath' || c.status === 'blocked'));
       const unprot = res.channels.filter(c => c.protection && !c.svc && c.protection.active === 'work' && STATUS_RANK[c.protection.protect.status] >= 2);
       if (unprot.length) alarms.push({ sev: 'warn', text: `${unprot.length} protected channel${unprot.length > 1 ? 's have' : ' has'} no usable protection route (slot ${unprot.slice(0, 3).map(c => c.slot + 1).join(', ')}${unprot.length > 3 ? '…' : ''}): ${unprot[0].protection.protect.notes[0] || 'it is down'}.` });

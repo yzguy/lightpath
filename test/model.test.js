@@ -892,7 +892,7 @@ test('converter: sanitize keeps it on ROADMs only and never on the service', () 
   const k = addCh(S, { slot: 40, slot2: 41, from: ra, to: rc, conv: rb, via: rb, prot: '1+1' });
   S.g.plan.find(c => c.svc).conv = rb;
   const p = M.sanitize(S).g.plan, c = p.find(x => x.conv);
-  assert.equal(c.via, ''); assert.equal(c.prot, ''); assert.equal(c.slot2, 41);
+  assert.equal(c.via, ''); assert.equal(c.prot, '1+1', 'a converted channel can be protected'); assert.equal(c.slot2, 41);
   assert.equal(p.find(x => x.svc).conv, '');
   const T = clone(S); T.g.plan[k].conv = S.nodes.find(n => n.name === 'TRX-A').id;
   assert.equal(M.sanitize(T).g.plan.find(x => x.slot === 40).conv, '', 'a transponder cannot convert');
@@ -997,4 +997,32 @@ test('protection: first-fit gives both copies one slot that is free on both rout
   const r = M.simulate(S);
   assert.ok(r.channels.every(c => c.status === 'up'), r.channels.map(c => c.status).join());
   assert.ok(r.channels.find(c => c.protection && !c.svc).protection.protect.status === 'up');
+});
+
+test('protection of a converted channel: each side of the converter is protected on its own', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S);
+  const k = addCh(S, { slot: 40, slot2: 41, from: ra, to: rc, conv: rb, prot: '1+1' });
+  const base = Object.fromEntries(M.simulate(build('mesh')).linkLoad.map(l => [l.name, l.n]));
+  let r = M.simulate(S), c = r.channels[k];
+  assert.ok(c.converted && c.protection && c.protection.sections.length === 2);
+  assert.equal(c.status, 'up'); assert.equal(c.protection.active, 'work');
+  assert.deepEqual(c.route, ['ROADM-A', 'ROADM-B', 'ROADM-C']);
+  assert.deepEqual(c.protection.protect.route, ['ROADM-A', 'ROADM-C', 'ROADM-B', 'ROADM-A', 'ROADM-C'], 'A-C-B then B-A-C: each half goes the other way round');
+  assert.equal(c.protection.protect.status, 'up');
+  const load = Object.fromEntries(r.linkLoad.map(l => [l.name, l.n]));
+  assert.equal(load['ROADM-A–ROADM-B'], base['ROADM-A–ROADM-B'] + 2, 'working half 1 and protection half 2 both ride A-B');
+  assert.equal(load['ROADM-A–ROADM-C'], base['ROADM-A–ROADM-C'] + 2);
+  // cut the A-B fiber: the first half switches, the second half's protection also crosses the cut so it is left unprotected
+  S.links.find(l => l.kind === 'fiber' && l.p.len === 100).p.cut = true;
+  r = M.simulate(S); c = r.channels[k];
+  assert.equal(c.protection.active, 'protect'); assert.equal(c.status, 'degraded');
+  assert.ok(c.prx != null, 'still carrying traffic');
+  assert.match(c.notes[0], /protection|converter/);
+});
+
+test('protection of a converted channel: first-fit gives each protected half one slot for both copies', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S);
+  addCh(S, { slot: 50, slot2: 51, from: ra, to: rc, conv: rb, prot: '1+1' });
+  S.g.plan = M.assignSlots(S);
+  assert.ok(M.simulate(S).channels.every(x => x.status === 'up'));
 });
