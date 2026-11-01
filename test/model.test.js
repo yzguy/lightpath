@@ -1554,3 +1554,35 @@ test('two muxponders per side share passive muxes, one wave each', () => {
   assert.equal(r2.channels.find(c => c.svc).status, 'up');
   assert.notEqual(r2.channels.find(c => c.from === a2).status, 'up');
 });
+
+test('a failed port on a passive mux takes down only its own wave', () => {
+  const S = M.sanitize(build('mxp2')), mb = S.nodes.find(n => n.name === 'MUX-B');
+  const r0 = M.simulate(S), sv = r0.channels.find(c => c.svc).slot, other = r0.channels.find(c => !c.svc && c.from).slot;
+  mb.p.badPorts = [other];
+  const r = M.simulate(S);
+  assert.equal(r.channels.find(c => c.svc).status, 'up');
+  const lost = r.channels.filter(c => c.status === 'los');
+  assert.deepEqual(lost.map(c => c.slot), [other]);
+  assert.match(lost[0].notes[0], /port on MUX-B/);
+  mb.p.badPorts = [sv]; // the service's own port: the headline reports it
+  const r2 = M.simulate(S);
+  assert.equal(r2.status, 'down');
+  assert.match(r2.headline, /port for slot \d+ on MUX-B/);
+});
+
+test('a failed card takes down its eight ports and nothing else', () => {
+  const S = M.sanitize(build('mxp2')), ma = S.nodes.find(n => n.name === 'MUX-A');
+  const slots = M.simulate(S).channels.map(c => c.slot), card = Math.floor(Math.max(...slots) / M.PORTS_PER_CARD);
+  ma.p.badCards = [card];
+  const r = M.simulate(S);
+  for (const c of r.channels) assert.equal(c.status === 'los', Math.floor(c.slot / M.PORTS_PER_CARD) === card, `slot ${c.slot}`);
+  assert.ok(r.channels.some(c => c.status === 'up'), 'channels on other cards keep running');
+});
+
+test('port and card lists survive sanitize and reject junk', () => {
+  const S = build('mxp2'), mb = S.nodes.find(n => n.name === 'MUX-B');
+  mb.p.badPorts = [3, 3, -1, 200, 'x', 1.5, 7]; mb.p.badCards = [2, 99, null];
+  const c = M.sanitize(clone(S)).nodes.find(n => n.name === 'MUX-B');
+  assert.deepEqual(c.p.badPorts, [3, 7]); assert.deepEqual(c.p.badCards, [2]);
+  assert.equal(M.sanitize(clone(S)).nodes.find(n => n.name === 'MXP-A1').p.badPorts, undefined);
+});

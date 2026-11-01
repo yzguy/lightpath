@@ -276,6 +276,10 @@ const MODEL = (() => {
         p.clients = cs.map(c => { c = c && typeof c === 'object' ? c : {}; return { optic: PHY_.CLIENT_OPTICS[c.optic] ? c.optic : '100g-lr4', len: Number.isFinite(+c.len) && c.len !== '' && c.len !== null && +c.len >= 0 ? +c.len : 0.1, extra: Number.isFinite(+c.extra) && c.extra !== '' && c.extra !== null && +c.extra >= 0 ? +c.extra : 1 }; });
       }
       { const raw = n.p && typeof n.p === 'object' ? n.p : {}; p.fail = raw.fail === 'dead' || raw.fail === 'degraded' ? raw.fail : ''; p.degDb = Number.isFinite(+raw.degDb) && raw.degDb !== '' && raw.degDb !== null && typeof raw.degDb !== 'boolean' ? Math.min(30, Math.max(0, +raw.degDb)) : 3; }
+      if (n.type === 'roadm' || n.type === 'mux') {
+        const ints = (v, max) => [...new Set((Array.isArray(v) ? v : []).filter(x => typeof x === 'number' && Number.isInteger(x) && x >= 0 && x < max))].sort((a, b) => a - b).slice(0, max);
+        p.badPorts = ints(n.p && n.p.badPorts, 128); p.badCards = ints(n.p && n.p.badCards, 16);
+      }
       if (isEnd(n)) p.spare = ['switch', 'ycable'].includes(n.p && n.p.spare) ? n.p.spare : '';
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
@@ -332,6 +336,10 @@ const MODEL = (() => {
   // A transponder with a spare module (optical switch or y-cable) keeps carrying light when its primary fails.
   const SPARE_LOSS = { switch: 1, ycable: 3.5 };
   const onSpare = n => !!n && isEnd(n) && !!n.p && n.p.fail === 'dead' && !!SPARE_LOSS[n.p.spare];
+  // Port and card failures on a ROADM or passive mux: p.badPorts lists failed channel slots (0-based), p.badCards failed cards of PORTS_PER_CARD
+  // slots each. Only the channels that join or leave the line at that device are lost; everything else keeps running.
+  const PORTS_PER_CARD = 8;
+  const portDown = (n, slot) => !!n && !!n.p && ((Array.isArray(n.p.badPorts) && n.p.badPorts.includes(slot)) || (Array.isArray(n.p.badCards) && n.p.badCards.includes(Math.floor(slot / PORTS_PER_CARD))));
   const isDead = n => !!n && !!n.p && n.p.fail === 'dead' && !onSpare(n);
   const spareLoss = n => (n && isEnd(n) && n.p && SPARE_LOSS[n.p.spare]) || 0;
   const degOf = n => (n && n.p && n.p.fail === 'degraded' ? (Number.isFinite(+n.p.degDb) ? Math.min(30, Math.max(0, +n.p.degDb)) : 3) : 0);
@@ -591,6 +599,11 @@ const MODEL = (() => {
         const t = SPARE_LOSS[n.p.spare] ? (P.detectMs + P.switchMs) / 1000 : P.mttr * 3600;
         devDown += 1.5 * P.devRate * t; devFail += 1.5 * P.devRate; devWorst = Math.max(devWorst, t);
       }
+      for (const d of W.nodes) { // the port this channel uses on a mux or an end ROADM: one slot's port fails far less often than the whole device
+        const n = node(d); if (!n || !P.devRate || !(n.type === 'mux' || (n.type === 'roadm' && (d === x || d === y)))) continue;
+        const r = 0.25 * P.devRate, t = isProt && !pp.P0.nodes.includes(d) ? sw : P.mttr * 3600;
+        devDown += r * t; devFail += r; devWorst = Math.max(devWorst, t);
+      }
       if (isProt) {
         const pk = km(pp.P0.links);
         return { kind: prot === 'shared' ? 'shared' : '1+1', km: wk, protKm: pk, failures: lw + devFail, outageSec: Math.max(sw, devWorst), downSec: lw * sw + Uf(wk) * Uf(pk) * YEAR + devDown };
@@ -754,6 +767,8 @@ const MODEL = (() => {
     // Mesh: every channel has its own route; this walk follows `path`. Members are the channels that ride (a stretch of) this path,
     // with lo/hi the node positions where they are added and dropped. Link loads count every channel on a fiber, member or not.
     const lastPos = path.nodes.length - 1;
+    // The first device on a route whose port for this slot has failed: any passive mux the channel joins or leaves through, or the add/drop ROADM at an end.
+    const portFaultOn = (ids, slot) => { for (let k = 0; k < ids.length; k++) { const n = node(ids[k]); if (n && (n.type === 'mux' || (n.type === 'roadm' && (k === 0 || k === ids.length - 1))) && portDown(n, slot)) return n; } return null; };
     const mesh = planOn ? (W ? W.mesh : planMesh(S, chans, path, rv)) : null, members = planOn ? (W ? W.members : mesh.hosts[0].members) : [];
     const lohi = chans.map(() => null); members.forEach(m => (lohi[m.k] = m));
     const maskAt = j => { const set = mesh.loads.get(path.links[j]); return chans.map((_, k) => !!set && set.has(k)); }, litCount = j => maskAt(j).filter(Boolean).length;
@@ -1057,6 +1072,7 @@ const MODEL = (() => {
         else if (bER > m.berThr) { status = 'down'; notes.push('pre-FEC BER above the FEC limit'); }
         else if (qm < 1 || prx < m.rxMin || prx > m.rxMax) { status = 'degraded'; notes.push(qm < 1 ? `only ${f1(qm)} dB of Q margin` : prx < m.rxMin ? 'Rx below the sensitivity spec' : 'Rx above the overload point'); }
         if (f.xp > 1.5) notes.push(`XPM costs ${f1(f.xp)} dB`);
+        { const pf = portFaultOn(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot); if (pf) { status = 'los'; notes.unshift(`its port on ${pf.name} has failed (slot ${c.slot + 1})`); } }
         const lh = lohi[i], nm = k => (node(path.nodes[k]) || {}).name, route = path.nodes.slice(lh.lo, lh.hi + 1).map(id => (node(id) || {}).name);
         return { idx: i, lg: c.lg, role: c.role, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
           from: c.from, to: c.to, via: c.via, fromName: nm(lh.lo), toName: nm(lh.hi), route, routeLinks: path.links.slice(lh.lo, lh.hi), routeNodes: path.nodes.slice(lh.lo, lh.hi + 1), partial: !!W || lh.lo > 0 || lh.hi < lastPos };
@@ -1101,6 +1117,7 @@ const MODEL = (() => {
     if (!eol && !W) { const e = simulate(S, launchOverride, { eol: true, reverse: rv, useProtect: svcOnProt }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
     // alarms & status
     const bad = [];
+    if (!eol && !rv && !W) { const pf = portFaultOn(path.nodes, chans[svcIdx].slot); if (pf) bad.push(`The port for slot ${chans[svcIdx].slot + 1} on ${pf.name} has failed: the service channel is lost.`); }
     if (Z.p.mode !== modeKey) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
     if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} ${mode.coh === false ? 'dispersion tolerance' : 'DSP range'} of ${mode.cdTol} ps/nm.`);
     if (ber > mode.berThr) bad.push(`Pre-FEC BER ${ber.toExponential(2)} is above the ${mode.fec} limit ${mode.berThr.toExponential(2)}: uncorrectable errors, link down.`);
@@ -1141,6 +1158,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;
