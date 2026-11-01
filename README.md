@@ -56,3 +56,4 @@ No dependencies, no bundler. (The page asks Google Fonts for Archivo and IBM Ple
 - Pattern- and format-dependent XPM, and a joint optimiser for launch power per span and offsets per channel
 - Per-channel transients (spectral hole burning, tilt during the event) and transients through Raman pumps and ROADM wavelength blockers
 - Per-channel partial failures (a degraded port), port failures that take down several devices, and an availability-driven planner (choose protection per demand to meet a target)
+- CWDM (backlog, low priority): a reduced power-budget and dispersion calculator for 18-channel 20 nm links (1270-1610 nm) with 10G and 25G CWDM optics and a passive CWDM mux. Needs wavelength-dependent fibre attenuation and dispersion (water peak near 1383 nm, about -5 to +22 ps/nm/km across the band) and has no EDFAs, so no OSNR or amplifier model
