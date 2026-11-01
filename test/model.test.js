@@ -1586,3 +1586,55 @@ test('port and card lists survive sanitize and reject junk', () => {
   assert.deepEqual(c.p.badPorts, [3, 7]); assert.deepEqual(c.p.badCards, [2]);
   assert.equal(M.sanitize(clone(S)).nodes.find(n => n.name === 'MXP-A1').p.badPorts, undefined);
 });
+
+test('passive OADM bus: dropped and added channels sit between the OADMs and the filler passes through', () => {
+  const S = M.sanitize(build('oadm')), r = M.simulate(S);
+  assert.equal(r.status, 'up');
+  assert.ok(r.channels.every(c => c.status === 'up'));
+  const via = (a, b) => r.channels.filter(c => c.fromName === a && c.toName === b).length;
+  assert.equal(via('TRX-A', 'OADM-B'), 2); assert.equal(via('OADM-B', 'TRX-Z'), 2);
+  assert.equal(via('TRX-A', 'OADM-C'), 1); assert.equal(via('OADM-C', 'TRX-Z'), 1);
+  assert.equal(via('TRX-A', 'TRX-Z'), 5); // the service and four fillers
+});
+
+test('passive OADM: the filter terminates a slot it serves, and only serves its own slots at the ends', () => {
+  const S = M.sanitize(build('oadm')), oc = S.nodes.find(n => n.name === 'OADM-C'), ob = S.nodes.find(n => n.name === 'OADM-B');
+  oc.p.slots = [...oc.p.slots, 40]; // a filler in slot 41 now runs into OADM-C's filter
+  let r = M.simulate(S), f = r.channels.find(c => c.slot === 40);
+  assert.equal(f.status, 'blocked'); assert.match(f.notes[0], /dropped by the filter at OADM-C/);
+  assert.equal(r.channels.filter(c => c.status !== 'up').length, 1, 'nothing else is disturbed');
+  oc.p.slots = [28, 29]; ob.p.slots = [24, 25, 27]; // OADM-B no longer serves slot 27, which a channel is added in there
+  r = M.simulate(S); f = r.channels.find(c => c.slot === 26);
+  assert.equal(f.status, 'blocked'); assert.match(f.notes[0], /OADM-B cannot add or drop slot 27/);
+});
+
+test('passive OADM: the service dies if its slot is one the filter serves', () => {
+  const S = M.sanitize(build('oadm')), sv = M.simulate(S).channels.find(c => c.svc).slot;
+  S.nodes.find(n => n.name === 'OADM-B').p.slots.push(sv);
+  const r = M.simulate(S);
+  assert.equal(r.status, 'down'); assert.match(r.headline, /dropped by the filter at OADM-B/);
+});
+
+test('passive OADM: the drop loss shows up at the dropped channel and not at the express ones', () => {
+  const S = M.sanitize(build('oadm')), pick = r => ({ drop: r.channels.find(c => c.slot === 24).prx, thru: r.channels.find(c => c.svc).prx });
+  const a = pick(M.simulate(S)); S.nodes.find(n => n.name === 'OADM-B').p.ad = 9;
+  const b = pick(M.simulate(S));
+  assert.ok(Math.abs((a.drop - b.drop) - 6) < 0.5, `drop port lost ${a.drop - b.drop} dB, wanted 6`);
+  assert.ok(Math.abs(a.thru - b.thru) < 0.01);
+});
+
+test('passive OADM: slots survive sanitize and are dropped from other devices', () => {
+  const S = build('oadm'), ob = S.nodes.find(n => n.name === 'OADM-B');
+  ob.p.slots = [3, 3, -1, 500, 'x', 8]; S.nodes.find(n => n.name === 'MUX-A').p.slots = [1];
+  const c = M.sanitize(clone(S));
+  assert.deepEqual(c.nodes.find(n => n.name === 'OADM-B').p.slots, [3, 8]);
+  assert.equal(c.nodes.find(n => n.name === 'MUX-A').p.slots, undefined);
+  assert.equal(c.nodes.find(n => n.name === 'OADM-B').p.thru, 1.5);
+});
+
+test('passive OADM: a failed port at an OADM takes down only that channel', () => {
+  const S = M.sanitize(build('oadm')); S.nodes.find(n => n.name === 'OADM-B').p.badPorts = [25];
+  const r = M.simulate(S), lost = r.channels.filter(c => c.status === 'los');
+  assert.deepEqual(lost.map(c => c.slot), [25]);
+  assert.equal(r.channels.find(c => c.svc).status, 'up'); // the service is untouched; the lost channel shows as a warning
+});
