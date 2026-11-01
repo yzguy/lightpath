@@ -849,3 +849,152 @@ test('re-optimisation follows the plan load per span', () => {
   const r = M.simulate(S, undefined, { single: true });
   assert.ok(r.hops.some(h => h.kind === 'amp' && /re-optimised for 12 channels/.test(h.note || '')));
 });
+
+// ---- wavelength converters (regeneration) ----
+const meshIds = S => ({ ra: S.nodes.find(n => n.name === 'ROADM-A').id, rb: S.nodes.find(n => n.name === 'ROADM-B').id, rc: S.nodes.find(n => n.name === 'ROADM-C').id });
+const addCh = (S, o) => { S.g.plan.push({ slot: 40, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: o.slot ?? 40, prot: '', ...o }); return S.g.plan.length - 1; };
+
+test('converter: a channel changes slot and is regenerated at the converter ROADM', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S);
+  const k = addCh(S, { slot: 40, slot2: 41, from: ra, to: rc, conv: rb });
+  const r = M.simulate(S), c = r.channels[k];
+  assert.equal(r.channels.length, S.g.plan.length, 'results stay one per plan entry');
+  assert.ok(c.converted && c.segments.length === 2);
+  assert.equal(c.slot, 40); assert.equal(c.slot2, 41);
+  assert.deepEqual(c.route, ['ROADM-A', 'ROADM-B', 'ROADM-C']);
+  assert.equal(c.status, 'up');
+  assert.equal(c.segments[0].slot, 40); assert.equal(c.segments[1].slot, 41);
+  const load = Object.fromEntries(r.linkLoad.map(l => [l.name, l.n]));
+  assert.equal(load['ROADM-A–ROADM-B'], 8); assert.equal(load['ROADM-B–ROADM-C'], 8);
+  // regeneration: each segment starts clean, so it beats the same route lit straight through
+  const T = build('mesh'), ti = meshIds(T); const k2 = addCh(T, { slot: 40, from: ti.ra, to: ti.rc, via: ti.rb });
+  const through = M.simulate(T).channels[k2];
+  assert.deepEqual(through.route, c.route);
+  assert.ok(Math.min(...c.segments.map(s => s.gosnr)) > through.gosnr + 1, 'worst segment better than the unregenerated channel');
+  assert.ok(c.gosnr > through.gosnr + 1);
+});
+
+test('converter: it gets a channel past a slot clash that would block it', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S);
+  // slot 24 is lit on both A-B and B-C (the A to B and B to C channels reuse it): an A to C channel through B cannot also use 24
+  const k = addCh(S, { slot: 24, from: ra, to: rc, via: rb });
+  assert.equal(M.simulate(S).channels[k].status, 'blocked');
+  S.g.plan[k].via = ''; S.g.plan[k].conv = rb; S.g.plan[k].slot = 40; S.g.plan[k].slot2 = 41;
+  assert.equal(M.simulate(S).channels[k].status, 'up');
+  // the second slot still has to be free on the second leg
+  S.g.plan[k].slot2 = 24;
+  const bad = M.simulate(S).channels[k];
+  assert.equal(bad.status, 'blocked'); assert.match(bad.notes[0], /after the converter/);
+});
+
+test('converter: sanitize keeps it on ROADMs only and never on the service', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S);
+  const k = addCh(S, { slot: 40, slot2: 41, from: ra, to: rc, conv: rb, via: rb, prot: '1+1' });
+  S.g.plan.find(c => c.svc).conv = rb;
+  const p = M.sanitize(S).g.plan, c = p.find(x => x.conv);
+  assert.equal(c.via, ''); assert.equal(c.prot, ''); assert.equal(c.slot2, 41);
+  assert.equal(p.find(x => x.svc).conv, '');
+  const T = clone(S); T.g.plan[k].conv = S.nodes.find(n => n.name === 'TRX-A').id;
+  assert.equal(M.sanitize(T).g.plan.find(x => x.slot === 40).conv, '', 'a transponder cannot convert');
+  const U = clone(S); U.g.plan[k].conv = ra;
+  assert.equal(M.sanitize(U).g.plan.find(x => x.slot === 40).conv, '', 'the converter cannot be the add node');
+  const V = clone(S); V.g.plan[k].slot2 = 999;
+  assert.equal(M.sanitize(V).g.plan.find(x => x.slot === 40).slot2, 40, 'out-of-range second slot falls back to the first');
+});
+
+test('converter: first-fit assigns each segment its own slot', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S);
+  const k = addCh(S, { slot: 50, slot2: 51, from: ra, to: rc, conv: rb });
+  const plan = M.assignSlots(S), c = plan.find(x => x.conv);
+  assert.ok(Number.isInteger(c.slot) && Number.isInteger(c.slot2));
+  S.g.plan = plan;
+  assert.ok(M.simulate(S).channels.every(x => x.status === 'up'));
+  assert.ok(k >= 0);
+});
+
+// ---- 1+1 protection ----
+test('protection: a protected service plans a fiber-disjoint second route and lights it', () => {
+  const S = build('mesh'); S.g.plan.find(c => c.svc).prot = '1+1';
+  const r = M.simulate(S), sv = r.channels.find(c => c.svc);
+  assert.equal(r.status, 'up');
+  assert.ok(sv.protection && sv.protection.active === 'work');
+  assert.deepEqual(sv.protection.work.route, ['TRX-A', 'ROADM-A', 'ROADM-C', 'TRX-C']);
+  assert.ok(sv.protection.protect.route.includes('ROADM-B'), 'the protection route goes round through B');
+  assert.equal(sv.protection.protect.status, 'up');
+  // the standby copy is lit: it loads the fibers it rides
+  const base = Object.fromEntries(M.simulate(build('mesh')).linkLoad.map(l => [l.name, l.n]));
+  const load = Object.fromEntries(r.linkLoad.map(l => [l.name, l.n]));
+  assert.equal(load['ROADM-A–ROADM-B'], base['ROADM-A–ROADM-B'] + 1); assert.equal(load['ROADM-B–ROADM-C'], base['ROADM-B–ROADM-C'] + 1);
+  assert.equal(load['ROADM-A–ROADM-C'], base['ROADM-A–ROADM-C']);
+  assert.ok(Math.abs(sv.qMargin - r.qMargin) < 1e-6, 'the service row still equals the headline');
+  assert.ok(sv.protection.protect.gosnr < sv.protection.work.gosnr - 2, 'the long way round has less GSNR');
+});
+
+test('protection: a cut on the working route switches the service to the protection route', () => {
+  const S = build('mesh'); S.g.plan.find(c => c.svc).prot = '1+1';
+  S.links.find(l => l.kind === 'fiber' && l.p.len === 70).p.cut = true;
+  const r = M.simulate(S), sv = r.channels.find(c => c.svc);
+  assert.deepEqual(r.path.nodes.map(id => S.nodes.find(n => n.id === id).name), ['TRX-A', 'ROADM-A', 'ROADM-B', 'ROADM-C', 'TRX-C']);
+  assert.equal(sv.protection.active, 'protect');
+  assert.ok(r.alarms.some(a => /switched to the protection route/.test(a.text) && /cut/.test(a.text)));
+  assert.equal(r.status, 'degraded', 'running without protection is a warning');
+  assert.ok(r.qMargin != null && Math.abs(sv.qMargin - r.qMargin) < 1e-6);
+  assert.ok(r.rev && r.rev.path.nodes.length === 5, 'the return direction uses the same detour');
+  // both routes cut: down
+  S.links.find(l => l.kind === 'fiber' && l.p.len === 100).p.cut = true;
+  assert.equal(M.simulate(S).status, 'los');
+});
+
+test('protection: a working route that is down (not cut) hands over to the protection route', () => {
+  const S = build('mesh'); S.g.plan.find(c => c.svc).prot = '1+1';
+  S.links.find(l => l.kind === 'fiber' && l.p.len === 70).p.extra = 40; // 40 dB of extra loss on the direct fiber
+  const r = M.simulate(S);
+  assert.ok(r.switched, 'signal-fail switch');
+  assert.ok(r.path.nodes.some(id => S.nodes.find(n => n.id === id).name === 'ROADM-B'));
+  assert.ok(r.alarms.some(a => /working route is down/.test(a.text)));
+  assert.notEqual(r.status, 'down');
+  // without protection the same loss simply takes the service down
+  const T = build('mesh'); T.links.find(l => l.kind === 'fiber' && l.p.len === 70).p.extra = 40;
+  assert.ok(['down', 'los'].includes(M.simulate(T).status));
+});
+
+test('protection: a protected channel that is not the service switches on a cut and reports its standby', () => {
+  const S = build('mesh'), { ra, rb } = meshIds(S);
+  const k = addCh(S, { slot: 50, from: ra, to: rb, prot: '1+1' });
+  let r = M.simulate(S), c = r.channels[k];
+  assert.equal(c.status, 'up'); assert.equal(c.protection.active, 'work');
+  assert.deepEqual(c.protection.work.route, ['ROADM-A', 'ROADM-B']);
+  assert.deepEqual(c.protection.protect.route, ['ROADM-A', 'ROADM-C', 'ROADM-B'], 'the disjoint route is the long way round');
+  S.links.find(l => l.kind === 'fiber' && l.p.len === 100).p.cut = true; // the A-B fiber
+  r = M.simulate(S); c = r.channels[k];
+  assert.equal(c.protection.active, 'protect');
+  assert.ok(c.prx != null && (c.status === 'degraded' || c.status === 'up'));
+  assert.match(c.notes[0], /protection route/);
+});
+
+test('protection: with no fiber-disjoint route the channel is flagged unprotected', () => {
+  const S = build('adddrop'), rb = S.nodes.find(n => n.name === 'ROADM-B').id;
+  const k = S.g.plan.findIndex(c => !c.svc && c.to === rb); S.g.plan[k].prot = '1+1';
+  const r = M.simulate(S), c = r.channels[k];
+  assert.equal(c.protection.protect.status, 'nopath');
+  assert.equal(c.status, 'degraded'); assert.match(c.notes.join(' '), /no protection/);
+  assert.ok(r.alarms.some(a => /no usable protection route/.test(a.text)));
+});
+
+test('protection: sanitize accepts only 1+1', () => {
+  const S = build('mesh'); S.g.plan[0].prot = '1+1'; S.g.plan[1].prot = 'banana'; S.g.plan[2].prot = 7;
+  const p = M.sanitize(S).g.plan;
+  assert.equal(p.filter(c => c.prot === '1+1').length, 1);
+  assert.ok(p.every(c => c.prot === '' || c.prot === '1+1'));
+});
+
+test('protection: first-fit gives both copies one slot that is free on both routes', () => {
+  const S = build('mesh'), { ra, rb } = meshIds(S);
+  addCh(S, { slot: 50, from: ra, to: rb, prot: '1+1' });
+  S.g.plan.forEach((c, k) => { c.slot = 10 + k; });
+  S.g.plan.forEach(c => { c.slot2 = c.slot; });
+  const plan = M.assignSlots(S); S.g.plan = plan;
+  const r = M.simulate(S);
+  assert.ok(r.channels.every(c => c.status === 'up'), r.channels.map(c => c.status).join());
+  assert.ok(r.channels.find(c => c.protection && !c.svc).protection.protect.status === 'up');
+});

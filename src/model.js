@@ -84,6 +84,21 @@ const MODEL = (() => {
           g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
       }
     },
+    protect: {
+      name: 'Protection and converters on a triangle', build() {
+        const ra = N('roadm', 'ROADM-A', 200, 300), rb = N('roadm', 'ROADM-B', 520, 110), rc = N('roadm', 'ROADM-C', 840, 300);
+        const ta = N('trx', 'TRX-A', 200, 440, { mode: 'zrp400' }), tc = N('trx', 'TRX-C', 840, 440, { mode: 'zrp400' });
+        // The service is 1+1 protected: working on the direct 70 km fiber, protection the long way round through B. Four A to B channels are
+        // protected too (their protection runs A-C-B). Two A to C channels cross B and change slot there. Cut the 70 km fiber to watch it switch.
+        const plan = [], ch = (slot, o = {}) => plan.push({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: slot, prot: '', ...o });
+        for (let k = 0; k < 4; k++) ch(24 + k, { from: ra.id, to: rb.id, prot: '1+1' });
+        ch(28, { from: ra.id, to: rc.id, conv: rb.id, slot2: 40 }); ch(29, { from: ra.id, to: rc.id, conv: rb.id, slot2: 41 });
+        ch(31, { svc: true, prot: '1+1' });
+        for (let k = 0; k < 4; k++) ch(32 + k);
+        return { nodes: [ra, rb, rc, ta, tc], links: [L(ra, rc, 'fiber', { len: 70 }), L(ra, rb, 'fiber', { len: 100 }), L(rb, rc, 'fiber', { len: 110 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
+          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
+      }
+    },
     mxp: {
       name: 'Muxponder: 4x100G over 400G ZR+', build() {
         const a = N('mxp', 'MXP-A', 80, 220), ma = N('mux', 'MUX-A', 260, 220), ba = N('edfa', 'BST-A', 400, 220, { gmin: 5 });
@@ -172,28 +187,28 @@ const MODEL = (() => {
     for (const c of p) {
       if (!c || typeof c !== 'object') continue;
       const slot = Math.round(+c.slot);
-      const key = slot + '|' + nodeId(c.from) + '|' + nodeId(c.to) + '|' + nodeId(c.via); // the same slot may repeat on different routes
+      const key = slot + '|' + nodeId(c.from) + '|' + nodeId(c.to) + '|' + nodeId(c.via) + '|' + nodeId(c.conv); // the same slot may repeat on different routes
       if (!Number.isFinite(slot) || slot < 0 || slot >= slots || seen.has(key)) continue;
       seen.add(key);
-      out.push({ slot, mode: PHY_.MODES[c.mode] ? c.mode : 'zrp400', off: Math.min(10, Math.max(-10, Number.isFinite(+c.off) && c.off !== '' && c.off !== null ? +c.off : 0)), svc: !!c.svc, from: nodeId(c.from), to: nodeId(c.to), via: nodeId(c.via) });
+      out.push({ slot, mode: PHY_.MODES[c.mode] ? c.mode : 'zrp400', off: Math.min(10, Math.max(-10, Number.isFinite(+c.off) && c.off !== '' && c.off !== null ? +c.off : 0)), svc: !!c.svc, from: nodeId(c.from), to: nodeId(c.to), via: nodeId(c.via), conv: nodeId(c.conv), slot2: Number.isFinite(+c.slot2) && c.slot2 !== '' && c.slot2 !== null && +c.slot2 >= 0 && +c.slot2 < slots ? Math.round(+c.slot2) : slot, prot: c.prot === '1+1' ? '1+1' : '' });
       if (out.length >= 96) break;
     }
     if (!out.length) return null;
     out.sort((a, b) => a.slot - b.slot);
     const first = out.findIndex(c => c.svc);
-    out.forEach((c, i) => { c.svc = i === (first >= 0 ? first : Math.floor(out.length / 2)); if (c.svc || c.from === c.to) { if (c.svc) c.from = c.to = ''; else c.to = ''; } if (c.svc) c.via = ''; });
+    out.forEach((c, i) => { c.svc = i === (first >= 0 ? first : Math.floor(out.length / 2)); if (c.svc || c.from === c.to) { if (c.svc) c.from = c.to = ''; else c.to = ''; } if (c.svc) { c.via = ''; c.conv = ''; } if (c.conv) { c.via = ''; c.prot = ''; } });
     return out;
   }
   // Turn the uniform line into an editable plan: the same block of channels, service in the middle.
   function planFromUniform(g, svcMode) {
     const df = +g.df * 1e9, ch = buildChans(g, svcMode, false, PHY_.cBandSlots(df), df);
-    return ch.map(c => ({ slot: c.slot, mode: c.mode, off: 0, svc: c.svc, from: '', to: '', via: '' }));
+    return ch.map(c => ({ slot: c.slot, mode: c.mode, off: 0, svc: c.svc, from: '', to: '', via: '', conv: '', slot2: c.slot, prot: '' }));
   }
   // The same plan on a different grid: each channel keeps its frequency, collisions drop.
   function remapPlan(plan, oldDf, newDf) {
     if (!plan) return plan;
     const slots = PHY_.cBandSlots(newDf * 1e9), seen = new Set(), out = [];
-    for (const c of plan) { const s = Math.floor((c.slot + 0.5) * oldDf / newDf), key = s + '|' + c.from + '|' + c.to + '|' + c.via; if (s >= slots || seen.has(key)) continue; seen.add(key); out.push({ ...c, slot: s }); }
+    for (const c of plan) { const s = Math.floor((c.slot + 0.5) * oldDf / newDf), key = s + '|' + c.from + '|' + c.to + '|' + c.via + '|' + c.conv; if (s >= slots || seen.has(key)) continue; seen.add(key); out.push({ ...c, slot: s, slot2: Math.min(slots - 1, Math.floor(((c.slot2 ?? c.slot) + 0.5) * oldDf / newDf)) }); }
     return sanitizePlan(out, newDf);
   }
 
@@ -246,7 +261,7 @@ const MODEL = (() => {
     const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', reopt: gi.reopt === true, plan: null,
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))) };
     g.plan = sanitizePlan(gi.plan, g.df);
-    if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)), roadms = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; if (!roadms.has(c.via)) c.via = ''; }); }
+    if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)), roadms = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; if (!roadms.has(c.via)) c.via = ''; if (!roadms.has(c.conv) || c.conv === c.from || c.conv === c.to) c.conv = ''; if (c.conv) { c.via = ''; c.prot = ''; } }); }
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
     const svc = { a: seen.has(si.a) ? si.a : null, z: seen.has(si.z) ? si.z : null };
     return { nodes, links, g, svc };
@@ -263,7 +278,8 @@ const MODEL = (() => {
   };
 
   // Shortest path (km) from A to Z. Light never passes *through* a transponder. Cut fibers are only used if allowCut.
-  function route(S, aId, zId, allowCut) {
+  // x.ignoreCut: plan on the intact network (cut flags are failures, not topology). x.exclude: link ids the route may not use.
+  function route(S, aId, zId, allowCut, x = {}) {
     const { node, linksOf, other } = mkGraph(S);
     const dist = { [aId]: 0 }, prev = {}, done = new Set();
     while (true) {
@@ -274,10 +290,11 @@ const MODEL = (() => {
       done.add(u);
       if (u !== aId && isEnd(node(u))) continue;
       for (const l of linksOf(u)) {
-        if (l.p.cut && !allowCut) continue;
+        if (l.p.cut && !allowCut && !x.ignoreCut) continue;
+        if (x.exclude && x.exclude.has(l.id)) continue;
         if ((l.p.dir === 'ab' && l.a !== u) || (l.p.dir === 'ba' && l.b !== u)) continue; // one-way fiber: light only travels the carried way
         const v = other(l, u);
-        const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + (l.p.cut ? 1e6 : 0);
+        const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + (l.p.cut && !x.ignoreCut ? 1e6 : 0);
         if (dist[v] == null || dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = { u, l: l.id }; }
       }
     }
@@ -291,16 +308,46 @@ const MODEL = (() => {
   const reqCache = {};
   const reqOsnr = k => (reqCache[k] ??= PHY_.requiredOsnr(PHY_.MODES[k]));
 
+  // Working and protection routes for a 1+1 protected channel, planned on the intact network: the shortest route (through `via` if given)
+  // and the shortest route that shares no fiber with it. x, y are in the direction of the run.
+  function plannedPair(S, x, y, via) {
+    const leg = (p, q, ex) => route(S, p, q, true, { ignoreCut: true, exclude: ex });
+    let W0 = null;
+    if (x === y) return { W0, P0: null, why: 'its add and drop nodes are the same' };
+    if (!via || via === x || via === y) W0 = leg(x, y);
+    else { const r1 = leg(x, via), r2 = leg(via, y); if (r1 && r2) W0 = { nodes: [...r1.nodes, ...r2.nodes.slice(1)], links: [...r1.links, ...r2.links] }; }
+    if (W0 && (new Set(W0.nodes).size !== W0.nodes.length || new Set(W0.links).size !== W0.links.length)) return { W0: null, P0: null, why: 'a route through that waypoint would revisit a node or fiber' };
+    if (!W0) return { W0, P0: null, why: via ? 'no route through that waypoint' : 'no route between its add and drop nodes' };
+    // the protection route avoids the fibers of the working route; the patch cords at a single-homed transponder are shared by necessity
+    const fibers = new Set(W0.links.filter(id => (S.links.find(l => l.id === id) || {}).kind === 'fiber'));
+    return { W0, P0: leg(x, y, fibers), why: '' };
+  }
+  const routeCut = (S, r) => !!r && r.links.some(id => (S.links.find(l => l.id === id) || { p: {} }).p.cut);
+
   // Channel table for a service. Plan mode: the stored plan, with the service channel forced to the service's own mode.
   // Otherwise: g.nch identical channels in a contiguous block centred in the C-band, service in the middle.
-  function buildChans(g, svcKey, planOn, slotsN, df) {
+  // A plan entry becomes one or two routed channels (segments): a wavelength converter splits it in two in series (before and after the
+  // converter ROADM, each in its own slot, each regenerated), and 1+1 protection makes a working and a protection copy in parallel.
+  // lg is the plan entry a segment belongs to, role says which part it is. svcOnProt: the service runs on its protection copy.
+  function buildChans(g, svcKey, planOn, slotsN, df, svcOnProt = false) {
     let list;
     if (planOn) {
-      list = g.plan.map(c => ({ slot: +c.slot, mode: c.svc ? svcKey : c.mode, off: Number.isFinite(+c.off) ? +c.off : 0, svc: !!c.svc, from: c.svc ? '' : c.from || '', to: c.svc ? '' : c.to || '', via: c.svc ? '' : c.via || '' }));
+      list = [];
+      g.plan.forEach((c, lg) => {
+        const svc = !!c.svc, base = { mode: svc ? svcKey : c.mode, off: Number.isFinite(+c.off) ? +c.off : 0, lg };
+        const from = svc ? '' : c.from || '', to = svc ? '' : c.to || '', via = svc ? '' : c.via || '', conv = svc ? '' : c.conv || '', slot = +c.slot;
+        if (conv) {
+          list.push({ ...base, slot, svc: false, from, to: conv, via: '', role: 'conv1' });
+          list.push({ ...base, slot: Number.isFinite(+c.slot2) && c.slot2 !== '' && c.slot2 !== null ? +c.slot2 : slot, svc: false, from: conv, to, via: '', role: 'conv2' });
+        } else if (c.prot === '1+1') {
+          list.push({ ...base, slot, svc: svc && !svcOnProt, from, to, via, role: 'work' });
+          list.push({ ...base, slot, svc: svc && svcOnProt, from, to, via, role: 'prot' });
+        } else list.push({ ...base, slot, svc, from, to, via, role: 'only' });
+      });
       if (!list.some(c => c.svc)) list[Math.floor(list.length / 2)].svc = true;
     } else {
       const n = Math.max(1, Math.round(+g.nch)), start = Math.floor(Math.max(0, slotsN - n) / 2), mid = Math.floor(n / 2);
-      list = Array.from({ length: n }, (_, i) => ({ slot: start + i, mode: svcKey, off: 0, svc: i === mid, from: '', to: '', via: '' }));
+      list = Array.from({ length: n }, (_, i) => ({ slot: start + i, mode: svcKey, off: 0, svc: i === mid, from: '', to: '', via: '', lg: i, role: 'only' }));
     }
     return list.map((c, i) => { const m = PHY_.MODES[c.mode] || PHY_.MODES[svcKey], fTHz = PHY_.slotFreqTHz(c.slot, df); return { ...c, idx: i, m, mode: PHY_.MODES[c.mode] ? c.mode : svcKey, Rs: m.Rs, fTHz, f: fTHz * 1e12 }; });
   }
@@ -319,6 +366,16 @@ const MODEL = (() => {
     const svcA = S.svc.a, svcZ = S.svc.z, memo = new Map(), { link, linkName } = mkGraph(S);
     const routeFor = c => {
       const ea = c.from || svcA, ez = c.to || svcZ, via = c.svc ? '' : c.via || '';
+      if (c.role === 'work' || c.role === 'prot') { // 1+1: the planned working route and the planned fiber-disjoint protection route
+        const key = 'P' + ea + '>' + via + '>' + ez;
+        if (!memo.has(key)) memo.set(key, plannedPair(S, ...(rv ? [ez, ea] : [ea, ez]), via));
+        const pp = memo.get(key);
+        if (c.svc) return path; // the service's own copy is the walk's path (chosen by the caller)
+        const r = c.role === 'work' ? pp.W0 : pp.P0;
+        if (!r) { why[c.idx] = c.role === 'work' || !pp.W0 ? pp.why : 'no route that shares no fiber with the working route'; return null; }
+        if (routeCut(S, r)) { why[c.idx] = 'the route crosses a cut fiber'; cutOff[c.idx] = true; return null; }
+        return r;
+      }
       if (c.svc || (ea === svcA && ez === svcZ && !via)) return path;
       const key = ea + '>' + via + '>' + ez;
       if (!memo.has(key)) {
@@ -335,14 +392,14 @@ const MODEL = (() => {
       }
       const m = memo.get(key); why[c.idx] = m.why; return m.r;
     };
-    const why = [];
+    const why = [], cutOff = [];
     const routes0 = chans.map(routeFor), routes = routes0.slice(), loads = new Map(), blocked = [];
     // Wavelength continuity: a slot can carry one channel per fiber. The service has priority, then plan order; a channel that meets a lit slot is blocked.
     if (!noBlock) {
       const used = new Map();
       chans.map((_, k) => k).sort((a, b) => (chans[b].svc ? 1 : 0) - (chans[a].svc ? 1 : 0) || a - b).forEach(k => {
         const r = routes0[k]; if (!r) return;
-        const hit = r.links.find(id => used.has(chans[k].slot + '|' + id));
+        const hit = r.links.find(id => { const o = used.get(chans[k].slot + '|' + id); return o != null && chans[o].lg !== chans[k].lg; }); // the two copies of a 1+1 channel are one signal
         if (hit) { routes[k] = null; blocked[k] = true; why[k] = `slot ${chans[k].slot + 1} is already lit on ${linkName(link(hit))} by another channel`; }
         else r.links.forEach(id => used.set(chans[k].slot + '|' + id, k));
       });
@@ -359,7 +416,7 @@ const MODEL = (() => {
     routes.map((r, k) => k).filter(k => routes[k] && routes[k] !== path).sort((a, b) => routes[b].links.length - routes[a].links.length).forEach(k => {
       if (!hosts.some(h => place(h, k))) { const h = { path: routes[k], members: [] }; hosts.push(h); place(h, k); }
     });
-    return { routes, loads, hosts, why, blocked };
+    return { routes, loads, hosts, why, blocked, cutOff };
   }
 
   // First-fit wavelength assignment: the service keeps its slot; the other channels, longest route first, each take the lowest slot that is
@@ -370,14 +427,44 @@ const MODEL = (() => {
     const df = +g.df * 1e9, slotsN = PHY_.cBandSlots(df), chans = buildChans(g, sa.p.mode, true, slotsN, df);
     const path = route(S, S.svc.a, S.svc.z, false) || route(S, S.svc.a, S.svc.z, true);
     if (!path) return null;
-    const mesh = planMesh(S, chans, path, false, true), len = k => (mesh.routes[k] ? mesh.routes[k].links.length : 0);
+    const mesh = planMesh(S, chans, path, false, true);
+    // A unit is what must share one slot: a plain channel, or a 1+1 pair (both copies use the same slot). A converter's two segments are separate units.
+    const units = [];
+    chans.forEach((c, k) => { const u = c.role === 'prot' ? units.find(x => x.lg === c.lg) : null; if (u) u.ks.push(k); else units.push({ lg: c.lg, ks: [k], svc: c.svc }); });
+    units.forEach(u => { u.links = new Set(u.ks.flatMap(k => (mesh.routes[k] ? mesh.routes[k].links : []))); u.svc = u.ks.some(k => chans[k].svc); });
     const used = Array.from({ length: slotsN }, () => new Set()), slot = chans.map(c => c.slot);
-    chans.map((_, k) => k).sort((a, b) => (chans[b].svc ? 1 : 0) - (chans[a].svc ? 1 : 0) || len(b) - len(a) || a - b).forEach(k => {
-      const r = mesh.routes[k]; if (!r) return;
-      if (!chans[k].svc) { const s = used.findIndex(u => r.links.every(id => !u.has(id))); if (s >= 0) slot[k] = s; }
-      r.links.forEach(id => used[slot[k]].add(id));
+    units.map((u, i) => i).sort((a, b) => (units[b].svc ? 1 : 0) - (units[a].svc ? 1 : 0) || units[b].links.size - units[a].links.size || a - b).forEach(i => {
+      const u = units[i]; if (!u.links.size) return;
+      let s = slot[u.ks[0]];
+      if (!u.svc) { const f = used.findIndex(x => [...u.links].every(id => !x.has(id))); if (f >= 0) s = f; }
+      u.ks.forEach(k => (slot[k] = s)); u.links.forEach(id => used[s].add(id));
     });
-    return sanitizePlan(g.plan.map((c, k) => ({ ...c, slot: slot[k] })), +g.df);
+    const plan = g.plan.map((c, lg) => { const ks = chans.map((x, k) => (x.lg === lg ? k : -1)).filter(k => k >= 0); return { ...c, slot: slot[ks[0]], slot2: c.conv ? slot[ks[1]] : slot[ks[0]] }; });
+    return sanitizePlan(plan, +g.df);
+  }
+
+  // Plan-entry results from segment results. A converted channel is judged on its worst segment; a 1+1 channel on the copy that carries it
+  // (the service's own copy for the service; otherwise the working copy unless it is unusable and the protection copy is not).
+  const SEG_RANK = { up: 0, degraded: 1, blocked: 2, nopath: 2, down: 2, los: 3 };
+  function logicalChannels(plan, chans, seg) {
+    const worse = (a, b) => (SEG_RANK[b.status] > SEG_RANK[a.status] || (SEG_RANK[b.status] === SEG_RANK[a.status] && (b.qMargin ?? -1e9) < (a.qMargin ?? -1e9)) ? b : a);
+    return plan.map((c, i) => {
+      const ents = [], roles = [];
+      chans.forEach((x, k) => { if (x.lg === i) { ents.push(seg[k]); roles.push(x.role); } });
+      if (ents.length === 1) return { ...ents[0], idx: i, lg: i };
+      if (roles[0] === 'conv1') {
+        const [e1, e2] = ents, w = ents.reduce(worse), n = ents.indexOf(w) + 1;
+        const bad = w.status !== 'up';
+        return { ...w, idx: i, lg: i, converted: true, segments: ents, slot: e1.slot, slot2: e2.slot, svc: false, from: e1.from, to: e2.to, fromName: e1.fromName, toName: e2.toName,
+          route: [...e1.route, ...e2.route.slice(1)], routeLinks: [...e1.routeLinks, ...e2.routeLinks], routeNodes: [...e1.routeNodes, ...e2.routeNodes.slice(1)],
+          notes: bad ? [`${n === 1 ? 'before' : 'after'} the converter: ${w.notes[0] || w.status}`] : [] };
+      }
+      const [wk, pr] = ents, act = ents.find(e => e.svc) || (SEG_RANK[wk.status] >= 2 && SEG_RANK[pr.status] <= 1 ? pr : wk), stby = act === wk ? pr : wk, onP = act === pr;
+      const out = { ...act, idx: i, lg: i, svc: !!c.svc, protection: { active: onP ? 'protect' : 'work', work: wk, protect: pr }, notes: [...act.notes] };
+      if (onP) { out.notes.unshift('on the protection route'); if (out.status === 'up') out.status = 'degraded'; }
+      else if (SEG_RANK[stby.status] >= 2 && !c.svc) { out.notes.push(`no protection: ${stby.notes[0] || stby.status}`); if (out.status === 'up') out.status = 'degraded'; }
+      return out;
+    });
   }
 
   // opts.eol: evaluate with end-of-life allowances (see PHY.EOL). The normal result carries the EoL outcome in res.eol.
@@ -392,16 +479,25 @@ const MODEL = (() => {
     const A = node(W ? W.a : rv ? S.svc.z : S.svc.a), Z = node(W ? W.z : rv ? S.svc.a : S.svc.z);
     if (!W && (!isEnd(A) || !isEnd(Z) || A === Z)) return { status: 'none', headline: 'Pick two transponders or muxponders as the A and Z ends of a service.' };
     const modeKey = W ? W.svcMode : A.p.mode, mode = PHY_.MODES[modeKey];
-    let path = W ? W.path : route(S, A.id, Z.id, false), rerouteCut = false;
-    if (!path) { path = route(S, A.id, Z.id, true); rerouteCut = true; }
+    // A 1+1 protected service runs on its planned working route, and on the planned fiber-disjoint protection route once the working one
+    // has a cut fiber (or, see below, when it is down). Otherwise the shortest route over the fibers that are not cut, with a fallback across a cut.
+    const svcEntry = !W && Array.isArray(g.plan) ? g.plan.find(c => c.svc) : null, svcProt = !!svcEntry && svcEntry.prot === '1+1';
+    let path, rerouteCut = false, svcOnProt = W ? !!W.svcOnProt : false, protWhy = '';
+    if (W) path = W.path;
+    else if (svcProt) {
+      const pp = plannedPair(S, A.id, Z.id, ''), ok = r => r && !routeCut(S, r);
+      if (ok(pp.W0) && !opts.useProtect) path = pp.W0;
+      else if (ok(pp.P0)) { path = pp.P0; svcOnProt = true; protWhy = pp.W0 && routeCut(S, pp.W0) ? 'cut' : 'forced'; }
+      else { path = pp.W0 || route(S, A.id, Z.id, true); rerouteCut = routeCut(S, path); }
+    } else { path = route(S, A.id, Z.id, false); if (!path) { path = route(S, A.id, Z.id, true); rerouteCut = true; } }
     if (!path) return { status: 'nopath', headline: `No physical path from ${A.name} to ${Z.name}. Cable them together.` };
 
     const eolSpan = Number.isFinite(+g.eolSpan) && g.eolSpan !== '' && g.eolSpan != null ? +g.eolSpan : PHY_.EOL.spanLoss;
     const eolTrx = Number.isFinite(+g.eolTrx) && g.eolTrx !== '' && g.eolTrx != null ? +g.eolTrx : PHY_.EOL.trxPen;
     // Channel table: the custom plan if there is one, else a contiguous block of identical channels centred in the band.
     const df = +g.df * 1e9, planOn = Array.isArray(g.plan) && g.plan.length > 0, slotsN = PHY_.cBandSlots(df);
-    const chans = buildChans(g, modeKey, planOn, slotsN, df);
-    if (planOn) g.nch = chans.length;
+    const chans = buildChans(g, modeKey, planOn, slotsN, df, svcOnProt);
+    if (planOn) g.nch = g.plan.length;
     const svcIdx = Math.max(0, chans.findIndex(c => c.svc)), nChan = chans.length;
     // Mesh: every channel has its own route; this walk follows `path`. Members are the channels that ride (a stretch of) this path,
     // with lo/hi the node positions where they are added and dropped. Link loads count every channel on a fiber, member or not.
@@ -547,6 +643,14 @@ const MODEL = (() => {
       ev.push({ k: 'D', idx: members.filter(m => m.hi === lastPos).map(m => m.k), G: 1, nfe: 0, f: lin(-(+p.wss + +p.ad)) });
       rec(Z.name + ' drop', 'roadm', b, { gain: -(+p.wss + +p.ad), note: 'drop port' });
     }
+    // 1+1 protection on signal fail: if the working route is down (not just cut) and the protection route carries the service, switch to it.
+    const switchIfBetter = r0 => {
+      if (!svcProt || svcOnProt || opts.useProtect || eol || W || !(r0.status === 'down' || r0.status === 'los')) return r0;
+      const r2 = simulate(S, launchOverride, { ...opts, useProtect: true });
+      if (!r2.mode || (STATUS_RANK[r2.status] ?? 0) >= (STATUS_RANK[r0.status] ?? 0)) return r0;
+      r2.alarms.unshift({ sev: 'warn', text: `The working route is down (${r0.headline}): traffic switched to the protection route. There is no protection left.` });
+      r2.switched = true; return r2;
+    };
     const res = { mode, modeKey, A, Z, path, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
     // Muxponder client ports: per-port optical budget plus rate aggregation into the line port.
     const clientFatal = [];
@@ -572,7 +676,7 @@ const MODEL = (() => {
     if (prx < mode.rxMin - 12 && !W) {
       res.status = 'los'; res.headline = `LOS at ${Z.name}: ${f1(prx)} dBm is below what the receiver can detect.`;
       alarms.unshift({ sev: 'bad', text: `Rx power ${f1(prx)} dBm is far below the ${f1(mode.rxMin)} dBm sensitivity.` });
-      return res;
+      return switchIfBetter(res);
     }
     const snrAse = (P / Pase) * PHY_.BREF / Rs, snrNli = Pnli > 0 ? P / Pnli : Infinity;
     const snrRx = lin(prx - mode.rxMin + 25), snrTrx = lin(mode.snrTrx);
@@ -631,7 +735,7 @@ const MODEL = (() => {
         }
       }
       for (let i = 0; i < N; i++) if (alive[i]) freeze(i);
-      res.channels = chans.map((c, i) => {
+      res.segments = chans.map((c, i) => {
         const m = c.m, f = fin[i]; if (!f || !lohi[i]) return null; // a member of another walk: filled in below
         const prx = db(f.Pc * 1000), snrA = (f.Pc / f.Pa) * PHY_.BREF / m.Rs, snrN = f.Pn > 0 ? f.Pc / f.Pn : Infinity, snrR = lin(prx - m.rxMin + 25);
         const ln = 1 / (1 / snrA + 1 / snrN + 1 / snrR + mpi);
@@ -646,23 +750,29 @@ const MODEL = (() => {
         else if (qm < 1 || prx < m.rxMin || prx > m.rxMax) { status = 'degraded'; notes.push(qm < 1 ? `only ${f1(qm)} dB of Q margin` : prx < m.rxMin ? 'Rx below the sensitivity spec' : 'Rx above the overload point'); }
         if (f.xp > 1.5) notes.push(`XPM costs ${f1(f.xp)} dB`);
         const lh = lohi[i], nm = k => (node(path.nodes[k]) || {}).name, route = path.nodes.slice(lh.lo, lh.hi + 1).map(id => (node(id) || {}).name);
-        return { idx: i, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
+        return { idx: i, lg: c.lg, role: c.role, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
           from: c.from, to: c.to, via: c.via, fromName: nm(lh.lo), toName: nm(lh.hi), route, routeLinks: path.links.slice(lh.lo, lh.hi), routeNodes: path.nodes.slice(lh.lo, lh.hi + 1), partial: !!W || lh.lo > 0 || lh.hi < lastPos };
       });
-      if (W) return res; // a mesh walk only reports its own channels
+      if (W) return res; // a mesh walk only reports its own segments
       res.sP = sP; res.Pend = fin[svcIdx].Pc;
       // Channels on other routes get their own walk over the same link loads.
       for (const h of mesh.hosts.slice(1)) {
-        const w = simulate(S, launchOverride, { single: true, reverse: rv, walk: { a: h.path.nodes[0], z: h.path.nodes[h.path.nodes.length - 1], path: h.path, members: h.members, mesh, svcMode: modeKey } });
-        for (const m of h.members) res.channels[m.k] = w.channels ? w.channels[m.k] : null;
+        const w = simulate(S, launchOverride, { single: true, reverse: rv, walk: { a: h.path.nodes[0], z: h.path.nodes[h.path.nodes.length - 1], path: h.path, members: h.members, mesh, svcMode: modeKey, svcOnProt } });
+        for (const m of h.members) res.segments[m.k] = w.segments ? w.segments[m.k] : null;
       }
-      res.channels = res.channels.map((c, i) => c || { idx: i, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
-        status: mesh.blocked[i] ? 'blocked' : mesh.routes[i] ? 'los' : 'nopath', notes: [mesh.routes[i] ? 'the route crosses a cut fiber' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
-      res.linkLoad = [...mesh.loads].map(([id, set]) => ({ id, name: linkName(link(id)), n: set.size }));
+      res.segments = res.segments.map((c, i) => c || { idx: i, lg: chans[i].lg, role: chans[i].role, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
+        status: mesh.blocked[i] ? 'blocked' : mesh.routes[i] || mesh.cutOff[i] ? 'los' : 'nopath', notes: [mesh.routes[i] || mesh.cutOff[i] ? 'the route crosses a cut fiber' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
+      res.channels = logicalChannels(g.plan, chans, res.segments);
+      res.linkLoad = [...mesh.loads].map(([id, set]) => ({ id, name: linkName(link(id)), n: new Set([...set].map(k => chans[k].lg)).size }));
       const failing = res.channels.filter(c => !c.svc && (c.status === 'down' || c.status === 'los' || c.status === 'nopath' || c.status === 'blocked'));
+      const unprot = res.channels.filter(c => c.protection && !c.svc && c.protection.active === 'work' && STATUS_RANK[c.protection.protect.status] >= 2);
+      if (unprot.length) alarms.push({ sev: 'warn', text: `${unprot.length} protected channel${unprot.length > 1 ? 's have' : ' has'} no usable protection route (slot ${unprot.slice(0, 3).map(c => c.slot + 1).join(', ')}${unprot.length > 3 ? '…' : ''}): ${unprot[0].protection.protect.notes[0] || 'it is down'}.` });
+      const sp = res.channels.find(c => c.svc && c.protection);
+      if (sp && !svcOnProt && STATUS_RANK[sp.protection.protect.status] >= 2) alarms.push({ sev: 'warn', text: `The service is 1+1 protected but its protection route is unusable: ${sp.protection.protect.notes[0] || 'it is down'}.` });
+      if (sp && sp.protection.protect.qMargin != null && sp.protection.protect.qMargin < 0 && !svcOnProt) alarms.push({ sev: 'warn', text: `The service's protection route would not carry it: Q margin ${f1(sp.protection.protect.qMargin)} dB on the protection route.` });
       if (failing.length) alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${failing.slice(0, 3).map(c => `slot ${c.slot + 1} (${c.short}): ${c.notes[0]}`).join('; ')}${failing.length > 3 ? '…' : ''}.` });
     }
-    if (!eol && !W) { const e = simulate(S, launchOverride, { eol: true, reverse: rv }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
+    if (!eol && !W) { const e = simulate(S, launchOverride, { eol: true, reverse: rv, useProtect: svcOnProt }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
     // alarms & status
     const bad = [];
     if (Z.p.mode !== modeKey) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
@@ -674,17 +784,19 @@ const MODEL = (() => {
     if (prx > mode.rxMax) alarms.push({ sev: prx > mode.rxMax + 5 ? 'bad' : 'warn', text: `Rx power ${f1(prx)} dBm is above the ${mode.rxMax} dBm overload point (Rx HIGH alarm). Add a pad.` });
     if (res.dgd > mode.dgdTol * 0.7) alarms.push({ sev: 'warn', text: `Mean DGD ${f1(res.dgd)} ps is close to or over the ${mode.dgdTol} ps PMD tolerance.` });
     const slots = PHY_.cBandSlots(df);
-    if (Math.max(maxNch, nchLine) > slots) alarms.push({ sev: 'warn', text: `${Math.max(maxNch, nchLine)} channels do not fit the C-band on a ${g.df} GHz grid (${slots} slots). Reduce channels or use a finer grid.` });
+    if (Math.max(maxNch, planOn ? 0 : nchLine) > slots) alarms.push({ sev: 'warn', text: `${Math.max(maxNch, planOn ? 0 : nchLine)} channels do not fit the C-band on a ${g.df} GHz grid (${slots} slots). Reduce channels or use a finer grid.` });
     if (Rs > df) alarms.push({ sev: 'warn', text: `${mode.short} occupies ~${Math.round(Rs / 1e9 * 1.1)} GHz but the grid slot is ${g.df} GHz. Filters clip it and neighbours overlap.` });
     if (!eol && res.qMargin >= 0 && res.eol.qMargin < 0) alarms.push({ sev: 'warn', text: `Works today but fails at end of life: Q margin falls to ${f1(res.eol.qMargin)} dB with ${eolSpan} dB of extra loss per span and ${eolTrx} dB of transceiver ageing.` });
     if (res.qMargin >= 0 && res.worstQMargin < 0) alarms.push({ sev: 'warn', text: `SRS tilt of up to ${f1(peakTilt)} dB leaves the highest-frequency channel with ${f1(res.worstQMargin)} dB of Q margin while the middle channel still passes. Turn on amplifier tilt control or add a ROADM to re-equalise.` });
     if (xpmPen > 1.5) alarms.push({ sev: 'warn', text: `Cross-phase modulation from neighbouring channels costs ${f1(xpmPen)} dB. Lower the launch power, space the ${mode.short} channels apart or move them away from the ${g.neighbors === 'coh' ? 'coherent ' : ''}neighbours.` });
     if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber.' });
+    if (svcOnProt && !W) alarms.push({ sev: 'warn', text: protWhy === 'cut' ? `A fiber on the working route is cut: traffic switched to the protection route (${Math.round(km)} km). There is no protection left until it is repaired.` : 'The working route is down: traffic switched to the protection route. There is no protection left.' });
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }
     else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. Aging or a dirty connector will take it down.` : 'Up, with alarms to look at.'; }
     else { res.status = 'up'; res.headline = `Up with ${f1(res.qMargin)} dB Q margin.`; }
+    if (res.status === 'down') { const sw = switchIfBetter(res); if (sw !== res) return sw; }
     if (!eol && !rv && !opts.single) {
-      const r2 = simulate(S, launchOverride, { reverse: true });
+      const r2 = simulate(S, launchOverride, { reverse: true, useProtect: !!opts.useProtect });
       res.rev = r2;
       if (r2.status === 'nopath') { res.status = 'down'; res.headline = `${Z.name} to ${A.name}: no path for the return direction. A one-way fiber may be missing its pair.`; }
       else if (r2.mode) {
