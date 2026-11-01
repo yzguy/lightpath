@@ -1310,3 +1310,77 @@ test('failures: device failures enter the availability estimate; protection bypa
   assert.ok(Math.abs(un.downSec - M.resilience(U0)[0].downSec - (2 * 0.02 * 12 * 3600 + 0.02 * 60)) < 1e-6, 'R2 restores over R3 in 60 s, the access ROADMs wait for repair');
   assert.ok(withDev.failures > noDev.failures);
 });
+
+// ---- demand-driven planner ----
+test('planner: candidate routes are the shortest first, then the ones through other ROADMs', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S), c = M.candidateRoutes(S, ra, rb);
+  assert.equal(c.length, 2);
+  assert.equal(c[0].km, 100); assert.equal(c[0].via, '');
+  assert.equal(c[1].km, 180); assert.equal(c[1].via, rc);
+  assert.equal(M.candidateRoutes(S, ra, rb, 1).length, 1);
+});
+
+test('planner: demands take the lowest free slot on their route, the service keeps its own', () => {
+  const S = build('mesh'), { ra, rb } = meshIds(S);
+  const r = M.planDemands(S, [{ a: ra, z: rb, mode: 'zrp400', count: 4 }]);
+  assert.equal(r.stats.placed, 4); assert.deepEqual(r.results.map(x => x.slot), [0, 1, 2, 3]);
+  assert.ok(r.results.every(x => x.status === 'placed' && x.km === 100 && !x.detour && x.margin > 1));
+  assert.equal(r.entries.length, 4); assert.ok(r.entries.every(e => e.from === ra && e.to === rb && e.via === ''));
+  // a demand across the service's own fiber skips the service slot
+  const sv = S.g.plan.find(c => c.svc).slot, rc = meshIds(S).rc;
+  const t = M.planDemands(S, Array.from({ length: 40 }, () => ({ a: ra, z: rc, mode: 'zrp400', count: 1 })));
+  assert.ok(!t.results.some(x => x.slot === sv && x.status === 'placed' && x.route.join() === 'ROADM-A,ROADM-C'), 'the service slot is taken on A-C');
+});
+
+test('planner: a full fiber sends demands the long way round, and blocks them when that is full too', () => {
+  const S = build('mesh'), { ra, rb } = meshIds(S); S.g.df = 150; // 32 slots
+  const ds = [{ a: ra, z: rb, mode: 'zrp400', count: 40 }];
+  const r = M.planDemands(S, ds);
+  assert.equal(r.stats.placed, 40); assert.equal(r.results.filter(x => x.detour).length, 8, '32 fit on A-B, 8 go A-C-B');
+  assert.ok(r.results.filter(x => x.detour).every(x => x.km === 180 && x.via));
+  const one = M.planDemands(S, ds, { K: 1 });
+  assert.equal(one.stats.blocked, 8); assert.ok(Math.abs(one.stats.blocking - 8 / 40) < 1e-9);
+  const many = M.planDemands(S, [{ a: ra, z: rb, mode: 'zrp400', count: 90 }]);
+  assert.ok(many.stats.blocked > 0 && many.stats.placed < 90 && many.stats.placed >= 63);
+  assert.ok(many.stats.maxUtil >= 0.99);
+});
+
+test('planner: reach is checked, and the long way round has less margin', () => {
+  const S = build('mesh'), { ra, rb } = meshIds(S);
+  const [short, long] = M.candidateRoutes(S, ra, rb), mode = PHY.MODES.zrp400, df = 75e9;
+  const e1 = M.estimateRoute(S, short, mode, new Map(), df), e2 = M.estimateRoute(S, long, mode, new Map(), df);
+  assert.ok(e1.margin > e2.margin + 1);
+  const hard = M.planDemands(S, [{ a: ra, z: rb, mode: 'zrp400', count: 2 }], { minMargin: 40 });
+  assert.equal(hard.stats.placed, 0); assert.equal(hard.stats.unreachable, 2);
+  const none = M.planDemands(S, [{ a: ra, z: 'nowhere', mode: 'zrp400', count: 1 }]);
+  assert.equal(none.results[0].status, 'no route');
+});
+
+test('planner: the plan it makes runs in the simulator without blocked channels', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S);
+  const r = M.planDemands(S, [{ a: ra, z: rb, mode: 'zrp400', count: 6 }, { a: rb, z: rc, mode: 'zrp400', count: 6 }, { a: ra, z: rc, mode: 'zrp400', count: 3 }]);
+  S.g.plan = [S.g.plan.find(c => c.svc), ...r.entries];
+  const sim = M.simulate(S);
+  assert.ok(sim.channels.every(c => c.status !== 'blocked' && c.status !== 'nopath'), sim.channels.map(c => c.status).join());
+  assert.ok(sim.channels.every(c => c.status === 'up'));
+  const placed = r.results.filter(x => x.status === 'placed');
+  assert.equal(placed.length, 15);
+  sim.channels.filter(c => !c.svc).forEach((c, i) => assert.ok(Math.abs(c.qMargin - r.results.filter(x => x.status === 'placed')[i].margin) < 6, 'the estimate is the right ballpark'));
+});
+
+test('planner: blocking probability rises with load and is repeatable', () => {
+  const S = build('mesh'); S.g.df = 150;
+  const a = M.blockingCurve(S, 'zrp400', [10, 60, 140], 6, 7), b = M.blockingCurve(S, 'zrp400', [10, 60, 140], 6, 7);
+  assert.deepEqual(a, b);
+  assert.equal(a[0].p, 0); assert.ok(a[2].p > a[1].p || a[2].p > 0.2, JSON.stringify(a));
+  assert.ok(a.every(x => x.p >= 0 && x.p <= 1));
+});
+
+test('planner: demands are sanitised', () => {
+  const S = build('mesh'), { ra, rb } = meshIds(S);
+  S.nodes.push({ id: 'amp1', type: 'edfa', name: 'AMP', x: 0, y: 0, p: M.TYPES.edfa.def() });
+  S.demands = [{ a: ra, z: rb, mode: 'zrp400', count: 5 }, { a: ra, z: ra, mode: 'zrp400', count: 1 }, { a: ra, z: 'ghost', mode: 'zrp400', count: 1 }, { a: ra, z: rb, mode: 'nope', count: 999 }, 'junk', { a: 'amp1', z: rb, count: 1 }];
+  const d = M.sanitize(S).demands;
+  assert.equal(d.length, 2); assert.equal(d[0].count, 5); assert.equal(d[1].mode, 'zrp400'); assert.equal(d[1].count, 96);
+  assert.deepEqual(M.sanitize(build('dci')).demands, []);
+});

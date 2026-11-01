@@ -285,7 +285,10 @@ const MODEL = (() => {
     if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)), roadms = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; if (!roadms.has(c.via)) c.via = ''; if (!roadms.has(c.conv) || c.conv === c.from || c.conv === c.to) c.conv = ''; if (c.conv) c.via = ''; }); }
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
     const svc = { a: seen.has(si.a) ? si.a : null, z: seen.has(si.z) ? si.z : null };
-    return { nodes, links, g, svc };
+    // planner demands (a traffic list for the Planner tab)
+    const demands = (Array.isArray(o.demands) ? o.demands : []).slice(0, 40).map(d => (d && typeof d === 'object' && seen.has(d.a) && seen.has(d.z) && d.a !== d.z && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.a) || {}).type) && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.z) || {}).type)
+      ? { a: d.a, z: d.z, mode: PHY_.MODES[d.mode] ? d.mode : 'zrp400', count: Math.min(96, Math.max(1, Math.round(num(d.count, 1)))) } : null)).filter(Boolean);
+    return { nodes, links, g, svc, demands };
   }
 
   // ---------- graph helpers ----------
@@ -573,6 +576,80 @@ const MODEL = (() => {
       const downSec = parts.reduce((a, p) => a + p.downSec, 0), kinds = [...new Set(parts.map(p => p.kind))];
       return { svc: !!c.svc, kind: kinds.join(' + '), km: parts.reduce((a, p) => a + p.km, 0), protKm: parts.reduce((a, p) => a + p.protKm, 0), failures: parts.reduce((a, p) => a + p.failures, 0),
         outageSec: Math.max(...parts.map(p => p.outageSec)), downSec, availability: 1 - downSec / YEAR };
+    });
+  }
+
+  // ---------- demand-driven planner ----------
+  // Candidate routes between two nodes: the shortest, then the shortest through each other ROADM (the same routes a plan entry's `via` gives).
+  function candidateRoutes(S, a, z, K = 6) {
+    const { link } = mkGraph(S), out = [], seen = new Set(), km = r => r.links.reduce((t, id) => t + (link(id).kind === 'fiber' ? +link(id).p.len : 0), 0);
+    const add = (r, via) => { if (!r) return; const key = r.links.join('|'); if (seen.has(key) || new Set(r.nodes).size !== r.nodes.length || new Set(r.links).size !== r.links.length) return; seen.add(key); out.push({ ...r, via, km: km(r) }); };
+    add(route(S, a, z, false), '');
+    for (const n of S.nodes) if (n.type === 'roadm' && n.id !== a && n.id !== z) { const r1 = route(S, a, n.id, false), r2 = route(S, n.id, z, false); if (r1 && r2) add({ nodes: [...r1.nodes, ...r2.nodes.slice(1)], links: [...r1.links, ...r2.links] }, n.id); }
+    return out.sort((p, q) => p.km - q.km).slice(0, K);
+  }
+  // A quick physical-layer estimate for planning: one amplifier per span at the global launch power, the nonlinear noise of the channels already
+  // on each fiber, ROADM filtering and dispersion. The Channels tab gives the full simulation once the plan is applied.
+  function estimateRoute(S, r, mode, loads, df) {
+    const { link, node } = mkGraph(S), Rs = mode.Rs, P = lin(+S.g.launch || 0) / 1000;
+    let ase = 0, nli = 0, cd = 0, passes = 0;
+    for (const id of r.links) {
+      const l = link(id); if (l.kind !== 'fiber') continue;
+      const fb = PHY_.FIBERS[l.p.fiber], L = +l.p.len, sl = fb.att * L + +l.p.extra, n = Math.max(1, (loads.get(id) || 0) + 1);
+      ase += lin(PHY_.ampNfEff(5.5, sl)) * PHY_.H * PHY_.NU * lin(sl) * PHY_.BREF; nli += PHY_.etaNLI(fb, L, Rs, n, df) * P ** 3; cd += fb.D * L;
+    }
+    r.nodes.forEach((id, i) => { if ((node(id) || {}).type === 'roadm') passes += i === 0 || i === r.nodes.length - 1 ? 1 : 2; });
+    const line = 1 / (ase / P * Rs / PHY_.BREF + (nli > 0 ? nli / P : 0)), eff = PHY_.effSnr(mode, line, passes * PHY_.filterPenaltyPerPass(Rs, df) + PHY_.cdPenalty(mode, cd));
+    return { margin: PHY_.qFromBer(PHY_.MODS[mode.mod].ber(eff)) - PHY_.qFromBer(mode.berThr), cd };
+  }
+  // Allocate demands one by one: the first candidate route (shortest first) whose estimated margin clears opts.minMargin and that has a slot free on
+  // every fiber (first fit). The service occupies its route and slot first. Returns plan entries for the placed demands and the statistics.
+  function planDemands(S, demands, opts = {}) {
+    const g = S.g, df = +g.df * 1e9, slotsN = PHY_.cBandSlots(df), minM = opts.minMargin ?? 1, K = opts.K ?? 6, cache = opts.cache || new Map();
+    const { node, link } = mkGraph(S), used = Array.from({ length: slotsN }, () => new Set()), loads = new Map();
+    const take = (slot, links) => links.forEach(id => { used[slot].add(id); loads.set(id, (loads.get(id) || 0) + 1); });
+    const sp = S.svc && node(S.svc.a) && node(S.svc.z) ? route(S, S.svc.a, S.svc.z, false) || route(S, S.svc.a, S.svc.z, true) : null;
+    const svcEntry = Array.isArray(g.plan) ? g.plan.find(c => c.svc) : null, svcSlot = svcEntry ? +svcEntry.slot : Math.floor(slotsN / 2);
+    if (sp) take(svcSlot, sp.links);
+    const list = []; demands.forEach(d => { for (let i = 0; i < d.count && list.length < 96; i++) list.push(d); });
+    const rank = d => { const c = cands(d); return c.length ? c[0].km : 0; };
+    function cands(d) { const key = d.a + '>' + d.z; if (!cache.has(key)) cache.set(key, candidateRoutes(S, d.a, d.z, K)); return cache.get(key); }
+    if (opts.order === 'longest') list.sort((p, q) => rank(q) - rank(p));
+    const results = [], entries = [];
+    for (const d of list) {
+      const mode = PHY_.MODES[d.mode] || PHY_.MODES.zrp400, cs = cands(d), out = { a: d.a, z: d.z, mode: d.mode };
+      if (!cs.length) { results.push({ ...out, status: 'no route' }); continue; }
+      let reach = false, placed = null;
+      for (const r of cs) {
+        const est = estimateRoute(S, r, mode, loads, df);
+        if (Math.abs(est.cd) > mode.cdTol || est.margin < minM) continue;
+        reach = true;
+        const slot = used.findIndex(u => r.links.every(id => !u.has(id)));
+        if (slot >= 0) { placed = { slot, r, est }; break; }
+      }
+      if (!placed) { results.push({ ...out, status: reach ? 'blocked' : 'unreachable' }); continue; }
+      take(placed.slot, placed.r.links);
+      entries.push({ slot: placed.slot, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: placed.r.via, conv: '', slot2: placed.slot, prot: '' });
+      results.push({ ...out, status: 'placed', slot: placed.slot, km: placed.r.km, hops: placed.r.nodes.length - 1, margin: placed.est.margin, via: placed.r.via, detour: placed.r !== cs[0], route: placed.r.nodes.map(id => (node(id) || {}).name) });
+    }
+    const n = k => results.filter(r => r.status === k).length, placed = n('placed'), blocked = n('blocked');
+    const fibers = [...loads].filter(([id]) => link(id).kind === 'fiber').map(([id, c]) => ({ id, name: `${node(link(id).a).name}–${node(link(id).b).name}`, n: c, util: c / slotsN }));
+    return { entries, results, stats: { demands: results.length, placed, blocked, unreachable: n('unreachable') + n('no route'), blocking: placed + blocked ? blocked / (placed + blocked) : 0,
+      maxUtil: Math.max(0, ...fibers.map(f => f.util)), slotsUsed: used.filter(u => u.size).length, slots: slotsN, fibers, svcSlot } };
+  }
+  // Blocking probability against offered load: random demands between random pairs of ROADMs (or ends), a fixed seed so it is repeatable.
+  function blockingCurve(S, mode, loadsList, trials = 12, seed = 1, opts = {}) {
+    const pool = S.nodes.filter(n => n.type === 'roadm'), nodes = pool.length >= 2 ? pool : S.nodes.filter(isEnd);
+    if (nodes.length < 2) return [];
+    let st = seed >>> 0; const rnd = () => { st = (st + 0x6D2B79F5) >>> 0; let t = st; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const cache = new Map();
+    return loadsList.map(n => {
+      let sum = 0, cnt = 0;
+      for (let t = 0; t < trials; t++) {
+        const ds = []; for (let i = 0; i < n; i++) { const a = nodes[Math.floor(rnd() * nodes.length)]; let z; do { z = nodes[Math.floor(rnd() * nodes.length)]; } while (z === a); ds.push({ a: a.id, z: z.id, mode, count: 1 }); }
+        const r = planDemands(S, ds, { ...opts, cache }).stats; if (r.placed + r.blocked) { sum += r.blocking; cnt++; }
+      }
+      return { n, p: cnt ? sum / cnt : 0 };
     });
   }
 
@@ -970,6 +1047,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;
