@@ -193,7 +193,7 @@ svg.addEventListener('dblclick', e => { const nEl = e.target.closest('.node'); i
 
 function connect(a, b, kind) {
   if (S.links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return toast('Those two are already connected.');
-  for (const n of [a, b]) if (linksOf(n.id).length >= TYPES[n.type].maxLinks) return toast(`${n.name} has no free port. ${TYPES[n.type].label}s have ${TYPES[n.type].maxLinks === 1 ? 'one line port' : 'an input and an output'}.`);
+  for (const n of [a, b]) if (linksOf(n.id).length >= TYPES[n.type].maxLinks) return toast(`${n.name} has no free port. ${TYPES[n.type].label}s have ${isEnd(n) ? 'two line ports: the second is for dual-homing' : TYPES[n.type].maxLinks === 1 ? 'one line port' : 'an input and an output'}.`);
   const l = { id: uid('l'), a: a.id, b: b.id, kind, p: linkDefaults(kind) };
   S.links.push(l); select({ kind: 'link', id: l.id }); toast(`${kind === 'fiber' ? 'Fiber span' : 'Patch cord'}: ${a.name} ↔ ${b.name}`);
 }
@@ -277,6 +277,7 @@ function renderInspector() {
     if (isEnd(n)) {
       box.append(field(n.type === 'mxp' ? 'Line port mode' : 'Mode', selIn(p, 'mode', Object.entries(PHY.MODES).map(([k, m]) => [k, m.name]))));
       const m = PHY.MODES[p.mode];
+      box.append(field('Module protection', selIn(p, 'spare', [['', 'None'], ['switch', 'Spare module, optical switch (1 dB)'], ['ycable', 'Spare module, y-cable (3.5 dB)']]), 'A second transponder module shares the line port. If this one fails the spare takes over in the switch time instead of the repair time. The switch or splitter costs power in both directions. Cable a second patch cord to another ROADM to dual-home it: the protection route can then avoid the access ROADM too.'));
       box.append(field('Tx power (dBm)', numIn(p, 'tx', 0.5, -15, 3, true, String(m.tx)), `Blank = module default ${m.tx} dBm`));
       box.append(el('div', { class: 'spec' }, [
         specRow('Baud rate', `${(m.Rs / 1e9).toFixed(2)} GBd`), specRow('Modulation', (m.coh === false ? '' : 'DP-') + m.mod), specRow('FEC / limit', `${m.fec} · BER ${m.berThr.toExponential(2)}`),

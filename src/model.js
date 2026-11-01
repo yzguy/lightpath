@@ -7,8 +7,8 @@ const MODEL = (() => {
   const uid = p => p + Math.random().toString(36).slice(2, 7);
 
   const TYPES = {
-    trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 1, def: () => ({ mode: 'zr400', tx: null }) },
-    mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 1, def: () => ({ mode: 'zrp400', tx: null, clients: defaultClients() }) },
+    trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '' }) },
+    mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', clients: defaultClients() }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
@@ -109,6 +109,18 @@ const MODEL = (() => {
         ch(31, { svc: true, prot: '1+1' }); for (let k = 0; k < 3; k++) ch(32 + k); for (let k = 0; k < 3; k++) ch(24 + k, { from: ra.id, to: rb.id });
         return { nodes: [ra, rb, rc, rd, ta, tc], links: [L(ra, rc, 'fiber', { len: 70, srlg: 'duct1' }), L(ra, rb, 'fiber', { len: 80, srlg: 'duct1' }), L(rb, rc, 'fiber', { len: 80 }), L(ra, rd, 'fiber', { len: 90 }), L(rd, rc, 'fiber', { len: 90 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
           g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
+      }
+    },
+    client: {
+      name: 'Dual-homed transponders with spare modules', build() {
+        const a1 = N('roadm', 'ROADM-A1', 240, 160), a2 = N('roadm', 'ROADM-A2', 240, 420), z1 = N('roadm', 'ROADM-Z1', 800, 160), z2 = N('roadm', 'ROADM-Z2', 800, 420);
+        const ta = N('trx', 'TRX-A', 60, 290, { mode: 'zrp400', spare: 'switch' }), tz = N('trx', 'TRX-Z', 980, 290, { mode: 'zrp400', spare: 'switch' });
+        // Each transponder has a spare module and two patch cords to two ROADMs, so the 1+1 protection of the service is diverse all the way
+        // to the transponders. Fail ROADM-A1, or the primary module of TRX-A, and the service carries on.
+        const plan = [], ch = (slot, o = {}) => plan.push({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: slot, prot: '', ...o });
+        ch(31, { svc: true, prot: '1+1' }); for (let k = 0; k < 4; k++) ch(32 + k, { from: a1.id, to: z1.id }); for (let k = 0; k < 4; k++) ch(24 + k, { from: a2.id, to: z2.id });
+        return { nodes: [a1, a2, z1, z2, ta, tz], links: [L(a1, z1, 'fiber', { len: 90 }), L(a2, z2, 'fiber', { len: 110 }), L(ta, a1, 'patch'), L(ta, a2, 'patch'), L(tz, z1, 'patch'), L(tz, z2, 'patch')],
+          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tz.id } };
       }
     },
     mxp: {
@@ -253,6 +265,7 @@ const MODEL = (() => {
         p.clients = cs.map(c => { c = c && typeof c === 'object' ? c : {}; return { optic: PHY_.CLIENT_OPTICS[c.optic] ? c.optic : '100g-lr4', len: Number.isFinite(+c.len) && c.len !== '' && c.len !== null && +c.len >= 0 ? +c.len : 0.1, extra: Number.isFinite(+c.extra) && c.extra !== '' && c.extra !== null && +c.extra >= 0 ? +c.extra : 1 }; });
       }
       { const raw = n.p && typeof n.p === 'object' ? n.p : {}; p.fail = raw.fail === 'dead' || raw.fail === 'degraded' ? raw.fail : ''; p.degDb = Number.isFinite(+raw.degDb) && raw.degDb !== '' && raw.degDb !== null && typeof raw.degDb !== 'boolean' ? Math.min(30, Math.max(0, +raw.degDb)) : 3; }
+      if (isEnd(n)) p.spare = ['switch', 'ycable'].includes(n.p && n.p.spare) ? n.p.spare : '';
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
       if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev', 'nfRev', 'gminRev', 'gmaxRev', 'pmaxRev', 'agcUs']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
@@ -304,7 +317,11 @@ const MODEL = (() => {
   // Failures. A fiber is cut if it is flagged cut or shares a risk group (p.srlg, a shared duct) with a fiber that is. A device (p.fail) is
   // 'dead' (passes no light) or 'degraded' (p.degDb of extra loss, lower output or a worse receiver, by type).
   const isCut = (S, l) => !!l.p.cut || (!!l.p.srlg && S.links.some(o => o !== l && o.p.srlg === l.p.srlg && o.p.cut));
-  const isDead = n => !!n && !!n.p && n.p.fail === 'dead';
+  // A transponder with a spare module (optical switch or y-cable) keeps carrying light when its primary fails.
+  const SPARE_LOSS = { switch: 1, ycable: 3.5 };
+  const onSpare = n => !!n && isEnd(n) && !!n.p && n.p.fail === 'dead' && !!SPARE_LOSS[n.p.spare];
+  const isDead = n => !!n && !!n.p && n.p.fail === 'dead' && !onSpare(n);
+  const spareLoss = n => (n && isEnd(n) && n.p && SPARE_LOSS[n.p.spare]) || 0;
   const degOf = n => (n && n.p && n.p.fail === 'degraded' ? (Number.isFinite(+n.p.degDb) ? Math.min(30, Math.max(0, +n.p.degDb)) : 3) : 0);
 
   // Shortest path (km) from A to Z. Light never passes *through* a transponder. Cut fibers are only used if allowCut.
@@ -355,7 +372,9 @@ const MODEL = (() => {
     // the protection route avoids the fibers of the working route; the patch cords at a single-homed transponder are shared by necessity
     const fibers = new Set(W0.links.filter(id => (S.links.find(l => l.id === id) || {}).kind === 'fiber'));
     for (const id of [...fibers]) { const grp = S.links.find(l => l.id === id).p.srlg; if (grp) S.links.forEach(o => { if (o.p.srlg === grp) fibers.add(o.id); }); } // fibers in the same duct fail together
-    return { W0, P0: leg(x, y, fibers), why: '' };
+    // a dual-homed transponder lets the protection route avoid the access cords too; otherwise they are shared by necessity
+    const all = new Set([...fibers, ...W0.links.filter(id => (S.links.find(l => l.id === id) || {}).kind !== 'fiber')]);
+    return { W0, P0: leg(x, y, all) || leg(x, y, fibers), why: '' };
   }
   // a route is unusable if it crosses a cut fiber (or one in the same risk group) or a dead device
   const routeCut = (S, r) => !!r && (r.links.some(id => { const l = S.links.find(o => o.id === id); return l && isCut(S, l); }) || r.nodes.some(id => isDead(S.nodes.find(n => n.id === id))));
@@ -555,6 +574,11 @@ const MODEL = (() => {
         else t = route(S, x, y, true, { ignoreCut: true, excludeNodes: new Set([d]) }) ? P.restoreSec : P.mttr * 3600;
         devDown += P.devRate * t; devFail += P.devRate; devWorst = Math.max(devWorst, t);
       }
+      for (const d of [x, y]) { // the transponders at the ends: a spare module takes over in the switch time, otherwise the repair time
+        const n = node(d); if (!n || !isEnd(n) || !P.devRate) continue;
+        const t = SPARE_LOSS[n.p.spare] ? (P.detectMs + P.switchMs) / 1000 : P.mttr * 3600;
+        devDown += 1.5 * P.devRate * t; devFail += 1.5 * P.devRate; devWorst = Math.max(devWorst, t);
+      }
       if (isProt) {
         const pk = km(pp.P0.links);
         return { kind: prot === 'shared' ? 'shared' : '1+1', km: wk, protKm: pk, failures: lw + devFail, outageSec: Math.max(sw, devWorst), downSec: lw * sw + Uf(wk) * Uf(pk) * YEAR + devDown };
@@ -727,7 +751,7 @@ const MODEL = (() => {
     const xpmWFor = (i, act, fb, Lk) => (chans[i].m.coh === false ? chans.reduce((a, cj, j) => a + (j !== i && (!act || act[j]) && Math.abs(cj.f - chans[i].f) <= reachHz ? nbWeight(cj) * lin(cj.off - chans[i].off) * PHY_.xpmWalk(fb, Lk, Math.abs(cj.f - chans[i].f)) : 0), 0) : 0);
     const ev = []; // event log replayed per channel after the loop (plan mode only)
     let curAct = planOn ? maskAt(0) : null; // channels lit at the current point of the path (plan mode)
-    const txDbm = W && A.type === 'roadm' ? +g.launch : (A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx) - (isEnd(A) ? degOf(A) : 0); // a channel added at a ROADM starts at the launch level; a degraded laser is weaker
+    const txDbm = W && A.type === 'roadm' ? +g.launch : (A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx) - (isEnd(A) ? degOf(A) + spareLoss(A) : 0); // a channel added at a ROADM starts at the launch level; a degraded laser is weaker
     let mpi = 0, xpmPen = 0, P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
     const tiltSeen = []; // tilt (dB, low- minus high-frequency channel) at every amplifier input and at the receiver
     const hops = [], alarms = [];
@@ -870,6 +894,7 @@ const MODEL = (() => {
       r2.alarms.unshift({ sev: 'warn', text: `The working route is down (${r0.headline}): traffic switched to the protection route. There is no protection left.` });
       r2.switched = true; return r2;
     };
+    if (isEnd(Z) && spareLoss(Z)) loss(spareLoss(Z)); // the switch or y-cable in front of the receiver
     const res = { mode, modeKey, A, Z, path, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
     // Muxponder client ports: per-port optical budget plus rate aggregation into the line port.
     const clientFatal = [];
@@ -1058,6 +1083,7 @@ const MODEL = (() => {
     if (res.qMargin >= 0 && res.worstQMargin < 0) alarms.push({ sev: 'warn', text: `SRS tilt of up to ${f1(peakTilt)} dB leaves the highest-frequency channel with ${f1(res.worstQMargin)} dB of Q margin while the middle channel still passes. Turn on amplifier tilt control or add a ROADM to re-equalise.` });
     if (xpmPen > 1.5) alarms.push({ sev: 'warn', text: `Cross-phase modulation from neighbouring channels costs ${f1(xpmPen)} dB. Lower the launch power, space the ${mode.short} channels apart or move them away from the ${g.neighbors === 'coh' ? 'coherent ' : ''}neighbours.` });
     if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber or a failed device.' });
+    if (!eol && !W) for (const n of [A, Z]) if (onSpare(n)) alarms.push({ sev: 'warn', text: `${n.name}'s primary module has failed: traffic is on the spare (${n.p.spare === 'ycable' ? 'y-cable' : 'optical switch'}). There is no module protection left.` });
     if (!eol && !rv && !W) for (const id of path.nodes) {
       const n = node(id), d = degOf(n);
       if (d > 0) alarms.push({ sev: 'warn', text: `${n.name} is degraded: ${n.type === 'edfa' ? `its output is ${f1(d)} dB below the setting and its noise figure is worse` : isEnd(n) ? (id === A.id ? `its laser is ${f1(d)} dB weaker` : `its receiver loses ${f1(d)} dB of SNR`) : `${f1(d)} dB of extra loss`}.` });

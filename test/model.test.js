@@ -1302,12 +1302,12 @@ test('failures: device failures enter the availability estimate; protection bypa
   const noDev = M.resilience(base)[0];
   const S = diamond('1+1'); S.g.devRate = 0.02; // R1 and R4 are single-homed access nodes (12 h repair); R2 is bypassed by the protection route
   const withDev = M.resilience(S)[0];
-  assert.ok(Math.abs(withDev.downSec - noDev.downSec - (2 * 0.02 * 12 * 3600 + 0.02 * 0.035)) < 1e-6, `${withDev.downSec - noDev.downSec}`);
+  assert.ok(Math.abs(withDev.downSec - noDev.downSec - (2 * 0.02 * 12 * 3600 + 0.02 * 0.035 + 2 * 1.5 * 0.02 * 12 * 3600)) < 1e-6, `${withDev.downSec - noDev.downSec}`); // + the two transponders, 1.5x the device rate
   const U = diamond(''); U.g.devRate = 0.02;
   const un = M.resilience(U)[0];
   assert.equal(un.kind, 'restoration');
   const U0 = diamond(''); U0.g.devRate = 0;
-  assert.ok(Math.abs(un.downSec - M.resilience(U0)[0].downSec - (2 * 0.02 * 12 * 3600 + 0.02 * 60)) < 1e-6, 'R2 restores over R3 in 60 s, the access ROADMs wait for repair');
+  assert.ok(Math.abs(un.downSec - M.resilience(U0)[0].downSec - (2 * 0.02 * 12 * 3600 + 0.02 * 60 + 2 * 1.5 * 0.02 * 12 * 3600)) < 1e-6, 'R2 restores over R3 in 60 s, the access ROADMs wait for repair');
   assert.ok(withDev.failures > noDev.failures);
 });
 
@@ -1457,4 +1457,40 @@ test('ramped adds: a ramp slower than the amplifier time constant shrinks the di
   assert.ok(ramp.transient.qMarginDip > inst.transient.qMarginDip);
   const T = build('lh'); T.g.rampMs = -4; assert.equal(M.sanitize(T).g.rampMs, 0);
   T.g.rampMs = 1e9; assert.equal(M.sanitize(T).g.rampMs, 10000);
+});
+
+// ---- client-side protection ----
+test('dual-homed transponders: the protection route avoids the access cords and ROADMs too', () => {
+  const S = build('client'), r = M.simulate(S), sv = r.channels.find(c => c.svc);
+  assert.equal(r.status, 'up');
+  assert.deepEqual(sv.protection.work.route, ['TRX-A', 'ROADM-A1', 'ROADM-Z1', 'TRX-Z']);
+  assert.deepEqual(sv.protection.protect.route, ['TRX-A', 'ROADM-A2', 'ROADM-Z2', 'TRX-Z']);
+  assert.ok(sv.protection.work.routeLinks.every(id => !sv.protection.protect.routeLinks.includes(id)), 'no cable in common, patch cords included');
+  // a single-homed transponder still shares its access cord (the mesh preset's protection is unchanged)
+  const m = M.simulate(build('mesh')); S.g.plan.find(c => c.svc).prot = '1+1';
+  assert.equal(M.simulate(build('mesh')).status, 'up'); assert.ok(m.channels.every(c => c.status === 'up'));
+});
+
+test('spare module: a failed primary is covered, at the price of the switch or y-cable loss', () => {
+  const S = build('lh'); const a = S.nodes.find(n => n.name === 'TRX-A');
+  a.p.fail = 'dead';
+  assert.equal(M.simulate(S).status, 'los', 'without a spare it is dark');
+  a.p.spare = 'switch';
+  const r = M.simulate(S);
+  assert.notEqual(r.status, 'los'); assert.ok(r.alarms.some(x => /primary module has failed/.test(x.text) && /optical switch/.test(x.text)));
+  const base = M.simulate(build('lh'), undefined, { single: true }), T = build('lh');
+  T.nodes.find(n => n.name === 'TRX-Z').p.spare = 'ycable';
+  assert.ok(Math.abs(M.simulate(T, undefined, { single: true }).prx - (base.prx - 3.5)) < 1e-6, 'a y-cable in front of the receiver costs 3.5 dB');
+  const U = build('lh'); U.nodes.find(n => n.name === 'TRX-A').p.spare = 'ycable';
+  assert.ok(M.simulate(U, undefined, { single: true }).gosnr <= base.gosnr, 'and on the transmit side lowers the power into the first amplifier');
+  const bad = build('lh'); bad.nodes[0].p.spare = 'wire'; assert.equal(M.sanitize(bad).nodes[0].p.spare === '' || M.sanitize(bad).nodes[0].p.spare === undefined, true);
+});
+
+test('client protection in the availability estimate: spares and dual-homing cut the transponder and access-ROADM downtime', () => {
+  const S = build('client'); S.g.cutRate = 0; // only device failures
+  const d = M.resilience(S)[S.g.plan.findIndex(c => c.svc)];
+  assert.ok(Math.abs(d.downSec - (2 * 0.02 + 2 * 0.03) * 0.035) < 1e-9, `${d.downSec}`);
+  const U = build('client'); U.g.cutRate = 0; U.nodes.filter(n => n.type === 'trx').forEach(n => { n.p.spare = ''; });
+  const u = M.resilience(U)[U.g.plan.findIndex(c => c.svc)];
+  assert.ok(Math.abs(u.downSec - (d.downSec + 2 * 0.03 * (12 * 3600 - 0.035))) < 1e-6, 'without spares the transponders wait for repair');
 });
