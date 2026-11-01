@@ -243,7 +243,7 @@ const MODEL = (() => {
     }
     const gi = o.g && typeof o.g === 'object' ? o.g : {};
     const num = (v, d) => (Number.isFinite(+v) && v !== '' && v !== null ? +v : d);
-    const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', plan: null,
+    const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', reopt: gi.reopt === true, plan: null,
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))) };
     g.plan = sanitizePlan(gi.plan, g.df);
     if (g.plan) { const ok = new Set(nodes.filter(n => n.type === 'roadm' || isEnd(n)).map(n => n.id)), roadms = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); g.plan.forEach(c => { if (!ok.has(c.from)) c.from = ''; if (!ok.has(c.to)) c.to = ''; if (c.from && c.from === c.to) c.to = ''; if (!roadms.has(c.via)) c.via = ''; }); }
@@ -425,8 +425,23 @@ const MODEL = (() => {
       hops.push({ name, kind, in: before, out: snap(), km, nch, tilt, osnr: osnrNow(), gosnr: gosnrNow(), ...(curAct ? { lit: curAct.slice() } : {}), ...extra });
     }
     const loss = d => { const f = lin(-d); P *= f; Pase *= f; Pnli *= f; if (planOn) ev.push({ k: 'L', f }); };
-    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl) {
+    // Launch re-optimisation (g.reopt): an amplifier whose output target is left blank sets the GN-optimal per-channel power for the span
+    // after it, given the channels actually lit there, so the setting follows the load as channels come and go. `look` = path link index.
+    function optFor(look, nf) {
+      for (let j = look; j < path.links.length; j++) {
+        const l = link(path.links[j]);
+        if (l.kind === 'fiber') {
+          const fb = PHY_.FIBERS[l.p.fiber], Lk = +l.p.len, n = planOn ? litCount(j) : l.p.nch !== '' && l.p.nch != null ? Math.min(96, Math.max(1, Math.round(+l.p.nch))) : Math.max(1, nch);
+          return { dbm: PHY_.optLaunch(fb, Lk, Rs, n, df, +nf, fb.att * Lk + +pd(l.p, 'extra')), n };
+        }
+        if (!['mux', 'voa', 'dcm'].includes((node(path.nodes[j + 1]) || {}).type)) return null; // another amplifier, ROADM or end sits between
+      }
+      return null;
+    }
+    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl, look = -1) {
       const before = snap(), pin = before.sig;
+      let info = '';
+      if (g.reopt && look >= 0 && ctl === 'auto') { const o = optFor(look, nf); if (o) { target = o.dbm; info = `Launch re-optimised for ${o.n} channel${o.n > 1 ? 's' : ''}: ${f1(o.dbm)} dBm/ch`; } }
       let G = ctl === 'auto' ? target - pin : +gFixed, note = '';
       if (G < gmin) { note = `Needs ${f1(G)} dB but min gain is ${gmin} dB: output runs hot`; G = gmin; }
       if (G > gmax) { note = `Needs ${f1(G)} dB but max gain is ${gmax} dB: output runs low`; G = gmax; }
@@ -438,7 +453,7 @@ const MODEL = (() => {
       if (planOn) { ev.push({ k: 'A', G: lin(G), nfe }); if (tiltCtl) ev.push({ k: 'Z' }); }
       if (tiltCtl) tilt = 0; // gain-tilt control re-flattens the band at the amp output
       Pase = Pase * lin(G) + lin(nfe) * PHY_.H * PHY_.NU * lin(G) * PHY_.BREF;
-      rec(name, 'amp', before, { gain: G, nf: nfe, note });
+      rec(name, 'amp', before, { gain: G, nf: nfe, note: note || info });
       if (note) alarms.push({ sev: 'warn', text: `${name}: ${note}.` });
     }
 
@@ -507,7 +522,7 @@ const MODEL = (() => {
         rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
       } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il'), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(); loss(+nxt.p.att); rec(nxt.name, 'voa', b, { gain: -nxt.p.att }); }
-      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false); }
+      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1); }
       else if (t === 'roadm') {
         const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
@@ -520,7 +535,7 @@ const MODEL = (() => {
         if (planOn) { ev.push({ k: 'W', n: np }); ev.push({ k: 'Z' }); if (joining.length) ev.push({ k: 'J', idx: joining }); curAct = maskAt(k); } // the WSS equalises every channel, added ones join at the same level
         rec(nxt.name + (add ? ' add' : drop ? ' drop' : ' express'), 'roadm', b, { gain: -lo, note: `${np} WSS pass${np > 1 ? 'es' : ''}` + (leaving.length ? `, ${leaving.length} channel${leaving.length > 1 ? 's' : ''} dropped` : '') + (joining.length ? `, ${joining.length} added` : '') });
         if (planOn && !drop) nch = litCount(k);
-        if (p.amps && !drop) amp(nxt.name + ' boost', p.nf + 0.5, 'auto', +g.launch, 0, 0, 35, 24, true);
+        if (p.amps && !drop) amp(nxt.name + ' boost', p.nf + 0.5, 'auto', +g.launch, 0, 0, 35, 24, true, i + 1);
         if (drop) nch = 1;
       }
       // a transponder in the middle of a path is never traversed (route() forbids it)

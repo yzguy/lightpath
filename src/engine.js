@@ -173,6 +173,12 @@ const PHY = (() => {
     const ap = fiber.att / 4.343, Leff = (1 - Math.exp(-ap * Lkm)) / ap;
     return w * nNeigh * lin(db(pchW * 1000)) * (Leff / 21.7);
   }
+  // GN-model optimum launch power per channel (dBm) for one span: minimise ASE/P + eta*P^2, so P = (A / 2 eta)^(1/3) with A the
+  // amplifier noise in the signal bandwidth. Depends on the channel count (more channels, more nonlinearity, lower optimum).
+  function optLaunch(fiber, Lkm, Rs, nch, df, nfDb, lossDb) {
+    const eta = etaNLI(fiber, Lkm, Rs, nch, df), A = lin(ampNfEff(nfDb, lossDb)) * H * NU * lin(lossDb) * Rs;
+    return Math.min(8, Math.max(-8, db((A / (2 * eta)) ** (1 / 3) * 1000)));
+  }
   function ampNfEff(nf, g) { return nf + (g < 14 ? 0.35 * (14 - g) : 0) + (g > 30 ? 0.2 * (g - 30) : 0); }
 
   function qFromBer(b) { b = Math.max(b, 1e-300); return 20 * Math.log10(Math.SQRT2 * erfcinv(2 * Math.min(b, 0.4999))); }
@@ -199,6 +205,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmSpanPenalty, ramanGainSat, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

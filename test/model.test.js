@@ -108,7 +108,7 @@ test('sanitize: drops junk, fills defaults, keeps valid data', () => {
   assert.deepEqual([v.name, v.x, v.y, v.p.att], ['7', 0, 0, 5]);
   assert.equal(c.nodes[0].p.mode, 'zr400');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.fiber, 'smf');
-  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", plan: null, eolSpan: 1, eolTrx: 0.5 });
+  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, eolSpan: 1, eolTrx: 0.5 });
   assert.deepEqual(c.svc, { a: null, z: S.svc.z });
   assert.ok(M.simulate(c).status); // and the cleaned topology simulates without throwing
 });
@@ -807,4 +807,45 @@ test('first-fit assignment: channels that all cross one fiber need a slot each',
   const plan = M.assignSlots(S);
   assert.equal(new Set(plan.map(c => c.slot)).size, plan.length);
   assert.equal(M.assignSlots({ ...build('dci') }), null, 'no plan, nothing to assign');
+});
+
+// ---- launch re-optimisation as the load changes ----
+test('optLaunch: the GN optimum falls as channels are added and sits near 0 to +2 dBm for 80 km of SMF', () => {
+  const f = PHY.FIBERS.smf, o = n => PHY.optLaunch(f, 80, 60e9, n, 75e9, 5.5, 17);
+  assert.ok(o(4) > o(16) && o(16) > o(48) && o(48) > o(96));
+  assert.ok(o(48) > -0.5 && o(48) < 2.5, `got ${o(48)}`);
+  // a longer, lossier span wants more power to stay above its noise
+  assert.ok(PHY.optLaunch(f, 120, 60e9, 48, 75e9, 5.5, 26) > o(48));
+});
+
+test('re-optimisation: line amplifiers follow the load and match the best fixed launch power', () => {
+  const S = build('lh'); S.g.nch = 8; S.g.launch = -4; // a poor fixed setting for a lightly loaded line
+  const fixed = M.simulate(S, undefined, { single: true });
+  S.g.reopt = true;
+  const opt = M.simulate(S, undefined, { single: true });
+  assert.ok(opt.gosnr > fixed.gosnr + 1, `re-optimised ${opt.gosnr.toFixed(1)} vs fixed ${fixed.gosnr.toFixed(1)}`);
+  const note = opt.hops.find(h => h.kind === 'amp' && /re-optimised for 8 channels/.test(h.note || ''));
+  assert.ok(note, 'the hop says what it set');
+  // the best the manual launch sweep can do is no better than the re-optimised line (it picks one value for every span)
+  S.g.reopt = false;
+  let best = -Infinity; for (let p = -8; p <= 8; p += 0.5) best = Math.max(best, M.simulate(S, p, { single: true }).gosnr);
+  assert.ok(opt.gosnr > best - 0.5, `re-optimised ${opt.gosnr.toFixed(2)} vs best sweep ${best.toFixed(2)}`);
+  // load it up and the targets come down
+  S.g.reopt = true; S.g.nch = 90;
+  const full = M.simulate(S, undefined, { single: true });
+  const tgt = r => +r.hops.find(h => h.kind === 'amp' && /re-optimised/.test(h.note || '')).note.match(/(-?\d+\.\d) dBm/)[1];
+  assert.ok(tgt(full) < tgt(opt));
+});
+
+test('re-optimisation: an amplifier with an explicit output target keeps it', () => {
+  const S = build('lh'); S.g.reopt = true;
+  const amp = S.nodes.find(n => n.type === 'edfa'); amp.p.target = -2;
+  const r = M.simulate(S, undefined, { single: true });
+  assert.ok(!r.hops.find(h => h.name === amp.name).note || !/re-optimised/.test(r.hops.find(h => h.name === amp.name).note));
+});
+
+test('re-optimisation follows the plan load per span', () => {
+  const S = build('adddrop'); S.g.reopt = true;
+  const r = M.simulate(S, undefined, { single: true });
+  assert.ok(r.hops.some(h => h.kind === 'amp' && /re-optimised for 12 channels/.test(h.note || '')));
 });
