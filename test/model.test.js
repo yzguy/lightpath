@@ -1638,3 +1638,46 @@ test('passive OADM: a failed port at an OADM takes down only that channel', () =
   assert.deepEqual(lost.map(c => c.slot), [25]);
   assert.equal(r.channels.find(c => c.svc).status, 'up'); // the service is untouched; the lost channel shows as a warning
 });
+
+test('cabling defines channels: transponders on mux ports pair up by slot', () => {
+  const S = build('ports'), d = M.derive(S);
+  assert.equal(d.paired, 3); assert.equal(d.dark.length, 0);
+  assert.deepEqual(d.plan.filter(c => !c.filler).map(c => c.slot), [26, 27, 29]);
+  assert.equal(d.plan.length, 16, 'the rest of the line is filled up to the channel count');
+  const r = M.simulate(S);
+  assert.equal(r.status, 'up');
+  assert.ok(r.channels.every(c => c.status === 'up'));
+  assert.ok(r.derived && r.derived.paired === 3);
+  assert.equal(r.channels.find(c => c.svc).slot, 26);
+});
+
+test('cabling defines channels: a transponder tuned away from its port is dark, and says why', () => {
+  const S = build('ports'), a2 = S.nodes.find(n => n.name === 'TRX-A2');
+  a2.p.slot = 40;
+  const d = M.derive(S);
+  assert.equal(d.paired, 2);
+  assert.match(d.dark.find(x => x.id === a2.id).why, /tuned to slot 41 but plugged into MUX-A port 4, which passes slot 28/);
+  assert.ok(d.dark.some(x => x.name === 'TRX-B2' && /no partner/.test(x.why)), 'its far end loses its partner');
+  assert.ok(M.simulate(S).alarms.some(a => /tuned to slot 41/.test(a.text)));
+  const sv = S.nodes.find(n => n.name === 'TRX-A1'); sv.p.slot = 3; // the service transponder itself
+  const r = M.simulate(S);
+  assert.equal(r.status, 'los'); assert.match(r.headline, /filter blocks it/);
+});
+
+test('cabling defines channels: two transponders on one port, a missing port and a mode mismatch', () => {
+  let S = build('ports'); S.links.find(l => l.p.mport === 3 && S.nodes.find(n => n.id === l.a || n.id === l.b).name === 'TRX-A2').p.mport = 2;
+  assert.ok(M.derive(S).dark.some(x => x.name === 'TRX-A2' && /already uses/.test(x.why)));
+  S = build('ports'); S.nodes.find(n => n.name === 'MUX-A').p.ports = 3; // MUX-A now has ports 1-3 only
+  assert.ok(M.derive(S).dark.some(x => /has no port 6/.test(x.why)));
+  S = build('ports'); S.nodes.find(n => n.name === 'TRX-B2').p.mode = 'zr400';
+  const d = M.derive(S); assert.equal(d.paired, 2); assert.ok(d.dark.some(x => /will never lock/.test(x.why)));
+});
+
+test('cabling defines channels: a lab without mux ports behaves as before, and ports survive sanitize', () => {
+  assert.equal(M.derive(build('mxp')), null); assert.equal(M.derive(build('dci')), null);
+  const S = build('ports'), c = M.sanitize(clone(S));
+  assert.equal(M.derive(c).paired, 3);
+  const bad = clone(S); bad.links.forEach(l => { if (l.p.mport === 2) l.p.mport = 'x'; if (l.p.mport === 3) l.p.mport = -4; });
+  const cc = M.sanitize(bad); assert.equal(cc.links.filter(l => l.p.mport === 2 || l.p.mport === 3).length, 0);
+  assert.ok(cc.links.filter(l => l.kind === 'fiber').every(l => l.p.mport === null), 'only a transponder-to-mux patch has a port');
+});

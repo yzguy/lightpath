@@ -7,9 +7,9 @@ const MODEL = (() => {
   const uid = p => p + Math.random().toString(36).slice(2, 7);
 
   const TYPES = {
-    trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '' }) },
-    mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', clients: defaultClients() }) },
-    mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5 }) },
+    trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '', slot: null, off: 0 }) },
+    mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', slot: null, off: 0, clients: defaultClients() }) },
+    mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24 }) },
     oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 2, def: () => ({ thru: 1.5, ad: 3, tx: 0, slots: [] }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
@@ -20,7 +20,7 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '' } : { il: 0.5, dir: 'both', cut: false });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '' } : { il: 0.5, dir: 'both', cut: false, mport: null });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -156,6 +156,15 @@ const MODEL = (() => {
         for (let k = 0; k < 4; k++) ch(40 + k);
         return { nodes: [ta, tz, ma, ba, ab, ob, ac, oc, pz, mz], links: [L(ta, ma, 'patch'), L(ma, ba, 'patch'), L(ba, ab, 'fiber', { len: 40 }), L(ab, ob, 'patch'), L(ob, ac, 'fiber', { len: 40 }), L(ac, oc, 'patch'), L(oc, pz, 'fiber', { len: 40 }), L(pz, mz, 'patch'), L(mz, tz, 'patch')],
           g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tz.id } };
+      }
+    },
+    ports: {
+      name: 'Transponders on mux ports: the cabling sets the channels', build() {
+        const a = [1, 2, 3].map(k => N('trx', 'TRX-A' + k, 60, 60 + k * 120, { mode: 'zrp400' })), z = [1, 2, 3].map(k => N('trx', 'TRX-B' + k, 1000, 60 + k * 120, { mode: 'zrp400' }));
+        const ma = N('mux', 'MUX-A', 260, 300, { ports: 16, first: 24 }), mb = N('mux', 'MUX-B', 800, 300, { ports: 16, first: 24 }), ba = N('edfa', 'BST-A', 400, 300, { gmin: 5 }), pb = N('edfa', 'PRE-B', 660, 300, { gmin: 5 });
+        const port = [2, 3, 5]; // MUX ports 3, 4 and 6 (slots 27, 28, 30); each transponder follows its port
+        return { nodes: [...a, ...z, ma, mb, ba, pb], links: [...a.map((t, k) => L(t, ma, 'patch', { mport: port[k] })), ...z.map((t, k) => L(t, mb, 'patch', { mport: port[k] })), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch')],
+          g: { nch: 16, df: 75, launch: 0 }, svc: { a: a[0].id, z: z[0].id } };
       }
     },
     sfp10: {
@@ -297,6 +306,11 @@ const MODEL = (() => {
         p.badPorts = ints(n.p && n.p.badPorts, 128); p.badCards = ints(n.p && n.p.badCards, 16);
         if (n.type === 'oadm') p.slots = ints(n.p && n.p.slots, 128);
       }
+      if (isEnd(n)) {
+        p.slot = n.p && Number.isInteger(n.p.slot) && n.p.slot >= 0 && n.p.slot < 128 ? n.p.slot : null;
+        p.off = Number.isFinite(+(n.p && n.p.off)) && n.p.off !== '' && n.p.off !== null && typeof n.p.off !== 'boolean' ? Math.min(10, Math.max(-10, +n.p.off)) : 0;
+      }
+      if (n.type === 'mux') { p.ports = Math.min(64, Math.max(1, Math.round(+p.ports) || 16)); p.first = Math.min(63, Math.max(0, Math.round(+p.first) || 0)); }
       if (isEnd(n)) p.spare = ['switch', 'ycable'].includes(n.p && n.p.spare) ? n.p.spare : '';
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
@@ -317,6 +331,8 @@ const MODEL = (() => {
       if (kind === 'fiber') { if (!['back', 'fwd', 'both'].includes(p.ramanDir)) p.ramanDir = 'back'; p.ramanPumps = Math.min(3, Math.max(1, Math.round(+p.ramanPumps || 1))); }
       if (kind === 'fiber') p.raman = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +p.raman || 0));
       if (kind === 'fiber' && !(p.nch === '' || (Number.isFinite(+p.nch) && +p.nch >= 1))) p.nch = '';
+      { const A = nodes.find(n => n.id === l.a), B = nodes.find(n => n.id === l.b), portable = kind === 'patch' && A && B && ((isEnd(A) && B.type === 'mux') || (isEnd(B) && A.type === 'mux')); // the mux port a transponder is plugged into
+        p.mport = portable && l.p && Number.isInteger(l.p.mport) && l.p.mport >= 0 && l.p.mport < 64 ? l.p.mport : null; }
       lseen.add(l.id);
       links.push({ id: l.id, a: l.a, b: l.b, kind, p });
     }
@@ -401,6 +417,66 @@ const MODEL = (() => {
     let c = zId;
     while (c !== aId) { links.unshift(prev[c].l); c = prev[c].u; nodes.unshift(c); }
     return { nodes, links };
+  }
+
+  // ---------- channels defined by the cabling ----------
+  // A transponder plugged into a numbered port of a passive mux (link.p.mport) is tuned to a slot (p.slot, or the port's own when auto). Port k of a
+  // mux passes slot first+k. The channels are then what the cabling makes: a transmitter whose tuning matches its port reaches the receiver plugged into
+  // the port of the same slot on another mux; anything else is dark, with a reason. Returns null for a topology that does not use mux ports.
+  function derive(S) {
+    const { node, link } = mkGraph(S), g = S.g || {}, slotsN = PHY_.cBandSlots(+g.df * 1e9), atts = [];
+    for (const l of S.links) {
+      if (l.kind !== 'patch' || !Number.isInteger(l.p.mport)) continue;
+      const a = node(l.a), b = node(l.b); if (!a || !b) continue;
+      const t = isEnd(a) ? a : isEnd(b) ? b : null, m = a.type === 'mux' ? a : b.type === 'mux' ? b : null;
+      if (t && m) atts.push({ t, m, l, port: l.p.mport });
+    }
+    if (!atts.length) return null;
+    const dark = new Map(), mark = (id, why) => { if (!dark.has(id)) dark.set(id, why); }, ok = [], byPort = new Map(), seenT = new Set();
+    for (const a of atts) {
+      if (seenT.has(a.t.id)) continue; seenT.add(a.t.id);
+      const key = a.m.id + '|' + a.port, other = byPort.get(key);
+      if (other) { mark(a.t.id, `${a.t.name} is plugged into ${a.m.name} port ${a.port + 1}, which ${other.t.name} already uses`); continue; }
+      byPort.set(key, a); a.slot = (Math.round(+a.m.p.first) || 0) + a.port;
+      if (a.port >= Math.round(+a.m.p.ports) || a.slot >= slotsN) { mark(a.t.id, `${a.m.name} has no port ${a.port + 1} on this grid (it has ${Math.round(+a.m.p.ports)} from slot ${(Math.round(+a.m.p.first) || 0) + 1}, the grid has ${slotsN} slots)`); continue; }
+      a.tuned = Number.isInteger(a.t.p.slot) ? a.t.p.slot : a.slot;
+      if (a.tuned !== a.slot) { mark(a.t.id, `${a.t.name} is tuned to slot ${a.tuned + 1} but plugged into ${a.m.name} port ${a.port + 1}, which passes slot ${a.slot + 1}: the mux filter blocks it`); continue; }
+      ok.push(a);
+    }
+    const kmOf = r => r.links.reduce((t, id) => t + (link(id).kind === 'fiber' ? +link(id).p.len : 0), 0), used = new Set(), pairs = [];
+    for (const a of ok) {
+      if (used.has(a.t.id)) continue;
+      let best = null, bestKm = Infinity;
+      for (const b of ok) {
+        if (b === a || used.has(b.t.id) || b.m === a.m || b.slot !== a.slot) continue;
+        const r = route(S, a.t.id, b.t.id, true, { ignoreCut: true }); if (!r) continue;
+        const km = kmOf(r); if (km < bestKm) { best = b; bestKm = km; }
+      }
+      if (!best) { mark(a.t.id, `${a.t.name} has no partner: nothing is plugged into the port for slot ${a.slot + 1} on a mux it can reach`); continue; }
+      if (a.t.p.mode !== best.t.p.mode) { const why = `${a.t.name} is ${PHY_.MODES[a.t.p.mode].short} but ${best.t.name} is ${PHY_.MODES[best.t.p.mode].short}: the ends will never lock`; mark(a.t.id, why); mark(best.t.id, why); continue; }
+      used.add(a.t.id); used.add(best.t.id); pairs.push([a, best]);
+    }
+    const sa = S.svc && S.svc.a, sz = S.svc && S.svc.z;
+    const plan = pairs.sort((x, y) => x[0].slot - y[0].slot).map(([a, b]) => {
+      const svc = (a.t.id === sa && b.t.id === sz) || (a.t.id === sz && b.t.id === sa), from = svc ? sa : a.t.id, to = svc ? sz : b.t.id, tx = from === a.t.id ? a.t : b.t;
+      return { slot: a.slot, mode: a.t.p.mode, off: tx.p.off || 0, svc, from, to, via: '', conv: '', slot2: a.slot, prot: '', derived: true, tx: from, rx: to };
+    });
+    let svcWhy = '';
+    if (!plan.some(c => c.svc) && node(sa) && node(sz) && isEnd(node(sa)) && isEnd(node(sz))) svcWhy = dark.get(sa) || dark.get(sz) || 'The service transponders are not paired through the muxes: plug both into the port for the same slot.';
+    // background channels fill the line up to the channel count, in the free slots nearest the lit ones
+    const want = Math.max(0, Math.round(+g.nch || 0) - plan.length), lit = new Set(plan.map(c => c.slot)), fillers = [];
+    if (want && plan.length) {
+      const centre = plan.reduce((t, c) => t + c.slot, 0) / plan.length, mode = (plan.find(c => c.svc) || plan[0]).mode;
+      for (const sl of [...Array(slotsN).keys()].filter(k => !lit.has(k)).sort((x, y) => Math.abs(x - centre) - Math.abs(y - centre) || x - y).slice(0, want)) fillers.push({ slot: sl, mode, off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: sl, prot: '', derived: true, filler: true });
+    }
+    const all = [...plan, ...fillers].sort((x, y) => x.slot - y.slot);
+    return { plan: all, dark: [...dark].map(([id, why]) => ({ id, name: (node(id) || {}).name, why })), svcWhy, paired: pairs.length, fillers: fillers.length };
+  }
+  // the topology with the channel plan the cabling defines (or S itself when it does not use mux ports)
+  function effective(S) {
+    if (S._derived) return S;
+    const d = derive(S); if (!d) return S;
+    return { ...S, g: { ...S.g, plan: d.plan, nch: d.plan.length }, _derived: d };
   }
 
   // ---------- simulation ----------
@@ -602,6 +678,7 @@ const MODEL = (() => {
   // route costs detect + switch; shared protection adds the turn-up time of the dark route; both add the chance that both routes are down together.
   // A converted channel is the sum of its halves. These are expectations from cut rates, not a simulation of events.
   function resilience(S) {
+    S = effective(S);
     const g = S.g || {}, num = (v, d) => (Number.isFinite(+v) && v !== '' && v !== null ? +v : d);
     const P = {}; for (const k in RESIL) P[k] = num(g[k], RESIL[k]);
     const { link, node } = mkGraph(S), YEAR = 8760 * 3600, svc = S.svc || {};
@@ -764,6 +841,8 @@ const MODEL = (() => {
   // The forward result carries the reverse one in res.rev and its status is the worse of the two. opts.single skips the reverse run.
   const STATUS_RANK = { up: 0, degraded: 1, down: 2, nopath: 2, los: 3 };
   function simulate(S, launchOverride, opts = {}) {
+    S = effective(S);
+    if (S._derived && S._derived.svcWhy && !opts.walk) return { status: 'los', headline: S._derived.svcWhy, derived: S._derived };
     const eol = !!opts.eol, rv = !!opts.reverse, W = opts.walk || null; // W: a mesh walk, the simulation of a route other than the service's (see planMesh)
     const pd = (p, k) => (rv && p[k + 'Rev'] !== '' && p[k + 'Rev'] != null && Number.isFinite(+p[k + 'Rev']) ? p[k + 'Rev'] : p[k]);
     const { node, link, linkName } = mkGraph(S);
@@ -988,6 +1067,7 @@ const MODEL = (() => {
     };
     if (isEnd(Z) && spareLoss(Z)) loss(spareLoss(Z)); // the switch or y-cable in front of the receiver
     const res = { mode, modeKey, A, Z, path, raman: ramanViews, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
+    if (S._derived) { res.derived = S._derived; if (!eol && !rv && !W) for (const dk of S._derived.dark) alarms.push({ sev: 'warn', text: dk.why }); }
     // Muxponder client ports: per-port optical budget plus rate aggregation into the line port.
     const clientFatal = [];
     res.clients = [];
@@ -1203,6 +1283,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, oadmWhy, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, oadmWhy, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

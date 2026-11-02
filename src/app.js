@@ -102,7 +102,7 @@ function renderCanvas() {
   gRoot.innerHTML = '';
   const vr = view(), onPath = new Set(vr && vr.path ? vr.path.links : []);
   const lg = sv('g'), ng = sv('g'), og = sv('g');
-  const hc = hiChan && S.g.plan && vr && vr.channels ? vr.channels[S.g.plan.indexOf(hiChan)] : null, hiLinks = new Set(hc ? hc.routeLinks : []), hiNodes = new Set(hc ? hc.routeNodes : []), sb = hc && hc.protection ? (hc.protection.active === 'work' ? hc.protection.protect : hc.protection.work) : null, stbyLinks = new Set(sb ? sb.routeLinks : []);
+  const hplan = vr && vr.derived ? vr.derived.plan : S.g.plan, hc = hiChan && hplan && vr && vr.channels ? vr.channels[hplan.indexOf(hiChan)] : null, hiLinks = new Set(hc ? hc.routeLinks : []), hiNodes = new Set(hc ? hc.routeNodes : []), sb = hc && hc.protection ? (hc.protection.active === 'work' ? hc.protection.protect : hc.protection.work) : null, stbyLinks = new Set(sb ? sb.routeLinks : []);
   for (const l of S.links) {
     const a = node(l.a), b = node(l.b); if (!a || !b) continue;
     const cutNow = MODEL.isCut(S, l);
@@ -125,6 +125,9 @@ function renderCanvas() {
       g.append(t);
       if (cutNow) { const x = sv('text', { x: mx, y: my + 7, class: 'cutmark', 'text-anchor': 'middle' }); x.textContent = '✕'; g.append(x); }
     }
+    { const pl = portLink(l); if (pl && l.p.mport != null) { // the mux port, next to the mux end of the cable
+        const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, m = pl.m, sgn = m === b ? -1 : 1, bx = (m === b ? b.x : a.x) + sgn * dx / d * 52, by = (m === b ? b.y : a.y) + sgn * dy / d * 52;
+        const t = sv('text', { x: bx, y: by - 5, class: 'llabel', 'text-anchor': 'middle' }); t.textContent = `P${l.p.mport + 1} · ${m.p.first + l.p.mport + 1}`; g.append(t); } }
     lg.append(g);
   }
   for (const n of S.nodes) { const sh = nodeShape(n); if (hiNodes.has(n.id)) sh.classList.add('chnode'); ng.append(sh); }
@@ -196,11 +199,21 @@ svg.addEventListener('wheel', e => {
 }, { passive: false });
 svg.addEventListener('dblclick', e => { const nEl = e.target.closest('.node'); if (nEl && isEnd(node(nEl.dataset.id))) setEnd(nEl.dataset.id); });
 
+// a transponder or muxponder plugged into a passive mux: the cable's `mport` is the mux port it uses (port k passes slot first+k)
+const portLink = l => { const a = node(l.a), b = node(l.b); if (!a || !b || l.kind !== 'patch') return null; return isEnd(a) && b.type === 'mux' ? { t: a, m: b } : isEnd(b) && a.type === 'mux' ? { t: b, m: a } : null; };
+const portsUsed = (m, except) => new Map(S.links.filter(l => l !== except && l.p.mport != null && portLink(l) && portLink(l).m === m).map(l => [l.p.mport, portLink(l).t]));
+const firstFreePort = (m, except) => { const u = portsUsed(m, except); for (let k = 0; k < m.p.ports; k++) if (!u.has(k)) return k; return null; };
+const portSlotText = (m, k) => `Port ${k + 1} · slot ${m.p.first + k + 1} · ${PHY.slotFreqTHz(m.p.first + k, +S.g.df * 1e9).toFixed(2)} THz`;
 function connect(a, b, kind) {
   if (S.links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return toast('Those two are already connected.');
   for (const n of [a, b]) if (linksOf(n.id).length >= TYPES[n.type].maxLinks) return toast(`${n.name} has no free port. ${TYPES[n.type].label}s have ${isEnd(n) ? 'two line ports: the second is for dual-homing' : TYPES[n.type].maxLinks === 1 ? 'one line port' : 'an input and an output'}.`);
   const l = { id: uid('l'), a: a.id, b: b.id, kind, p: linkDefaults(kind) };
-  S.links.push(l); select({ kind: 'link', id: l.id }); toast(`${kind === 'fiber' ? 'Fiber span' : 'Patch cord'}: ${a.name} ↔ ${b.name}`);
+  S.links.push(l);
+  if (portLink(l)) { // plugging a transponder into a mux takes the first free port; lab cables already on that mux get one too so every channel follows its port
+    const m = portLink(l).m; for (const o of S.links) if (portLink(o) && portLink(o).m === m && o.p.mport == null) o.p.mport = firstFreePort(m, o);
+    if (l.p.mport == null) toast(`${m.name} has no free port.`);
+  }
+  select({ kind: 'link', id: l.id }); toast(`${kind === 'fiber' ? 'Fiber span' : 'Patch cord'}: ${a.name} ↔ ${b.name}`);
 }
 function addNode(type, x, y) {
   const count = S.nodes.filter(n => n.type === type).length + 1;
@@ -295,6 +308,12 @@ function renderInspector() {
     { const d = TYPES[n.type].def(); for (const k in d) if (p[k] === undefined) p[k] = d[k]; } // fields added since this lab was saved
     if (isEnd(n)) {
       box.append(field(n.type === 'mxp' ? 'Line port mode' : 'Mode', selIn(p, 'mode', Object.entries(PHY.MODES).map(([k, m]) => [k, m.name]))));
+      { const ws = el('select', { id: 'f-slot', 'aria-label': 'Wavelength' }), slotsN = PHY.cBandSlots(+S.g.df * 1e9), cab = S.links.map(portLink).filter(x => x && x.t === n)[0];
+        ws.append(el('option', { value: '', text: cab && cab.m ? 'Auto: the slot of its mux port' : 'Auto' }));
+        for (let k = 0; k < slotsN; k++) ws.append(el('option', { value: String(k), text: `Slot ${k + 1} · ${PHY.slotFreqTHz(k, +S.g.df * 1e9).toFixed(2)} THz` }));
+        ws.value = Number.isInteger(p.slot) ? String(p.slot) : ''; ws.addEventListener('change', () => { p.slot = ws.value === '' ? null : +ws.value; renderAll(); });
+        box.append(field('Wavelength', ws, 'A tunable transponder is set to a slot. Plugged into a mux port it only gets through if it matches that port; Auto follows the port.'));
+        if (cab) box.append(field('Power offset (dB)', numIn(p, 'off', 0.5, -10, 10), 'Launch power relative to the other channels, for a transponder on a mux port.')); }
       const m = PHY.MODES[p.mode];
       box.append(field('Module protection', selIn(p, 'spare', [['', 'None'], ['switch', 'Spare module, optical switch (1 dB)'], ['ycable', 'Spare module, y-cable (3.5 dB)']]), 'A second transponder module shares the line port. If this one fails the spare takes over in the switch time instead of the repair time. The switch or splitter costs power in both directions. Cable a second patch cord to another ROADM to dual-home it: the protection route can then avoid the access ROADM too.'));
       box.append(field('Tx power (dBm)', numIn(p, 'tx', 0.5, -15, 3, true, String(m.tx)), `Blank = module default ${m.tx} dBm`));
@@ -308,6 +327,9 @@ function renderInspector() {
       box.append(b);
     } else if (n.type === 'mux') {
       box.append(field('Insertion loss (dB)', numIn(p, 'il', 0.1, 0, 15), 'Typical 40/48 ch AWG or thin-film: 4–6 dB per pass'));
+      box.append(field('Channel ports', numIn(p, 'ports', 1, 1, 64), 'A real mux is 8, 16, 40, 48 or 64 channels. Port 1 is the lowest slot.'), field('First slot', numIn(p, 'first', 1, 0, 63), 'The slot (starting at 0) that port 1 passes; port k passes first + k − 1.'));
+      { const used = portsUsed(n), rows = []; for (let k = 0; k < Math.min(p.ports, 64); k++) rows.push(`${portSlotText(n, k)}: ${used.has(k) ? used.get(k).name : '—'}`);
+        box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the mux to give it a port.' }), el('pre', { class: 'muted small', style: 'max-height:150px;overflow:auto;white-space:pre-wrap', text: rows.join('\n') })); }
     } else if (n.type === 'edfa') {
       box.append(field('Gain control', selIn(p, 'ctl', [['auto', 'Auto: hit output target'], ['fixed', 'Fixed gain']])));
       if (p.ctl === 'auto') box.append(field('Output target (dBm/ch)', numIn(p, 'target', 0.5, -10, 10, true, String(S.g.launch)), 'Blank = follow the global launch power'), field('Same, return direction (dBm/ch)', numIn(p, 'targetRev', 0.5, -10, 10, true, p.target === '' ? String(S.g.launch) : String(p.target)), 'Z to A. A line amp is really two amps, one per direction: a booster in one is a preamp in the other. Blank = same as forward.'));
@@ -342,6 +364,14 @@ function renderInspector() {
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
     if (l.p.dir == null) l.p.dir = 'both';
     { const na = node(l.a), nb = node(l.b); box.append(field('Carries light', selIn(l.p, 'dir', [['both', 'Both ways (a fiber pair)'], ['ab', `${na ? na.name : 'a'} → ${nb ? nb.name : 'b'} only`], ['ba', `${nb ? nb.name : 'b'} → ${na ? na.name : 'a'} only`]]), 'A one-way fiber lets each direction take a different route.')); }
+    if (portLink(l)) {
+      const { t, m } = portLink(l), used = portsUsed(m, l), so = el('select', { id: 'f-mport', 'aria-label': 'Mux port' });
+      so.append(el('option', { value: '', text: 'Not assigned (no port model)' }));
+      for (let k = 0; k < m.p.ports; k++) so.append(el('option', { value: String(k), text: portSlotText(m, k) + (used.has(k) ? ` · in use by ${used.get(k).name}` : '') }));
+      so.value = l.p.mport == null ? '' : String(l.p.mport);
+      so.addEventListener('change', () => { l.p.mport = so.value === '' ? null : +so.value; renderAll(); });
+      box.append(field(`Port on ${m.name}`, so, `${t.name} is plugged into this port. The mux filter passes only that port's slot, so ${t.name} has to be tuned to it (Auto follows the port).`));
+    }
     if (l.kind === 'fiber') {
       for (const k in linkDefaults('fiber')) if (l.p[k] == null) l.p[k] = linkDefaults('fiber')[k];
       box.append(field('Length (km)', numIn(l.p, 'len', 1, 0, 300)));
@@ -616,7 +646,7 @@ function ramanView(r) {
 // expected outages from the planned routes
 function fmtDur(s) { return s < 1 ? `${(s * 1000).toFixed(s < 0.1 ? 1 : 0)} ms` : s < 120 ? `${s.toFixed(1)} s` : s < 7200 ? `${(s / 60).toFixed(1)} min` : `${(s / 3600).toFixed(1)} h`; }
 function resilView() {
-  const wrap = el('div', { class: 'planwrap pad' }), rs = MODEL.resilience(S), plan = S.g.plan;
+  const wrap = el('div', { class: 'planwrap pad' }), rs = MODEL.resilience(S), plan = MODEL.effective(S).g.plan;
   const tbl = el('table', { class: 'tbl' }), th = el('tr'); ['Channel', 'Protection', 'Route km', 'Protect km', 'Cuts / yr', 'Outage per cut', 'Downtime / yr', 'Availability'].forEach(h => th.append(el('th', { text: h })));
   tbl.append(el('thead', {}, [th]));
   const tb = el('tbody');
@@ -846,8 +876,37 @@ function constView(r) {
   return wrap;
 }
 
+// channels defined by the cabling: transponders on numbered mux ports pair up by slot (see MODEL.derive); the table only shows them
+function derivedPlanView(r, D) {
+  const wrap = el('div', { class: 'planwrap pad' }), res = r && r.channels ? r.channels : [];
+  const toTable = () => {
+    S.g.plan = MODEL.sanitizePlan(D.plan.map(c => ({ slot: c.slot, mode: c.mode, off: c.off, svc: c.svc, from: c.filler || c.svc ? '' : c.from, to: c.filler || c.svc ? '' : c.to, via: '', conv: '', slot2: c.slot, prot: '' })), +S.g.df);
+    S.g.nch = S.g.plan.length; S.links.forEach(l => { if (l.p.mport != null) l.p.mport = null; }); hiChan = null; renderAll(); toast('The channels are now a plain table; the mux ports are cleared.');
+  };
+  wrap.append(el('div', { class: 'planbar' }, [el('b', { text: `${D.plan.length} channels` }), el('span', { class: 'muted small', text: `${D.paired} from the cabling${D.fillers ? `, ${D.fillers} background (to reach the channel count)` : ''}` }),
+    el('button', { class: 'btn', text: 'Edit as a table', title: 'Turn the derived channels into an editable plan and clear the mux ports', onclick: toTable })]));
+  wrap.append(el('p', { class: 'muted small', text: 'These channels follow the cabling. Plug a transponder into a port of a mux, tune it (or leave it on Auto), and plug its partner into the port for the same slot on the far mux. Click a row to light its route on the canvas.' }));
+  const tbl = el('table', { class: 'tbl plantbl' }), th = el('tr'); ['Slot', 'THz', 'Mode', 'From', 'To', 'Offset dB', 'Rx dBm', 'GSNR', 'Q margin', 'Status'].forEach(h => th.append(el('th', { text: h })));
+  tbl.append(el('thead', {}, [th]));
+  const tb = el('tbody');
+  D.plan.forEach((c, i) => {
+    const o = res[i], m = PHY.MODES[c.mode], fromN = c.filler ? 'background' : (node(c.from) || {}).name || '', toN = c.filler ? '' : (node(c.to) || {}).name || '';
+    const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, class: 'slotin', 'aria-label': `Power offset for slot ${c.slot + 1}`, disabled: !!c.filler });
+    off.addEventListener('change', () => { const t = node(c.tx); if (t && isFinite(+off.value)) { t.p.off = Math.max(-10, Math.min(10, +off.value)); renderAll(); } });
+    tb.append(el('tr', { class: (c.svc ? 'selrow' : '') + (hiChan === c ? ' hirow' : ''), onclick: ev => { if (ev.target.closest('select,input,button')) return; hiChan = hiChan === c ? null : c; renderCanvas(); renderTabBody(); } },
+      [String(c.slot + 1), PHY.slotFreqTHz(c.slot, +S.g.df * 1e9).toFixed(2), m.short, fromN, toN, c.filler ? '' : off,
+        o && o.prx != null ? f1(o.prx) : '', o && o.gosnr != null ? f1(o.gosnr) : '', o && o.qMargin != null ? (o.qMargin > 0 ? '+' : '') + f1(o.qMargin) : '',
+        o ? el('span', { class: 'st-' + o.status, text: STATUS[o.status] + (o.notes && o.notes.length ? ': ' + o.notes[0] : '') }) : ''].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x })))));
+  });
+  tbl.append(tb);
+  wrap.append(el('div', { style: 'overflow:auto;max-height:380px' }, [tbl]));
+  if (D.dark.length) wrap.append(el('h4', { text: 'Dark transponders' }), el('ul', { class: 'small' }, D.dark.map(x => el('li', { text: x.why }))));
+  return wrap;
+}
+
 // channel plan: which channels share the line (mode, grid slot, power offset) and how each one is doing
 function planView(r) {
+  { const D = (r && r.derived) || MODEL.derive(S); if (D) return derivedPlanView(r, D); }
   const wrap = el('div', { class: 'planwrap pad' });
   const svcNode = node(S.svc.a), svcMode = svcNode && isEnd(svcNode) ? svcNode.p.mode : 'zrp400';
   const slots = PHY.cBandSlots(+S.g.df * 1e9), modes = Object.entries(PHY.MODES).map(([k, m]) => [k, m.short]);
@@ -991,6 +1050,7 @@ const LEARN = {
   xpm: ['Cross-phase modulation', `<p><b>XPM</b> is the nonlinear effect where the intensity of one channel changes the phase of its neighbours. A coherent receiver sorts out phase, but a <b>direct-detection</b> receiver (a 10G NRZ optic) turns phase wobble into amplitude errors after dispersion, so legacy 10G channels are the ones that suffer, especially beside wide, high-power coherent channels.</p><p>The penalty here grows with the number of neighbours inside about 400 GHz, with launch power and with effective fiber length, summed over spans. The "Neighbouring channels" setting (inspector, nothing selected) chooses between same-type and coherent neighbours. Real fixes: lower the launch power, leave a gap of empty slots around the 10G channels, or give them their own band. The numbers are representative, not a full XPM model.</p>`],
   resil: ['Protection, switching time and availability', `<p>A fiber cut takes every channel on it down. What happens next depends on how the channel is protected.</p><ul><li><b>Unprotected:</b> the control plane notices, finds another route, and the ROADMs and amplifiers are reconfigured: tens of seconds to minutes. If there is no other route it stays down until the splice is repaired (hours).</li><li><b>1+1 dedicated:</b> a second copy of the signal is lit on a route that shares no fiber with the first; the receiver just picks the survivor after loss detection and a switch (tens of milliseconds). It costs the second route's wavelength and amplifier power all the time.</li><li><b>1:N shared:</b> the protection route is dark and may be shared by several channels whose working routes cannot fail together, so it costs nothing in normal operation, but it has to be lit after the failure: a second or more. Its margin is predicted by simulating the failure.</li><li><b>Wavelength converters:</b> regenerate a channel into another slot, resetting its noise; a protected converted channel is protected on each side of the converter separately.</li></ul><p>The Resilience tab turns cut rate, repair time and these switching times into expected downtime per year: each cut on the route happens at the cut rate times its length, then costs the switching or restoration time, plus the chance that both routes are down at once (the product of their unavailabilities, which is why a longer protection route matters less than its existence).</p>`],
   fail: ['Failures other than fiber cuts', `<p>Fibers are not the only thing that breaks. Select any device and set its <b>Condition</b>.</p><ul><li><b>Failed:</b> the device passes no light (a dead amplifier pump absorbs the signal, a ROADM loses power, a transponder goes dark). Routes avoid it: an unprotected channel restores around it if the network has another way, a 1+1 or shared protected channel switches to its protection route, and a service with no way round shows LOS and names the device. Channels that start or end at a failed ROADM are lost.</li><li><b>Degraded:</b> still lit but worse. An amplifier's output falls below its setting and its noise figure rises (pump ageing); a laser is weaker; a receiver loses SNR; a ROADM, mux, VOA or DCM adds loss (a partly stuck WSS or a dirty connector). Amplifiers downstream re-level the power, so what you see is mostly extra noise.</li></ul><p><b>Shared risk link groups:</b> two fibers in the same duct or trench do not fail independently. Give them the same group name on the cable inspector and cutting one cuts all of them. Protection planning then looks for a route that avoids the whole group, which is often a lot longer than the fiber-disjoint route that happens to share a trench. Try the \"Shared duct\" scenario.</p><p><b>Passive OADMs:</b> an optical add/drop multiplexer is a fixed filter. It drops a set of slots (the ones you list in its inspector) and adds channels back in the same slots; every other slot passes straight through at a small loss, with no WSS, no equalisation and no amplifier. That makes it cheap and lossless-ish for a metro bus, but it is rigid: a channel in one of its slots cannot pass it (the filter terminates the light), and a channel can only be added or dropped there in one of its slots. A channel added at an OADM leaves at the local transmitter power less the add loss, so it can sit above or below the channels already on the line. Try the \"Passive OADM bus\" scenario, then put a channel through a slot an OADM serves to see it blocked.</p><p><b>Ports and cards:</b> a ROADM or a passive mux can also lose a single add/drop port, or a whole card of 8 ports. Only the channels that join or leave the line through those ports go dark; the other channels, the amplifiers and the device itself carry on. A 1+1 service whose protection route avoids the failed device switches over. Try the \"Two muxponders per side\" scenario: fail a port on MUX-B and only that wave is lost.</p><p>The Resilience tab includes device failures (a rate per amplifier or ROADM): a device that has to be passed (the access ROADM of a single-homed transponder) costs the full repair time, an interior one costs only the switch or restoration time if another route avoids it.</p>`],
+  ports: ['Mux ports and wavelengths', `<p>A passive mux or demux has a numbered <b>port for every channel</b>. Cable a transponder to the mux and the cable takes the first free port; the cable inspector lets you move it to another. Port <i>k</i> passes slot <i>first + k − 1</i> (set \"First slot\" and the port count on the mux).</p><p>The transponder has a <b>Wavelength</b> setting. <b>Auto</b> follows the port it is plugged into. Choose a slot and the transponder is tuned there instead. A mux filter only passes its own port's slot, so a transponder tuned to a different slot is <b>dark</b>: its light is blocked and the Channels tab says why.</p><p>The channels are then whatever the cabling makes. A transmitter that gets through its port reaches the receiver plugged into the port for the same slot on a mux at the other end, and the pair is one channel. Both ends need the same mode. A transponder with nobody at the far end of its slot is dark too. The channel count on the left still fills the rest of the line with background channels, in the free slots nearest the lit ones, so the amplifiers see a realistic load.</p><p>Per-channel results appear on the Channels tab (read-only here; \"Edit as a table\" turns them into a normal plan). Try the \"Transponders on mux ports\" scenario, then change the wavelength of one transponder.</p>`],
   raman2: ['Raman solver', `<p>The <b>coupled-wave solver</b> treats every pump wavelength and a sample of the channels as waves in the fiber, each with its own attenuation, and lets higher-frequency waves feed lower-frequency ones through the Raman gain curve: <code>±dP<sub>i</sub>/dz = −α<sub>i</sub>P<sub>i</sub> + P<sub>i</sub> Σ<sub>j above</sub> c(Δf) P<sub>j</sub> − P<sub>i</sub> Σ<sub>j below</sub> (f<sub>i</sub>/f<sub>j</sub>) c(Δf) P<sub>j</sub></code>. Forward waves are integrated from the start of the span and backward ones from the end, alternately, until the profiles settle. Photon number is conserved. This gives what the closed-form approximation cannot: <b>pump-to-pump transfer</b> (the short-wave pump of a multi-wavelength pump feeds the long-wave one), <b>depletion</b> as the signals grow, the real <b>gain spectrum</b> and the <b>power profile along the span</b> for forward, backward and bidirectional pumping, and signal-to-signal transfer (SRS tilt) in the span.</p><p>Turn it on per fiber in the cable inspector (Raman model). The gain at the service channel, the stage split between forward and backward pumps, the pump depletion and the per-channel gain differences then come from the solver; the noise is still modelled as the equivalent lumped amplifier and double Rayleigh scattering from the gain. The Raman tab plots the profile and the gain spectrum for each pumped span.</p>`],
   trans: ['Power transients', `<p>An EDFA amplifies all channels from one pool of inverted erbium ions. If many channels vanish suddenly (an upstream fiber cut, a protection switch, a failed transponder), the pool no longer has to feed them, so the gain per surviving channel jumps toward <code>10·log<sub>10</sub>(N / survivors)</code> within about a hundred microseconds. A fast gain-control loop (AGC) cancels most of it; a slow one does not. In a cascade of amplifiers each one adds its excursion, so the surviving channels can surge by many dB by the end of the line, into receiver overload and into nonlinearity (3 dB of nonlinear noise for each dB of power), and dip equally when the channels come back.</p><p>That is why added channels are ramped up slowly and why long amplified systems need fast gain control on every amplifier. The Transients tab evaluates a sudden loss of a share of the channels along the service path with the response time of each amplifier. Raman pumps and WSS blocking are not modelled.</p>`],
   aging: ['End-of-life margin', `<p>Links are planned for the day they are worst, not the day they are lit. <b>End of life</b> here adds extra loss on every fiber span (splices from repairs, connector wear, fiber ageing; 1.0 dB by default) and a transceiver ageing penalty (0.5 dB by default). Both are editable in the inspector when nothing is selected. It then re-runs the whole simulation.</p><p>A link with a few dB of margin today can have none left at end of life. The "works today but fails at end of life" alarm is the early warning. Typical planning margin is 2-3 dB.</p>`],
