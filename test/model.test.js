@@ -1775,3 +1775,45 @@ test('reachability: transponders on mux ports carry hosts, and a mistuned transp
   const res = M.simulate(S); r = M.reach(S, res)[0]; assert.equal(r.ok, false); assert.match(r.why, /is dark/);
   assert.ok(res.derived.dark.some(x => /TRX-B1 is tuned to slot 41/.test(x.why)), 'the mistuned end says why, and the other end has no partner');
 });
+
+const bd = () => M.sanitize(build('bidi'));
+test('single fibre: BiDi ports pair transmit and receive slots, and each direction runs at its own frequency', () => {
+  const S = bd(), d = M.derive(S), r = M.simulate(S), nm = id => S.nodes.find(n => n.id === id).name;
+  assert.equal(d.paired, 3); assert.equal(d.dark.length, 0);
+  assert.deepEqual(d.plan.filter(c => !c.filler).map(c => `${nm(c.from)}>${nm(c.to)} ${c.slot + 1}/${c.slotRev + 1}`).sort(), ['TRX-A1>TRX-B1 25/27', 'TRX-A2>TRX-B2 26/28', 'TRX-B3>TRX-Z1 31/32']);
+  assert.equal(r.status, 'up'); assert.ok(r.channels.every(c => c.status === 'up'));
+  const sv = r.channels.find(c => c.svc), rv = r.rev.channels.find(c => c.svc);
+  assert.equal(sv.slot, 24); assert.equal(rv.slot, 26); assert.ok(rv.fTHz > sv.fTHz, 'the way back is on the other slot');
+  const ob = S.nodes.find(n => n.name === 'OADM-B'); assert.deepEqual([M.oadmRange(ob, 'w'), M.oadmRange(ob, 'e')], [[24, 28], [30, 32]]);
+});
+
+test('single fibre: both ends on the same band, or a wrong receive slot, is dark and says why', () => {
+  let S = bd(); S.nodes.find(n => n.name === 'MUX-Z').p.role = 'low'; // Z now transmits the same slot as OADM-B's east port
+  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-Z1').why, /both transmit on slot 31.*single fibre.*own wavelength/);
+  S = bd(); S.nodes.find(n => n.name === 'TRX-A1').p.rxSlot = 24;
+  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-A1').why, /listens on slot 25 but MUX-A port 1 delivers slot 27/);
+  S = bd(); S.nodes.find(n => n.name === 'TRX-A2').p.slot = 3;
+  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-A2').why, /tuned to slot 4 but plugged into MUX-A port 2, which transmits slot 26/);
+  S = bd(); S.nodes.find(n => n.name === 'MUX-A').p.bidi = false; // one end not BiDi: it cannot pair with a BiDi far end
+  assert.ok(M.derive(S).dark.some(x => x.name === 'TRX-A1'));
+});
+
+test('single fibre: a channel needs a different slot each way, and no other channel may use either', () => {
+  const S = M.sanitize(build('dci')), fib = S.links.find(l => l.kind === 'fiber'); fib.p.single = true;
+  S.g.plan = M.planFromUniform(S.g, 'zrp400'); S.g.nch = S.g.plan.length;
+  let r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /single fibre: each direction needs its own wavelength/);
+  const plan = S.g.plan.map((c, i) => ({ ...c, slotRev: c.slot + 20 })); S.g.plan = plan; // another slot each way
+  r = M.simulate(S); assert.equal(r.status, 'up', r.headline); assert.ok(r.channels.every(c => c.status === 'up'));
+  S.g.plan = [{ ...plan[0], slot: 30, slotRev: 31, svc: true }, { ...plan[1], slot: 31, slotRev: 32, svc: false }]; // 31 is also the first channel's way back
+  r = M.simulate(S); const b = r.channels.find(c => !c.svc); assert.equal(b.status, 'blocked'); assert.match(b.notes[0], /already lit.*single fibre/);
+  fib.p.single = false; r = M.simulate(S); assert.ok(r.channels.every(c => c.status === 'up'), 'on two fibres the directions do not collide');
+});
+
+test('single fibre: the flags survive sanitize and bad values are dropped', () => {
+  const S = build('bidi'); S.nodes.find(n => n.name === 'MUX-A').p.role = 'sideways'; S.nodes.find(n => n.name === 'OADM-B').p.wRole = 5; S.nodes.find(n => n.name === 'TRX-A1').p.rxSlot = 'x';
+  S.links.find(l => l.kind === 'patch').p.single = true; S.links.filter(l => l.kind === 'fiber').forEach(l => { l.p.single = 'yes'; });
+  const c = M.sanitize(clone(S));
+  assert.equal(c.nodes.find(n => n.name === 'MUX-A').p.role, 'low'); assert.equal(c.nodes.find(n => n.name === 'OADM-B').p.wRole, 'high'); assert.equal(c.nodes.find(n => n.name === 'TRX-A1').p.rxSlot, null);
+  assert.ok(c.links.every(l => l.p.single === false), 'only a fibre span can be single, and only if true');
+  assert.deepEqual(M.sanitizePlan([{ slot: 3, slotRev: 3 }, { slot: 5, slotRev: 9 }, { slot: 7, slotRev: 'x' }], 75).map(x => x.slotRev), [null, 9, null]);
+});
