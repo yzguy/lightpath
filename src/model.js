@@ -1644,11 +1644,17 @@ const MODEL = (() => {
       }
       if (res.clients.length === 2 && res.clients[0].total !== res.clients[1].total) alarms.push({ sev: 'warn', text: `Client rates differ between the ends: ${A.name} carries ${res.clients[0].total}G, ${Z.name} carries ${res.clients[1].total}G.` });
     }
-    if (losAt) { res.status = 'los'; res.headline = losAt.node ? `LOS at ${Z.name}: ${losAt.node.name} has failed.` : `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}.`; res.prx = -Infinity; return res; }
+    if (losAt) {
+      res.status = 'los'; res.prx = -Infinity;
+      // say what is wrong and what to do about it, in the headline and as an alarm (the KPIs are empty when there is no light)
+      if (losAt.node) { res.headline = `LOS at ${Z.name}: ${losAt.node.name} has failed. Replace it, or give the service a route around it.`; if (!W) alarms.push({ sev: 'bad', text: `${losAt.node.name} has failed and passes no light, so nothing reaches ${Z.name}. Set it back to Working, or add a route that avoids it.` }); }
+      else { res.headline = `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}. Splice it back, or add a second route.`; if (!W) alarms.push({ sev: 'bad', text: `${linkName(losAt)} is cut, so no light reaches ${Z.name}. Select the span and choose "Splice it back", or give the service a second fiber route (Protect, in the Channels tab).` }); }
+      return res;
+    }
     const prx = db(P * 1000); res.prx = prx;
     if (prx < mode.rxMin - 12 && !W) {
       res.status = 'los'; res.headline = `LOS at ${Z.name}: ${f1(prx)} dBm is below what the receiver can detect.`;
-      alarms.unshift({ sev: 'bad', text: `Rx power ${f1(prx)} dBm is far below the ${f1(mode.rxMin)} dBm sensitivity.` });
+      alarms.unshift({ sev: 'bad', text: `Rx power ${f1(prx)} dBm is far below the ${f1(mode.rxMin)} dBm sensitivity. Add gain before the receiver or remove loss: the hop table shows where the power goes.` });
       return switchIfBetter(res);
     }
     const snrAse = (P / Pase) * PHY_.BREF / Rs, snrNli = Pnli > 0 ? P / Pnli : Infinity;
@@ -1823,7 +1829,8 @@ const MODEL = (() => {
     }
     if (svcOnProt && !W) alarms.push({ sev: 'warn', text: protWhy === 'cut' ? `The working route has failed (a cut fiber or a failed device): traffic switched to the protection route (${Math.round(km)} km). There is no protection left until it is repaired.` : 'The working route is down: traffic switched to the protection route. There is no protection left.' });
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }
-    else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. Aging or a dirty connector will take it down.` : 'Up, with alarms to look at.'; }
+    else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; const top = alarms.find(a => a.sev === 'bad') || alarms.find(a => a.sev === 'warn'), more = alarms.filter(a => a.sev !== 'info').length - 1; // the headline names the first problem, not just that there is one
+      res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. ${top ? top.text : 'Aging or a dirty connector will take it down.'}` : `Up, but ${top ? top.text.charAt(0).toLowerCase() === top.text.charAt(0) ? top.text : 'with a warning: ' + top.text : 'with alarms to look at.'}${top && more > 0 ? ` (${more} more below)` : ''}`; }
     else { res.status = 'up'; res.headline = `Up with ${f1(res.qMargin)} dB Q margin.`; }
     if (res.status === 'down') { const sw = switchIfBetter(res); if (sw !== res) return sw; }
     if (!eol && !rv && !opts.single) {

@@ -721,7 +721,7 @@ function diagnose(r) {
   const tips = {
     ase: b.nli < b.ase / 2 ? 'Noise is mostly ASE and nonlinearity is small, so raising launch power (or cutting span loss / NF) buys SNR.' : 'ASE leads, but nonlinearity is close. You are near the optimum launch power.',
     nli: 'Nonlinearity dominates: you are launching too hot. Lowering launch power will improve GSNR until ASE takes over.',
-    trx: 'The line is clean. The transceiver itself is the limit, so more line tweaking will not help much.',
+    trx: 'Noise from the line is small. The transceiver itself is the limit, so changing launch power or amplifiers will not help much.' + (lastRes && lastRes.alarms && lastRes.alarms.some(x => x.sev !== 'info') ? ' The warnings are about power and loss, not noise: they are not in this bar.' : ''),
     rx: 'Too little light reaches the receiver. Add or re-target an amplifier before the Rx, or remove a pad.',
     mpi: 'Double Rayleigh scattering from the Raman pump dominates. Lower the pump power (it grows with the square of the gain) or split the gain with an EDFA.',
   };

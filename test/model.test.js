@@ -1999,3 +1999,16 @@ test('OTDR and power meter at a patch panel', () => {
   // a port the service light does not pass reads nothing
   l.p.sa = l.p.sb = 'f5'; assert.equal(Object.values(M.simulate(M.sanitize(o)).meters)[0].status, 'none');
 });
+
+test('headlines and alarms say what is wrong and what to do', () => {
+  // a degraded service names its first problem instead of "alarms to look at"
+  const S = M.sanitize(build('odf')), r = M.simulate(S);
+  assert.equal(r.status, 'degraded'); assert.match(r.headline, /ODF-B port 1: a dirty or damaged connector costs 1\.8 dB extra\. Clean it\./); assert.doesNotMatch(r.headline, /alarms to look at/);
+  // a cut gives LOS with a fix, in the headline and as an alarm (the alarm list used to be empty)
+  const c = M.sanitize(build('lh')); const fib = c.links.filter(l => l.kind === 'fiber')[2]; fib.p.cut = true; const rc = M.simulate(c);
+  assert.equal(rc.status, 'los'); assert.match(rc.headline, /fiber cut on .*Splice it back, or add a second route/);
+  assert.ok(rc.alarms.some(a => a.sev === 'bad' && /is cut, so no light reaches .*Splice it back.*second fiber route/.test(a.text)));
+  // a failed device says how to get round it
+  const d = M.sanitize(build('lh')); d.nodes.find(n => n.type === 'edfa' && n.name !== 'BST-A' && n.name !== 'PRE-B').p.fail = 'dead'; const rd = M.simulate(d);
+  assert.equal(rd.status, 'los'); assert.match(rd.headline, /has failed\. Replace it, or give the service a route around it/); assert.ok(rd.alarms.some(a => a.sev === 'bad' && /Set it back to Working/.test(a.text)));
+});
