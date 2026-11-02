@@ -786,11 +786,13 @@ function diagnose(r) {
   wrap.append(el('b', { text: 'What is eating the SNR' }), bar, leg, el('span', { text: tips[top] + (pen > 0.3 ? ` Plus ${f1(pen)} dB of penalties (${[r.filt > 0.05 ? `filtering ${f1(r.filt)}` : '', r.over > 0 ? `Rx overload ${f1(r.over)}` : '', r.pmdPen > 0.05 ? `PMD ${f1(r.pmdPen)}` : ''].filter(Boolean).join(', ')}).` : '') }));
   return wrap;
 }
-document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => { tab = t.dataset.tab; renderTabBody(); }));
+// bring a tab into view by moving the strip sideways only: scrollIntoView would also scroll the page (and a render must never move the page)
+const revealTab = t => { const c = $('#tabs'); if (c.scrollWidth > c.clientWidth) c.scrollLeft = t.offsetLeft - (c.clientWidth - t.offsetWidth) / 2; };
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => { tab = t.dataset.tab; renderTabBody(); revealTab(t); }));
 $('#tabs').addEventListener('keydown', e => { // arrow keys move between tabs (only the selected one is a Tab stop)
   const all = [...document.querySelectorAll('.tab')], i = all.findIndex(t => t.dataset.tab === tab);
   const j = e.key === 'ArrowRight' ? (i + 1) % all.length : e.key === 'ArrowLeft' ? (i + all.length - 1) % all.length : e.key === 'Home' ? 0 : e.key === 'End' ? all.length - 1 : -1;
-  if (j < 0) return; e.preventDefault(); tab = all[j].dataset.tab; renderTabBody(); all[j].focus();
+  if (j < 0) return; e.preventDefault(); tab = all[j].dataset.tab; renderTabBody(); all[j].focus({ preventScroll: true }); revealTab(all[j]);
 });
 $('#svc-a').addEventListener('change', e => { S.svc.a = e.target.value || null; renderAll(); });
 $('#svc-z').addEventListener('change', e => { S.svc.z = e.target.value || null; renderAll(); });
@@ -799,7 +801,6 @@ $('#svc-swap').addEventListener('click', () => { [S.svc.a, S.svc.z] = [S.svc.z, 
 function renderTabBody() {
   document.querySelectorAll('.tab').forEach(t => { const on = t.dataset.tab === tab; t.setAttribute('aria-selected', on); t.id = 'tab-' + t.dataset.tab; t.setAttribute('aria-controls', 'tabbody'); t.tabIndex = on ? 0 : -1; });
   const b = $('#tabbody'); b.innerHTML = ''; b.setAttribute('role', 'tabpanel'); b.setAttribute('aria-labelledby', 'tab-' + tab);
-  { const cur = document.querySelector('.tab[aria-selected=true]'); if (cur && narrow.matches) cur.scrollIntoView({ block: 'nearest', inline: 'center' }); }
   const r = view();
   if (tab === 'learn') return b.append(learnView());
   if (tab === 'plan') return b.append(planView(r));
