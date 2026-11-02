@@ -12,6 +12,7 @@ const MODEL = (() => {
     host: { label: 'Host / router', hint: 'Traffic endpoint with Ethernet ports', maxLinks: 8, def: () => ({ ip: '', ports: 1, speed: 100 }) },
     splitter: { label: 'Splitter / tap', hint: 'Passive power splitter, 50/50 up to a 99/1 monitor tap', maxLinks: 3, def: () => ({ ratio: '50/50', excess: 0.3 }) },
     switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, switchMs: 20 }) },
+    panel: { label: 'Patch panel / ODF', hint: 'Fibre panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, dirty: {} }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24, bidi: false, role: 'low' }) },
     oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, p1310: false, bidi: false, eRole: 'low', wRole: 'high' }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
@@ -22,7 +23,7 @@ const MODEL = (() => {
   const defaultClients = () => Array.from({ length: 4 }, () => newClient());
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
-  const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', splitter: 'SPL', switch: 'SW', host: 'HOST', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
+  const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', panel: 'ODF', splitter: 'SPL', switch: 'SW', host: 'HOST', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
   const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '', sa: '', sb: '', single: false } : { il: 0.5, dir: 'both', cut: false, mport: null, sa: '', sb: '', cport: null, hport: null });
 
   // ---------- presets ----------
@@ -218,6 +219,17 @@ const MODEL = (() => {
         return { nodes: [ta, tz, ma, ba, tap, spl, sw, pz, mz], links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
       }
     },
+    odf: {
+      name: 'Patch panels: connector loss and a dirty port', build() {
+        const ta = N('trx', 'TRX-A', 50, 200, { mode: 'zrp400' }), tz = N('trx', 'TRX-Z', 1230, 200, { mode: 'zrp400' });
+        const ma = N('mux', 'MUX-A', 180, 280), ba = N('edfa', 'BST-A', 310, 280, { gmin: 5 }), oa = N('panel', 'ODF-A', 460, 280, { ports: 12 });
+        const ob = N('panel', 'ODF-B', 820, 280, { ports: 12, dirty: { 1: 1.8 } }), pb = N('edfa', 'PRE-B', 960, 280, { gmin: 5 }), mb = N('mux', 'MUX-B', 1090, 280);
+        // The booster is patched to the front of ODF-A port 1; the fibre runs from the rear of that port to the rear of ODF-B port 1; the pre-amp hangs off its front.
+        // Every mated connector pair costs 0.5 dB, and the connector on ODF-B port 1 is dirty: 1.8 dB more. Clean it in the inspector (Dirty connectors).
+        const links = [L(ta, ma, 'patch'), L(ma, ba, 'patch'), L(ba, oa, 'patch', { sb: 'f1' }), L(oa, ob, 'fiber', { len: 60, sa: 'r1', sb: 'r1' }), L(ob, pb, 'patch', { sa: 'f1' }), L(pb, mb, 'patch'), L(mb, tz, 'patch')];
+        return { nodes: [ta, tz, ma, ba, oa, ob, pb, mb], links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
+      }
+    },
     sfp10: {
       name: 'Switch 10G DWDM optics over 60 km', build() {
         const a1 = N('trx', 'SW-A1', 80, 150, { mode: 'dwdm10' }), a2 = N('trx', 'SW-A2', 80, 290, { mode: 'dwdm10' });
@@ -338,6 +350,13 @@ const MODEL = (() => {
   function sideFor(me, other, given, usedDeg) {
     if (!me) return '';
     if (me.type === 'oadm') return ['e', 'w'].includes(given) && me.p.sides.includes(given) ? given : me.p.sides.length === 1 ? me.p.sides : other.x < me.x ? 'w' : 'e';
+    if (me.type === 'panel') { // a port of a patch panel: 'r3' is the rear of port 3, 'f3' its front; light enters one side and leaves the other
+      const u = usedDeg.get(me.id) || new Set(), n = me.p.ports; usedDeg.set(me.id, u);
+      const m = /^([rf])(\d{1,2})$/.exec(String(given || '')); if (m && +m[2] >= 1 && +m[2] <= n) { u.add(given); return given; }
+      for (let k = 1; k <= n; k++) { if (u.has('r' + k) && !u.has('f' + k)) { u.add('f' + k); return 'f' + k; } if (u.has('f' + k) && !u.has('r' + k)) { u.add('r' + k); return 'r' + k; } } // the other side of a port already in use
+      for (let k = 1; k <= n; k++) if (!u.has('r' + k) && !u.has('f' + k)) { u.add('r' + k); return 'r' + k; }
+      return '';
+    }
     if (isTriPort(me)) { const u = usedDeg.get(me.id) || new Set(); usedDeg.set(me.id, u); let d = ['c', 'a', 'b'].includes(given) ? given : ''; if (!d) d = ['c', 'a', 'b'].find(k => !u.has(k)) || ''; if (d) u.add(d); return d; }
     if (me.type !== 'roadm') return '';
     const ok = /^[1-9]$/.test(given) && +given <= me.p.degrees;
@@ -389,6 +408,11 @@ const MODEL = (() => {
         p.slot = n.p && Number.isInteger(n.p.slot) && n.p.slot >= 0 && n.p.slot < 128 ? n.p.slot : null;
         p.rxSlot = n.p && Number.isInteger(n.p.rxSlot) && n.p.rxSlot >= 0 && n.p.rxSlot < 128 ? n.p.rxSlot : null;
         p.off = Number.isFinite(+(n.p && n.p.off)) && n.p.off !== '' && n.p.off !== null && typeof n.p.off !== 'boolean' ? Math.min(10, Math.max(-10, +n.p.off)) : 0;
+      }
+      if (n.type === 'panel') {
+        p.ports = Math.min(48, Math.max(1, Math.round(+p.ports) || 12)); p.il = Math.min(3, Math.max(0, Number.isFinite(+p.il) && p.il !== '' && p.il !== null && typeof p.il !== 'boolean' ? +p.il : 0.5));
+        const raw = n.p && n.p.dirty && typeof n.p.dirty === 'object' && !Array.isArray(n.p.dirty) ? n.p.dirty : {}; p.dirty = {};
+        for (const k of Object.keys(raw).slice(0, 96)) { const i = +k, v = raw[k]; if (Number.isInteger(i) && i >= 1 && i <= p.ports && Number.isFinite(+v) && v !== '' && v !== null && typeof v !== 'boolean' && +v > 0) p.dirty[i] = Math.min(10, +v); } // extra loss of a dirty or damaged connector, by port number
       }
       if (n.type === 'splitter') { p.ratio = SPLIT[p.ratio] ? p.ratio : '50/50'; p.excess = Math.min(3, Math.max(0, Number.isFinite(+p.excess) && p.excess !== '' && p.excess !== null ? +p.excess : 0.3)); }
       if (n.type === 'switch') { p.il = Math.min(10, Math.max(0, Number.isFinite(+p.il) && p.il !== '' && p.il !== null ? +p.il : 1)); p.pos = p.pos === 'b' ? 'b' : 'a'; p.auto = p.auto !== false; p.switchMs = Math.min(1000, Math.max(1, Number.isFinite(+p.switchMs) && p.switchMs !== '' && p.switchMs !== null ? +p.switchMs : 20)); }
@@ -535,6 +559,7 @@ const MODEL = (() => {
         if ((l.p.dir === 'ab' && l.a !== me) || (l.p.dir === 'ba' && l.b !== me)) continue; // one-way fiber: light only travels the carried way
         const v = other(l, me); if (node(v).type === 'host') continue; // a host hangs off a transponder; light never goes through it
         let extra = 0;
+        if (un.type === 'panel' && arr) { const m = /^([rf])(\d+)$/.exec(arr); if (!m || oadmSide(l, me) !== (m[1] === 'r' ? 'f' : 'r') + m[2]) continue; } // in at the rear of a port, out at the front of the same port
         if (isTriPort(un) && arr) {
           const out = oadmSide(l, me); if (arr === 'c' ? out === 'c' : out !== 'c') continue;
           if (un.type === 'switch') { const branch = arr === 'c' ? out : arr; if (branch !== (un.p.pos === 'b' ? 'b' : 'a')) { if (!un.p.auto) continue; extra = 0.5; } }
@@ -542,7 +567,7 @@ const MODEL = (() => {
         const dead = isDead(node(v));
         if (dead && !allowCut && !plan) continue;
         if (x.excludeNodes && x.excludeNodes.has(v) && v !== zId) continue;
-        const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + extra + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0), vk = isTriPort(node(v)) ? v + '#' + oadmSide(l, v) : v;
+        const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + extra + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0), vk = isTriPort(node(v)) || node(v).type === 'panel' ? v + '#' + oadmSide(l, v) : v;
         if (dist[vk] == null || dist[u] + w < dist[vk]) { dist[vk] = dist[u] + w; prev[vk] = { u, l: l.id }; }
       }
     }
@@ -1310,6 +1335,12 @@ const MODEL = (() => {
         if (dropsX) nch = 1;
         if (planOn) { if (joining.length) ev.push({ k: 'J', idx: joining, padd: lin(+p.tx - +p.ad) / 1000 }); if (!dropsX) nch = litCount(k); curAct = maskAt(k); }
         rec(nxt.name, 'oadm', b, { gain: -lo, note: (joinsX ? 'add port' : dropsX ? 'drop port' : 'passive filter') + (leaving.length ? `, ${leaving.length} channel${leaving.length > 1 ? 's' : ''} dropped (${+p.ad} dB)` : '') + (joining.length ? `, ${joining.length} added (${+p.ad} dB)` : '') });
+      } else if (t === 'panel') {
+        // A patch panel passes the light from one side of a port to the other: the loss of the connector pair, plus whatever a dirty or damaged connector adds on that port.
+        const pn = +(/\d+/.exec(oadmSide(link(path.links[i]), nxt.id)) || [0])[0], dirty = +(nxt.p.dirty && nxt.p.dirty[pn]) || 0, b = snap(), lo = +nxt.p.il + dirty + degOf(nxt); loss(lo);
+        if (planOn) { nch = litCount(i + 1); curAct = maskAt(i + 1); }
+        if (dirty > 0.3 && !eol && !rv && !W) alarms.push({ sev: 'warn', text: `${nxt.name} port ${pn}: a dirty or damaged connector costs ${f1(dirty)} dB extra. Clean it.` });
+        rec(nxt.name, 'panel', b, { gain: -lo, note: `port ${pn}: ${f1(+nxt.p.il)} dB` + (dirty ? ` + ${f1(dirty)} dB dirty connector` : '') });
       } else if (t === 'splitter' || t === 'switch') {
         // A splitter sends the light to both branches: the branch the route takes gets its share of the power (a 99/1 tap costs 0.05 dB on the main
         // branch and 20 dB on the tap). A switch passes one branch for about 1 dB. Which branch is the route's cable on that side of the device.

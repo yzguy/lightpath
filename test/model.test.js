@@ -1858,3 +1858,31 @@ test('splitter and switch: settings survive sanitize and bad values are dropped'
   const c = M.sanitize(clone(S)), sp = c.nodes.find(n => n.name === 'SPL-A').p, sw = c.nodes.find(n => n.name === 'SW-Z').p;
   assert.equal(sp.ratio, '50/50'); assert.equal(sw.pos, 'a'); assert.equal(sw.switchMs, 20); assert.equal(sw.auto, true);
 });
+
+const odf = () => M.sanitize(build('odf'));
+test('patch panel: each mated pair costs its loss, and a dirty connector costs more and raises an alarm', () => {
+  const S = odf(), r = M.simulate(S), hop = n => r.hops.find(h => h.name === n);
+  assert.equal(r.status, 'degraded'); assert.ok(Math.abs(hop('ODF-A').gain + 0.5) < 1e-9); assert.ok(Math.abs(hop('ODF-B').gain + 2.3) < 1e-9);
+  assert.ok(r.alarms.some(a => /ODF-B port 1: a dirty or damaged connector costs 1\.8 dB/.test(a.text)));
+  S.nodes.find(n => n.name === 'ODF-B').p.dirty = {};
+  const c = M.simulate(S); assert.ok(Math.abs(c.hops.find(h => h.name === 'ODF-B').gain + 0.5) < 1e-9); assert.ok(!c.alarms.some(a => /dirty/.test(a.text)));
+  assert.ok(c.qMargin > r.qMargin, 'cleaning it gives margin back');
+});
+
+test('patch panel: light enters one side of a port and leaves the other side of the same port', () => {
+  const mk = (id, ty, p = {}) => ({ id, type: ty, name: id, x: 0, y: 0, p: { ...M.TYPES[ty].def(), ...p } }), lk = (a, b, side) => ({ id: a + b, a, b, kind: 'patch', p: { ...M.linkDefaults('patch'), sb: side } });
+  const e = ['r1', 'f1', 'f2'].map(k => mk('e' + k, 'edfa')), pn = mk('pn', 'panel');
+  const S = { nodes: [...e, pn], links: [lk('er1', 'pn', 'r1'), lk('ef1', 'pn', 'f1'), lk('ef2', 'pn', 'f2')], g: {}, svc: {} };
+  assert.ok(M.route(S, 'er1', 'ef1', true) && M.route(S, 'ef1', 'er1', true));
+  assert.equal(M.route(S, 'er1', 'ef2', true), null, 'rear of port 1 does not reach the front of port 2');
+  assert.equal(M.route(S, 'ef1', 'ef2', true), null, 'front to front does not pass');
+});
+
+test('patch panel: cables get paired sides by default, and ports and dirty connectors survive sanitize', () => {
+  const S = build('odf'), oa = S.nodes.find(n => n.name === 'ODF-A'), ob = S.nodes.find(n => n.name === 'ODF-B');
+  S.links.forEach(l => { if (l.a === oa.id || l.b === oa.id) { l.p.sa = ''; l.p.sb = ''; } });
+  ob.p.dirty = { 1: 1.8, 99: 3, 2: -1, 3: 'x', 4: 50 }; ob.p.ports = 999;
+  const c = M.sanitize(clone(S)), id = c.nodes.find(n => n.name === 'ODF-A').id, sides = c.links.filter(l => l.a === id || l.b === id).map(l => (l.a === id ? l.p.sa : l.p.sb)).sort();
+  assert.deepEqual(sides, ['f1', 'r1'], 'the two cables on ODF-A end up on the two sides of port 1');
+  const cb = c.nodes.find(n => n.name === 'ODF-B').p; assert.equal(cb.ports, 48); assert.deepEqual(cb.dirty, { 1: 1.8, 4: 10 });
+});
