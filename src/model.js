@@ -10,7 +10,7 @@ const MODEL = (() => {
     trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '', slot: null, off: 0 }) },
     mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', slot: null, off: 0, clients: defaultClients() }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24 }) },
-    oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 2, def: () => ({ thru: 1.5, ad: 3, tx: 0, slots: [] }) },
+    oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, p1310: false }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5 }) },
     dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, cdRev: '', il: 7, ilRev: '' }) },
@@ -20,7 +20,7 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '' } : { il: 0.5, dir: 'both', cut: false, mport: null });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '', sa: '', sb: '' } : { il: 0.5, dir: 'both', cut: false, mport: null, sa: '', sb: '' });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -144,18 +144,19 @@ const MODEL = (() => {
       }
     },
     oadm: {
-      name: 'Passive OADM bus: add/drop at two sites', build() {
-        const ta = N('trx', 'TRX-A', 40, 140, { mode: 'zrp400' }), tz = N('trx', 'TRX-Z', 1220, 140, { mode: 'zrp400' });
-        const ma = N('mux', 'MUX-A', 160, 220), ba = N('edfa', 'BST-A', 290, 220, { gmin: 5 });
-        const ab = N('edfa', 'AMP-B', 480, 220, { gmin: 5 }), ob = N('oadm', 'OADM-B', 620, 220, { slots: [24, 25, 26, 27] });
-        const ac = N('edfa', 'AMP-C', 810, 220, { gmin: 5 }), oc = N('oadm', 'OADM-C', 950, 220, { slots: [28, 29] });
-        const pz = N('edfa', 'PRE-Z', 1090, 220, { gmin: 5 }), mz = N('mux', 'MUX-Z', 1220, 220);
-        // OADM-B serves slots 25-28 and OADM-C slots 29-30 (as numbered in the Channels tab). Every other slot passes straight through both.
-        const plan = [], ch = (slot, o = {}) => plan.push({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: slot, prot: '', ...o });
-        ch(31, { svc: true }); ch(24, { to: ob.id }); ch(25, { to: ob.id }); ch(26, { from: ob.id }); ch(27, { from: ob.id }); ch(28, { to: oc.id }); ch(29, { from: oc.id });
-        for (let k = 0; k < 4; k++) ch(40 + k);
-        return { nodes: [ta, tz, ma, ba, ab, ob, ac, oc, pz, mz], links: [L(ta, ma, 'patch'), L(ma, ba, 'patch'), L(ba, ab, 'fiber', { len: 40 }), L(ab, ob, 'patch'), L(ob, ac, 'fiber', { len: 40 }), L(ac, oc, 'patch'), L(oc, pz, 'fiber', { len: 40 }), L(pz, mz, 'patch'), L(mz, tz, 'patch')],
-          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tz.id } };
+      name: 'Passive OADM bus: transponders on add/drop ports', build() {
+        const T = (nm, x, y) => N('trx', nm, x, y, { mode: 'zrp400' });
+        const a = [1, 2, 3, 4].map(k => T('TRX-A' + k, 60, 60 + k * 90)), b = [T('TRX-B1', 540, 470), T('TRX-B2', 640, 470), T('TRX-B3', 780, 470)], c = [T('TRX-C1', 940, 470), T('TRX-C2', 1080, 470)], z = [1, 2, 3].map(k => T('TRX-Z' + k, 1470, 100 + k * 100));
+        const ma = N('mux', 'MUX-A', 220, 300, { ports: 16, first: 24 }), mz = N('mux', 'MUX-Z', 1310, 300, { ports: 16, first: 24 }), ba = N('edfa', 'BST-A', 350, 300, { gmin: 5 });
+        const ab = N('edfa', 'AMP-B', 520, 300, { gmin: 5 }), ob = N('oadm', 'OADM-B', 680, 300, { wFirst: 24, wPorts: 2, eFirst: 26, ePorts: 1 });
+        const ac = N('edfa', 'AMP-C', 850, 300, { gmin: 5 }), oc = N('oadm', 'OADM-C', 1000, 300, { wFirst: 28, wPorts: 1, eFirst: 29, ePorts: 1 }), pz = N('edfa', 'PRE-Z', 1170, 300, { gmin: 5 });
+        // Plugged in by port: A1-B1 (slot 25) and A2-B2 (26) on OADM-B's west ports, B3-Z1 (27) on its east port, A4-C1 (29) on OADM-C's west port,
+        // C2-Z3 (30) on its east port, and the service A3-Z2 (32) end to end through both. Each transponder follows its port.
+        const pa = [0, 1, 7, 4], pzz = [2, 7, 5];
+        const links = [...a.map((t, k) => L(t, ma, 'patch', { mport: pa[k] })), ...z.map((t, k) => L(t, mz, 'patch', { mport: pzz[k] })), L(ma, ba, 'patch'), L(ba, ab, 'fiber', { len: 40 }), L(ab, ob, 'patch', { sb: 'w' }),
+          L(b[0], ob, 'patch', { mport: 0, sb: 'w' }), L(b[1], ob, 'patch', { mport: 1, sb: 'w' }), L(b[2], ob, 'patch', { mport: 0, sb: 'e' }), L(ob, ac, 'fiber', { len: 40, sa: 'e' }), L(ac, oc, 'patch', { sb: 'w' }),
+          L(c[0], oc, 'patch', { mport: 0, sb: 'w' }), L(c[1], oc, 'patch', { mport: 0, sb: 'e' }), L(oc, pz, 'fiber', { len: 40, sa: 'e' }), L(pz, mz, 'patch')];
+        return { nodes: [...a, ...b, ...c, ...z, ma, mz, ba, ab, ob, ac, oc, pz], links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: a[2].id, z: z[1].id } };
       }
     },
     ports: {
@@ -304,7 +305,14 @@ const MODEL = (() => {
       if (n.type === 'roadm' || n.type === 'mux' || n.type === 'oadm') {
         const ints = (v, max) => [...new Set((Array.isArray(v) ? v : []).filter(x => typeof x === 'number' && Number.isInteger(x) && x >= 0 && x < max))].sort((a, b) => a - b).slice(0, max);
         p.badPorts = ints(n.p && n.p.badPorts, 128); p.badCards = ints(n.p && n.p.badCards, 16);
-        if (n.type === 'oadm') p.slots = ints(n.p && n.p.slots, 128);
+        if (n.type === 'oadm') {
+          const raw = n.p || {}, legacy = Array.isArray(raw.slots) && raw.slots.length && raw.eFirst === undefined ? ints(raw.slots, 128) : null; // an older lab: one list of slots, served from both sides
+          const num = (v, d, lo, hi) => (Number.isFinite(+v) && v !== '' && v !== null && typeof v !== 'boolean' ? Math.min(hi, Math.max(lo, Math.round(+v))) : d);
+          p.sides = ['ew', 'e', 'w'].includes(raw.sides) ? raw.sides : 'ew';
+          if (legacy && legacy.length) { p.eFirst = p.wFirst = legacy[0]; p.ePorts = p.wPorts = Math.min(64, legacy[legacy.length - 1] - legacy[0] + 1); }
+          else { p.eFirst = num(raw.eFirst, 24, 0, 127); p.ePorts = num(raw.ePorts, 4, 0, 64); p.wFirst = num(raw.wFirst, 24, 0, 127); p.wPorts = num(raw.wPorts, 4, 0, 64); }
+          p.p1310 = raw.p1310 === true; delete p.slots;
+        }
       }
       if (isEnd(n)) {
         p.slot = n.p && Number.isInteger(n.p.slot) && n.p.slot >= 0 && n.p.slot < 128 ? n.p.slot : null;
@@ -331,8 +339,12 @@ const MODEL = (() => {
       if (kind === 'fiber') { if (!['back', 'fwd', 'both'].includes(p.ramanDir)) p.ramanDir = 'back'; p.ramanPumps = Math.min(3, Math.max(1, Math.round(+p.ramanPumps || 1))); }
       if (kind === 'fiber') p.raman = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +p.raman || 0));
       if (kind === 'fiber' && !(p.nch === '' || (Number.isFinite(+p.nch) && +p.nch >= 1))) p.nch = '';
-      { const A = nodes.find(n => n.id === l.a), B = nodes.find(n => n.id === l.b), portable = kind === 'patch' && A && B && ((isEnd(A) && B.type === 'mux') || (isEnd(B) && A.type === 'mux')); // the mux port a transponder is plugged into
-        p.mport = portable && l.p && Number.isInteger(l.p.mport) && l.p.mport >= 0 && l.p.mport < 64 ? l.p.mport : null; }
+      { const A = nodes.find(n => n.id === l.a), B = nodes.find(n => n.id === l.b), dev = x => x && (x.type === 'mux' || x.type === 'oadm');
+        const portable = kind === 'patch' && A && B && ((isEnd(A) && dev(B)) || (isEnd(B) && dev(A))); // the port a transponder is plugged into
+        p.mport = portable && l.p && Number.isInteger(l.p.mport) && l.p.mport >= 0 && l.p.mport < 64 ? l.p.mport : null;
+        // an OADM end of a cable is on its east or west side (a port of a one-sided OADM can only be on that side); by default the side the neighbour lies on
+        const side = (me, other, given) => (me && me.type === 'oadm' ? (['e', 'w'].includes(given) && me.p.sides.includes(given) ? given : me.p.sides.length === 1 ? me.p.sides : other.x < me.x ? 'w' : 'e') : '');
+        p.sa = side(A, B, l.p && l.p.sa); p.sb = side(B, A, l.p && l.p.sb); }
       lseen.add(l.id);
       links.push({ id: l.id, a: l.a, b: l.b, kind, p });
     }
@@ -373,16 +385,39 @@ const MODEL = (() => {
   // slots each. Only the channels that join or leave the line at that device are lost; everything else keeps running.
   const PORTS_PER_CARD = 8;
   const portDown = (n, slot) => !!n && !!n.p && ((Array.isArray(n.p.badPorts) && n.p.badPorts.includes(slot)) || (Array.isArray(n.p.badCards) && n.p.badCards.includes(Math.floor(slot / PORTS_PER_CARD))));
-  // A passive OADM drops a fixed set of slots (p.slots). A channel in one of them cannot pass the filter, and a channel can only be added or
-  // dropped there in one of them. Returns why a route cannot carry a slot, or '' if it can.
-  const oadmWhy = (nodes, slot) => {
-    for (let k = 0; k < nodes.length; k++) {
+  // A passive OADM serves a block of slots on each side: east (eFirst, ePorts) and west (wFirst, wPorts). A transponder is plugged into a port of
+  // one side and talks to that side's line; a channel entering from a side in one of that side's slots is dropped. A channel can also not pass
+  // through in a slot either side serves (dropped at the input, or in the way of the added channel at the output).
+  const P1310_LOSS = 0.6; // the 1310 nm coupler on the line path
+  const oadmSide = (l, id) => (l ? (l.a === id ? l.p.sa : l.b === id ? l.p.sb : '') : '');
+  const oadmRange = (n, side) => { if (!((n.p.sides || 'ew').includes(side))) return [0, 0]; const f = Math.round(+n.p[side + 'First']) || 0; return [f, f + (Math.round(+n.p[side + 'Ports']) || 0)]; };
+  const oadmServes = (n, side, slot) => { const [a, b] = oadmRange(n, side); return slot >= a && slot < b; };
+  const sideName = s => (s === 'e' ? 'east' : 'west');
+  const oadmServed = n => ['e', 'w'].filter(s => oadmRange(n, s)[1] > oadmRange(n, s)[0]).map(s => { const [a, b] = oadmRange(n, s); return `${sideName(s)} slots ${a + 1}${b - a > 1 ? '-' + b : ''}`; }).join(', ') || 'no slots';
+  // nodes and the links between them (links[j] joins nodes[j] and nodes[j+1]); returns why a route cannot carry a slot, or ''
+  const oadmWhy = (nodes, slot, links) => {
+    const last = nodes.length - 1;
+    for (let k = 0; k <= last; k++) {
       const n = nodes[k]; if (!n || n.type !== 'oadm') continue;
-      const serves = Array.isArray(n.p.slots) && n.p.slots.includes(slot), atEnd = k === 0 || k === nodes.length - 1;
-      if (atEnd && !serves) return `${n.name} cannot add or drop slot ${slot + 1} (its filter serves ${n.p.slots.length ? 'slot' + (n.p.slots.length > 1 ? 's ' : ' ') + n.p.slots.map(x => x + 1).join(', ') : 'no slots'})`;
-      if (!atEnd && serves) return `slot ${slot + 1} is dropped by the filter at ${n.name} and cannot pass it`;
+      const sideAt = j => (links && links[j] ? oadmSide(links[j], n.id) : '');
+      if (k === 0 || k === last) { const s = k === 0 ? sideAt(0) : sideAt(last - 1); if (!oadmServes(n, s, slot)) return `${n.name} cannot add or drop slot ${slot + 1} on its ${sideName(s)} side (it serves ${oadmServed(n)})`; continue; }
+      const joins = k === 1 && isEnd(nodes[0]), drops = k === last - 1 && isEnd(nodes[last]);
+      if (joins || drops) { // a transponder plugged into a port: its port side must be the side the route uses
+        const ps = joins ? sideAt(0) : sideAt(k), ls = joins ? sideAt(1) : sideAt(k - 1);
+        if (!oadmServes(n, ps, slot)) return `${n.name} has no ${sideName(ps)} port for slot ${slot + 1} (it serves ${oadmServed(n)})`;
+        if (ls && ls !== ps) return `the transponder is on ${n.name}'s ${sideName(ps)} port but the route uses its ${sideName(ls)} line`;
+        continue;
+      }
+      if (oadmServes(n, 'e', slot) || oadmServes(n, 'w', slot)) return `slot ${slot + 1} is dropped by the filter at ${n.name} and cannot pass it`;
     }
     return '';
+  };
+  // does a route use a port of its device number k (a mux, an end ROADM or OADM, an OADM a transponder is plugged into)
+  const usesPort = (nodes, k) => {
+    const n = nodes[k]; if (!n) return false; const last = nodes.length - 1;
+    if (n.type === 'mux') return true;
+    if (n.type === 'roadm') return k === 0 || k === last;
+    return n.type === 'oadm' && (k === 0 || k === last || (k === 1 && isEnd(nodes[0])) || (k === last - 1 && isEnd(nodes[last])));
   };
   const isDead = n => !!n && !!n.p && n.p.fail === 'dead' && !onSpare(n);
   const spareLoss = n => (n && isEnd(n) && n.p && SPARE_LOSS[n.p.spare]) || 0;
@@ -424,39 +459,46 @@ const MODEL = (() => {
   // mux passes slot first+k. The channels are then what the cabling makes: a transmitter whose tuning matches its port reaches the receiver plugged into
   // the port of the same slot on another mux; anything else is dark, with a reason. Returns null for a topology that does not use mux ports.
   function derive(S) {
-    const { node, link } = mkGraph(S), g = S.g || {}, slotsN = PHY_.cBandSlots(+g.df * 1e9), atts = [];
+    const { node, link } = mkGraph(S), g = S.g || {}, slotsN = PHY_.cBandSlots(+g.df * 1e9), atts = [], dev = x => x.type === 'mux' || x.type === 'oadm';
     for (const l of S.links) {
       if (l.kind !== 'patch' || !Number.isInteger(l.p.mport)) continue;
       const a = node(l.a), b = node(l.b); if (!a || !b) continue;
-      const t = isEnd(a) ? a : isEnd(b) ? b : null, m = a.type === 'mux' ? a : b.type === 'mux' ? b : null;
-      if (t && m) atts.push({ t, m, l, port: l.p.mport });
+      const t = isEnd(a) ? a : isEnd(b) ? b : null, m = t && dev(a) ? a : t && dev(b) ? b : null;
+      if (t && m) atts.push({ t, m, l, port: l.p.mport, side: m.type === 'oadm' ? oadmSide(l, m.id) || 'e' : '' });
     }
     if (!atts.length) return null;
+    const portName = a => (a.m.type === 'oadm' ? `${a.m.name} ${sideName(a.side)} port ${a.port + 1}` : `${a.m.name} port ${a.port + 1}`);
+    const firstOf = a => (a.m.type === 'oadm' ? oadmRange(a.m, a.side)[0] : Math.round(+a.m.p.first) || 0), capOf = a => (a.m.type === 'oadm' ? oadmRange(a.m, a.side)[1] - oadmRange(a.m, a.side)[0] : Math.round(+a.m.p.ports));
     const dark = new Map(), mark = (id, why) => { if (!dark.has(id)) dark.set(id, why); }, ok = [], byPort = new Map(), seenT = new Set();
     for (const a of atts) {
       if (seenT.has(a.t.id)) continue; seenT.add(a.t.id);
-      const key = a.m.id + '|' + a.port, other = byPort.get(key);
-      if (other) { mark(a.t.id, `${a.t.name} is plugged into ${a.m.name} port ${a.port + 1}, which ${other.t.name} already uses`); continue; }
-      byPort.set(key, a); a.slot = (Math.round(+a.m.p.first) || 0) + a.port;
-      if (a.port >= Math.round(+a.m.p.ports) || a.slot >= slotsN) { mark(a.t.id, `${a.m.name} has no port ${a.port + 1} on this grid (it has ${Math.round(+a.m.p.ports)} from slot ${(Math.round(+a.m.p.first) || 0) + 1}, the grid has ${slotsN} slots)`); continue; }
+      const key = a.m.id + '|' + a.side + '|' + a.port, other = byPort.get(key);
+      if (other) { mark(a.t.id, `${a.t.name} is plugged into ${portName(a)}, which ${other.t.name} already uses`); continue; }
+      byPort.set(key, a); a.slot = firstOf(a) + a.port;
+      if (a.port >= capOf(a) || a.slot >= slotsN) { mark(a.t.id, `${a.m.name} has no ${a.m.type === 'oadm' ? sideName(a.side) + ' ' : ''}port ${a.port + 1} on this grid (it has ${capOf(a)} from slot ${firstOf(a) + 1}, the grid has ${slotsN} slots)`); continue; }
       a.tuned = Number.isInteger(a.t.p.slot) ? a.t.p.slot : a.slot;
-      if (a.tuned !== a.slot) { mark(a.t.id, `${a.t.name} is tuned to slot ${a.tuned + 1} but plugged into ${a.m.name} port ${a.port + 1}, which passes slot ${a.slot + 1}: the mux filter blocks it`); continue; }
+      if (a.tuned !== a.slot) { mark(a.t.id, `${a.t.name} is tuned to slot ${a.tuned + 1} but plugged into ${portName(a)}, which passes slot ${a.slot + 1}: the filter blocks it`); continue; }
       ok.push(a);
     }
+    // a transponder on a side of an OADM talks to that side's line only: the route may not leave (or arrive) by the other side
+    const wrongSide = a => (a.m.type === 'oadm' ? S.links.filter(l => (l.a === a.m.id || l.b === a.m.id) && oadmSide(l, a.m.id) !== a.side).map(l => l.id) : []);
     const kmOf = r => r.links.reduce((t, id) => t + (link(id).kind === 'fiber' ? +link(id).p.len : 0), 0), used = new Set(), pairs = [];
     for (const a of ok) {
       if (used.has(a.t.id)) continue;
       let best = null, bestKm = Infinity;
       for (const b of ok) {
         if (b === a || used.has(b.t.id) || b.m === a.m || b.slot !== a.slot) continue;
-        const r = route(S, a.t.id, b.t.id, true, { ignoreCut: true }); if (!r) continue;
+        const r = route(S, a.t.id, b.t.id, true, { ignoreCut: true, exclude: new Set([...wrongSide(a), ...wrongSide(b)]) }); if (!r) continue;
         const km = kmOf(r); if (km < bestKm) { best = b; bestKm = km; }
       }
-      if (!best) { mark(a.t.id, `${a.t.name} has no partner: nothing is plugged into the port for slot ${a.slot + 1} on a mux it can reach`); continue; }
+      if (!best) { mark(a.t.id, `${a.t.name} has no partner: nothing is plugged into the port for slot ${a.slot + 1} on a mux or OADM it can reach${a.m.type === 'oadm' ? ` from ${a.m.name}'s ${sideName(a.side)} side` : ''}`); continue; }
       if (a.t.p.mode !== best.t.p.mode) { const why = `${a.t.name} is ${PHY_.MODES[a.t.p.mode].short} but ${best.t.name} is ${PHY_.MODES[best.t.p.mode].short}: the ends will never lock`; mark(a.t.id, why); mark(best.t.id, why); continue; }
       used.add(a.t.id); used.add(best.t.id); pairs.push([a, best]);
     }
     const sa = S.svc && S.svc.a, sz = S.svc && S.svc.z;
+    // amplifiers are set for the service direction, so every channel runs from the end nearer the service's A end to the one further away
+    const dist = t => { const r = sa && sa !== t.id ? route(S, sa, t.id, true, { ignoreCut: true }) : null; return r ? kmOf(r) : sa === t.id ? 0 : Infinity; };
+    pairs.forEach(pr => { if (dist(pr[1].t) < dist(pr[0].t)) pr.reverse(); });
     const plan = pairs.sort((x, y) => x[0].slot - y[0].slot).map(([a, b]) => {
       const svc = (a.t.id === sa && b.t.id === sz) || (a.t.id === sz && b.t.id === sa), from = svc ? sa : a.t.id, to = svc ? sz : b.t.id, tx = from === a.t.id ? a.t : b.t;
       return { slot: a.slot, mode: a.t.p.mode, off: tx.p.off || 0, svc, from, to, via: '', conv: '', slot2: a.slot, prot: '', derived: true, tx: from, rx: to };
@@ -467,7 +509,9 @@ const MODEL = (() => {
     const want = Math.max(0, Math.round(+g.nch || 0) - plan.length), lit = new Set(plan.map(c => c.slot)), fillers = [];
     if (want && plan.length) {
       const centre = plan.reduce((t, c) => t + c.slot, 0) / plan.length, mode = (plan.find(c => c.svc) || plan[0]).mode;
-      for (const sl of [...Array(slotsN).keys()].filter(k => !lit.has(k)).sort((x, y) => Math.abs(x - centre) - Math.abs(y - centre) || x - y).slice(0, want)) fillers.push({ slot: sl, mode, off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: sl, prot: '', derived: true, filler: true });
+      // a filler runs end to end, so it may not sit in a slot an OADM on the service route serves
+      const blocked = new Set(); for (const n of S.nodes) if (n.type === 'oadm') for (const sd of ['e', 'w']) { const [x, y] = oadmRange(n, sd); for (let k = x; k < y; k++) blocked.add(k); }
+      for (const sl of [...Array(slotsN).keys()].filter(k => !lit.has(k) && !blocked.has(k)).sort((x, y) => Math.abs(x - centre) - Math.abs(y - centre) || x - y).slice(0, want)) fillers.push({ slot: sl, mode, off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: sl, prot: '', derived: true, filler: true });
     }
     const all = [...plan, ...fillers].sort((x, y) => x.slot - y.slot);
     return { plan: all, dark: [...dark].map(([id, why]) => ({ id, name: (node(id) || {}).name, why })), svcWhy, paired: pairs.length, fillers: fillers.length };
@@ -578,7 +622,7 @@ const MODEL = (() => {
     // that other channels' protection copies also use (their working routes cannot be lit in that slot together, so one failure never needs both).
     chans.forEach((c, k) => { if (c.shared && !c.svc && routes0[chans.findIndex(x => x.lg === c.lg && x.sec === c.sec && x.pc === 'w')]) dark[k] = true; });
     // A passive OADM: the filter terminates the slots it serves, so those cannot pass, and only they can be added or dropped there.
-    chans.forEach((c, k) => { const r = routes0[k]; if (!r || c.svc) return; const w = oadmWhy(r.nodes.map(id => node(id)), c.slot); if (w) { routes[k] = null; blocked[k] = true; why[k] = w; } });
+    chans.forEach((c, k) => { const r = routes0[k]; if (!r || c.svc) return; const w = oadmWhy(r.nodes.map(id => node(id)), c.slot, r.links.map(id => link(id))); if (w) { routes[k] = null; blocked[k] = true; why[k] = w; } });
     // Wavelength continuity: a slot can carry one channel per fiber. The service has priority, then plan order; a channel that meets a lit slot is blocked.
     if (!noBlock) {
       const used = new Map();
@@ -706,11 +750,11 @@ const MODEL = (() => {
         const t = SPARE_LOSS[n.p.spare] ? (P.detectMs + P.switchMs) / 1000 : P.mttr * 3600;
         devDown += 1.5 * P.devRate * t; devFail += 1.5 * P.devRate; devWorst = Math.max(devWorst, t);
       }
-      for (const d of W.nodes) { // the port this channel uses on a mux or an end ROADM: one slot's port fails far less often than the whole device
-        const n = node(d); if (!n || !P.devRate || !(n.type === 'mux' || ((n.type === 'roadm' || n.type === 'oadm') && (d === x || d === y)))) continue;
-        const r = 0.25 * P.devRate, t = isProt && !pp.P0.nodes.includes(d) ? sw : P.mttr * 3600;
+      { const wn = W.nodes.map(id => node(id)); wn.forEach((n, k) => { // the port this channel uses on a mux, an end ROADM or an OADM: one slot's port fails far less often than the whole device
+        if (!n || !P.devRate || !usesPort(wn, k)) return;
+        const r = 0.25 * P.devRate, t = isProt && !pp.P0.nodes.includes(n.id) ? sw : P.mttr * 3600;
         devDown += r * t; devFail += r; devWorst = Math.max(devWorst, t);
-      }
+      }); }
       if (isProt) {
         const pk = km(pp.P0.links);
         return { kind: prot === 'shared' ? 'shared' : '1+1', km: wk, protKm: pk, failures: lw + devFail, outageSec: Math.max(sw, devWorst), downSec: lw * sw + Uf(wk) * Uf(pk) * YEAR + devDown };
@@ -877,8 +921,8 @@ const MODEL = (() => {
     // with lo/hi the node positions where they are added and dropped. Link loads count every channel on a fiber, member or not.
     const lastPos = path.nodes.length - 1;
     // The first device on a route whose port for this slot has failed: any passive mux the channel joins or leaves through, or the add/drop ROADM at an end.
-    const filterWhy = (ids, slot) => oadmWhy(ids.map(id => node(id)), slot);
-    const portFaultOn = (ids, slot) => { for (let k = 0; k < ids.length; k++) { const n = node(ids[k]); if (n && (n.type === 'mux' || ((n.type === 'roadm' || n.type === 'oadm') && (k === 0 || k === ids.length - 1))) && portDown(n, slot)) return n; } return null; };
+    const filterWhy = (ids, slot, lids) => oadmWhy(ids.map(id => node(id)), slot, (lids || []).map(id => link(id)));
+    const portFaultOn = (ids, slot) => { const ns = ids.map(id => node(id)); for (let k = 0; k < ns.length; k++) if (usesPort(ns, k) && portDown(ns[k], slot)) return ns[k]; return null; };
     const mesh = planOn ? (W ? W.mesh : planMesh(S, chans, path, rv)) : null, members = planOn ? (W ? W.members : mesh.hosts[0].members) : [];
     const lohi = chans.map(() => null); members.forEach(m => (lohi[m.k] = m));
     const maskAt = j => { const set = mesh.loads.get(path.links[j]); return chans.map((_, k) => !!set && set.has(k)); }, litCount = j => maskAt(j).filter(Boolean).length;
@@ -1018,13 +1062,17 @@ const MODEL = (() => {
         if (planOn) { if (!drops) nch = litCount(i + 1); curAct = maskAt(i + 1); }
         rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
       } else if (t === 'oadm') {
-        // Passive add/drop filter: through channels take the small pass-through loss with no equalisation; dropped channels take the drop loss; added
-        // ones join at their own transmit power less the add loss, so they can sit above or below the line channels.
+        // Passive add/drop filter: through channels take the small pass-through loss with no equalisation; channels added or dropped take the add/drop
+        // loss (a transponder plugged into a port, or a plan channel that starts or ends here); added ones join at their own transmit power less the
+        // add loss, so they can sit above or below the line channels. A 1310 nm coupler adds a little loss to the line path.
         const p = nxt.p, k = i + 1, leaving = members.filter(m => m.hi === k && k < lastPos).map(m => m.k), joining = members.filter(m => m.lo === k).map(m => m.k);
+        const joinsX = isEnd(prv), dropsX = isEnd(nnext);
         if (leaving.length) ev.push({ k: 'D', idx: leaving, G: 1, nfe: 0, f: lin(-(+p.ad)) });
-        const b = snap(), lo = +p.thru + degOf(nxt); loss(lo);
-        if (planOn) { if (joining.length) ev.push({ k: 'J', idx: joining, padd: lin(+p.tx - +p.ad) / 1000 }); nch = litCount(k); curAct = maskAt(k); }
-        rec(nxt.name, 'oadm', b, { gain: -lo, note: 'passive filter' + (leaving.length ? `, ${leaving.length} channel${leaving.length > 1 ? 's' : ''} dropped (${+p.ad} dB)` : '') + (joining.length ? `, ${joining.length} added (${+p.ad} dB)` : '') });
+        const b = snap(), lo = (joinsX || dropsX ? +p.ad : +p.thru) + (p.p1310 ? P1310_LOSS : 0) + degOf(nxt); loss(lo);
+        if (joinsX && !planOn) nch = nchLine;
+        if (dropsX) nch = 1;
+        if (planOn) { if (joining.length) ev.push({ k: 'J', idx: joining, padd: lin(+p.tx - +p.ad) / 1000 }); if (!dropsX) nch = litCount(k); curAct = maskAt(k); }
+        rec(nxt.name, 'oadm', b, { gain: -lo, note: (joinsX ? 'add port' : dropsX ? 'drop port' : 'passive filter') + (leaving.length ? `, ${leaving.length} channel${leaving.length > 1 ? 's' : ''} dropped (${+p.ad} dB)` : '') + (joining.length ? `, ${joining.length} added (${+p.ad} dB)` : '') });
       } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il') + degOf(nxt), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(), att = +nxt.p.att + degOf(nxt); loss(att); rec(nxt.name, 'voa', b, { gain: -att }); }
       else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs, degOf(nxt)); }
@@ -1196,7 +1244,7 @@ const MODEL = (() => {
         else if (bER > m.berThr) { status = 'down'; notes.push('pre-FEC BER above the FEC limit'); }
         else if (qm < 1 || prx < m.rxMin || prx > m.rxMax) { status = 'degraded'; notes.push(qm < 1 ? `only ${f1(qm)} dB of Q margin` : prx < m.rxMin ? 'Rx below the sensitivity spec' : 'Rx above the overload point'); }
         if (f.xp > 1.5) notes.push(`XPM costs ${f1(f.xp)} dB`);
-        { const pf = portFaultOn(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot); if (pf) { status = 'los'; notes.unshift(`its port on ${pf.name} has failed (slot ${c.slot + 1})`); } const fw = filterWhy(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot); if (fw) { status = 'los'; notes.unshift(fw); } }
+        { const pf = portFaultOn(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot); if (pf) { status = 'los'; notes.unshift(`its port on ${pf.name} has failed (slot ${c.slot + 1})`); } const fw = filterWhy(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot, path.links.slice(lohi[i].lo, lohi[i].hi)); if (fw) { status = 'los'; notes.unshift(fw); } }
         const lh = lohi[i], nm = k => (node(path.nodes[k]) || {}).name, route = path.nodes.slice(lh.lo, lh.hi + 1).map(id => (node(id) || {}).name);
         return { idx: i, lg: c.lg, role: c.role, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
           from: c.from, to: c.to, via: c.via, fromName: nm(lh.lo), toName: nm(lh.hi), route, routeLinks: path.links.slice(lh.lo, lh.hi), routeNodes: path.nodes.slice(lh.lo, lh.hi + 1), partial: !!W || lh.lo > 0 || lh.hi < lastPos };
@@ -1241,7 +1289,7 @@ const MODEL = (() => {
     if (!eol && !W) { const e = simulate(S, launchOverride, { eol: true, reverse: rv, useProtect: svcOnProt }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
     // alarms & status
     const bad = [];
-    if (!eol && !rv && !W) { const fw = filterWhy(path.nodes, chans[svcIdx].slot); if (fw) bad.push(`The service channel is lost: ${fw}.`); }
+    if (!eol && !rv && !W) { const fw = filterWhy(path.nodes, chans[svcIdx].slot, path.links); if (fw) bad.push(`The service channel is lost: ${fw}.`); }
     if (!eol && !rv && !W) { const pf = portFaultOn(path.nodes, chans[svcIdx].slot); if (pf) bad.push(`The port for slot ${chans[svcIdx].slot + 1} on ${pf.name} has failed: the service channel is lost.`); }
     if (Z.p.mode !== modeKey) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
     if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} ${mode.coh === false ? 'dispersion tolerance' : 'DSP range'} of ${mode.cdTol} ps/nm.`);
@@ -1283,6 +1331,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, oadmWhy, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;
