@@ -1969,3 +1969,33 @@ test('overloads: amplifier input, OSC and 1310 nm receivers alert and show on th
   const rc = M.simulate(c), l = rc.b1310.links.find(x => x.bName === 'OADM-2');
   assert.equal(l.status, 'warn'); assert.match(l.why, /overload point.*pad/); assert.ok(rc.alarms.some(a => /1310 nm link OADM-1 to OADM-2 is overloaded/.test(a.text)));
 });
+
+test('OTDR and power meter at a patch panel', () => {
+  const S = M.sanitize(build('otdr')), nm = (X, n) => X.nodes.find(x => x.name === n), ot = nm(S, 'OTDR-1');
+  let t = M.otdrTrace(S, ot.id), att = PHY.FIBERS.smf.att * 1.1;
+  assert.match(t.endWhy, /PRE-B/); assert.ok(Math.abs(t.endKm - 60.003) < 1e-6);
+  // 0.5 dB at ODF-A, 60 km of fibre at 1625 nm, 1 dB joint, ODF-B 0.5 + 1.8 dirty, the patch cord 0.5
+  assert.ok(Math.abs(t.loss - (0.5 + 60 * att + 1 + 0.5 + 1.8 + 0.5)) < 1e-6, 'the trace adds up the events and the slope');
+  assert.ok(t.events.some(e => /ODF-B port 1/.test(e.name) && e.refl === -30), 'the dirty connector reflects more');
+  assert.ok(t.events.filter(e => /merged/.test(e.note || '')).length >= 1, 'close events merge inside the dead zone at 300 ns');
+  // a shorter pulse resolves the 3 m patch cord from the panel but runs out of range on 60 km
+  nm(S, 'OTDR-1').p.pulse = 10; t = M.otdrTrace(S, ot.id); assert.match(t.endWhy, /noise/); assert.ok(t.endKm >= 40 && t.endKm < 60);
+  nm(S, 'OTDR-1').p.pulse = 1000; t = M.otdrTrace(S, ot.id); assert.ok(t.dz > 0.1);
+  // a cut shows as a break at its position; the default is halfway
+  const c = clone(S); const fib = c.links.find(l => l.kind === 'fiber'); fib.p.cut = true; fib.p.cutAt = 20;
+  t = M.otdrTrace(c, c.nodes.find(n => n.type === 'otdr').id); const br = t.events.find(e => e.kind === 'break');
+  assert.ok(Math.abs(br.km - 20) < 1e-6); assert.match(t.endWhy, /cut 20\.0 km/);
+  fib.p.cutAt = ''; t = M.otdrTrace(c, c.nodes.find(n => n.type === 'otdr').id); assert.ok(Math.abs(t.events.find(e => e.kind === 'break').km - 30) < 1e-6);
+  // an OTDR on an amplifier is not allowed to be cabled there (sanitize drops it); an unplugged one says so
+  const bad = clone(S); bad.links.push({ id: 'zz', a: ot.id, b: nm(bad, 'BST-A').id, kind: 'patch', p: {} }); assert.equal(M.sanitize(bad).links.length, S.links.length, 'one cable and only to a test point');
+  const lone = clone(S); lone.links = lone.links.filter(l => l.a !== ot.id && l.b !== ot.id); assert.match(M.otdrTrace(lone, ot.id).endWhy, /not plugged/);
+  // the power meter reads the light at its test point, and the dirty connector shows in the reading
+  const r = M.simulate(S), pm = r.meters[nm(S, 'PM-1').id];
+  const hop = r.hops.find(h => h.name === 'ODF-B'); assert.equal(pm.status, 'ok'); assert.ok(Math.abs(pm.dbm - (hop.out.sig + 10 * Math.log10(hop.nch))) < 1e-9);
+  assert.ok(Math.abs(pm.perCh - hop.out.sig) < 1e-9);
+  // on the booster side of ODF-A the light is above the meter's range: it reads OVER
+  const o = clone(S); const l = o.links.find(x => x.a === nm(o, 'PM-1').id || x.b === nm(o, 'PM-1').id); l.a === nm(o, 'PM-1').id ? l.b = nm(o, 'ODF-A').id : l.a = nm(o, 'ODF-A').id; l.p.sa = l.p.sb = 'f1';
+  const ro = M.simulate(M.sanitize(o)), po = Object.values(ro.meters)[0]; assert.equal(po.status, 'over'); assert.ok(po.dbm > M.METER.max);
+  // a port the service light does not pass reads nothing
+  l.p.sa = l.p.sb = 'f5'; assert.equal(Object.values(M.simulate(M.sanitize(o)).meters)[0].status, 'none');
+});

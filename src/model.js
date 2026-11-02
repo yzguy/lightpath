@@ -9,6 +9,8 @@ const MODEL = (() => {
   const TYPES = {
     trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '', prot: '', conv: '' }) },
     mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '', prot: '', conv: '', clients: defaultClients() }) },
+    meter: { label: 'Power meter', hint: 'Reads the light at a test point', maxLinks: 1, def: () => ({}) },
+    otdr: { label: 'OTDR', hint: 'Traces a fibre: loss, events, breaks', maxLinks: 1, def: () => ({ pulse: 100 }) },
     host: { label: 'Host / router', hint: 'Traffic endpoint with Ethernet ports', maxLinks: 8, def: () => ({ ip: '', ports: 1, speed: 100 }) },
     splitter: { label: 'Splitter / tap', hint: 'Passive power splitter, 50/50 up to a 99/1 monitor tap', maxLinks: 3, def: () => ({ ratio: '50/50', excess: 0.3 }) },
     switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, switchMs: 20 }) },
@@ -23,8 +25,8 @@ const MODEL = (() => {
   const defaultClients = () => Array.from({ length: 4 }, () => newClient());
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
-  const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', panel: 'ODF', splitter: 'SPL', switch: 'SW', host: 'HOST', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '', sa: '', sb: '', single: false } : { il: 0.5, dir: 'both', cut: false, mport: null, sa: '', sb: '', cport: null, hport: null });
+  const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', panel: 'ODF', splitter: 'SPL', switch: 'SW', host: 'HOST', meter: 'PM', otdr: 'OTDR', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', single: false } : { il: 0.5, dir: 'both', cut: false, mport: null, sa: '', sb: '', cport: null, hport: null });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -183,6 +185,16 @@ const MODEL = (() => {
         const port = (t, r, k) => L(t, r, 'patch', { mport: k });
         return { nodes: [ra, rb, rc, a1, a2, b1, b2, c1, c2], links: [L(ra, rb, 'fiber', { len: 80 }), L(rb, rc, 'fiber', { len: 80 }), L(ra, rc, 'fiber', { len: 70 }), port(a1, ra, 0), port(a2, ra, 1), port(b1, rb, 0), port(b2, rb, 1), port(c1, rc, 0), port(c2, rc, 1)],
           g: { nch: 12, df: 75, launch: 0 }, svc: { a: a1.id, z: c1.id } };
+      }
+    },
+    otdr: {
+      name: 'OTDR and power meter at a patch panel', build() {
+        // The ODF scenario (a dirty connector on ODF-B port 1) with two instruments on test points. The OTDR is plugged into the front of ODF-A port 1 and traces
+        // the 60 km span; the power meter is on the front of ODF-B port 1 and reads the light that arrives there. Change the pulse width to trade reach against resolution.
+        const p = PRESETS.odf.build(), nm = n => p.nodes.find(x => x.name === n), oa = nm('ODF-A'), ob = nm('ODF-B');
+        const ot = N('otdr', 'OTDR-1', oa.x, oa.y - 130, { pulse: 300 }), pm = N('meter', 'PM-1', ob.x, ob.y - 130);
+        p.nodes.push(ot, pm); p.links.push(L(ot, oa, 'patch', { sb: 'f1' }), L(pm, ob, 'patch', { sb: 'f1' }));
+        return p;
       }
     },
     osc: {
@@ -441,6 +453,7 @@ const MODEL = (() => {
       }
       if (n.type === 'splitter') { p.ratio = SPLIT[p.ratio] ? p.ratio : '50/50'; p.excess = Math.min(3, Math.max(0, Number.isFinite(+p.excess) && p.excess !== '' && p.excess !== null ? +p.excess : 0.3)); }
       if (n.type === 'switch') { p.il = Math.min(10, Math.max(0, Number.isFinite(+p.il) && p.il !== '' && p.il !== null ? +p.il : 1)); p.pos = p.pos === 'b' ? 'b' : 'a'; p.auto = p.auto !== false; p.switchMs = Math.min(1000, Math.max(1, Number.isFinite(+p.switchMs) && p.switchMs !== '' && p.switchMs !== null ? +p.switchMs : 20)); }
+      if (n.type === 'otdr') p.pulse = OTDR_PULSES.includes(+p.pulse) ? +p.pulse : 100;
       if (n.type === 'host') { p.ip = parseIp(p.ip) ? String(p.ip).trim() : ''; p.ports = Math.min(8, Math.max(1, Math.round(+p.ports) || 1)); p.speed = HOST_SPEEDS.includes(+p.speed) ? +p.speed : 100; }
       if (n.type === 'roadm') { p.degrees = Math.min(9, Math.max(1, Math.round(+p.degrees) || 4)); p.ports = Math.min(64, Math.max(1, Math.round(+p.ports) || 16)); p.first = Math.min(63, Math.max(0, Math.round(+p.first) || 0)); }
       if (n.type === 'mux') { p.bidi = p.bidi === true; p.role = p.role === 'high' ? 'high' : 'low'; }
@@ -462,6 +475,10 @@ const MODEL = (() => {
       if (!l || typeof l.id !== 'string' || lseen.has(l.id) || !seen.has(l.a) || !seen.has(l.b) || l.a === l.b) continue;
       const kind = l.kind === 'fiber' ? 'fiber' : 'patch', p = fill(linkDefaults(kind), l.p);
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
+      p.cutAt = kind === 'fiber' && p.cutAt !== '' && p.cutAt !== null && typeof p.cutAt !== 'boolean' && Number.isFinite(+p.cutAt) && +p.cutAt >= 0 ? Math.min(+p.cutAt, 300) : '';
+      { const A0 = nodes.find(n => n.id === l.a), B0 = nodes.find(n => n.id === l.b), inst = x => x && (x.type === 'meter' || x.type === 'otdr'), test = x => x && (x.type === 'panel' || x.type === 'splitter' || x.type === 'switch');
+        if ((inst(A0) || inst(B0)) && !((inst(A0) && test(B0)) || (inst(B0) && test(A0)))) continue; // an instrument plugs into a patch panel, splitter or switch port and nothing else
+        if ((inst(A0) || inst(B0)) && links.some(q => [q.a, q.b].some(id => id === (inst(A0) ? A0 : B0).id))) continue; }
       if (!['both', 'ab', 'ba'].includes(p.dir)) p.dir = 'both';
       p.ramanFull = p.ramanFull === true; p.single = kind === 'fiber' && p.single === true; // one fibre carrying both directions
       p.srlg = typeof p.srlg === 'string' && /^[\w-]{0,24}$/.test(p.srlg) ? p.srlg : '';
@@ -525,6 +542,86 @@ const MODEL = (() => {
   // one side and talks to that side's line; a channel entering from a side in one of that side's slots is dropped. A channel can also not pass
   // through in a slot either side serves (dropped at the input, or in the way of the added channel at the output).
   const P1310_LOSS = 0.6; // the 1310 nm coupler on the line path
+  // ---------- instruments: power meter and OTDR ----------
+  // Both plug into a test point: a port of a patch panel (the rear or front of a numbered port), a port of a splitter (the tap) or of a switch.
+  // The power meter reads the C-band service light at that port against a range of -50 to +10 dBm: below the floor it reads LOW, above the top OVER,
+  // which is what happens when you plug a meter into a booster's output. The OTDR launches a pulse at 1625 nm through the test point and traces the fibre:
+  // it sees fibre loss, connector and splitter events, breaks and the end of the fibre, until its dynamic range runs out.
+  const OTDR_PULSES = [10, 30, 100, 300, 1000, 3000];
+  const OTDR_DR = { 10: 12, 30: 16, 100: 22, 300: 27, 1000: 32, 3000: 36 }; // dynamic range in dB of one-way loss, by pulse width (ns): representative
+  const METER = { min: -50, max: 10 };
+  const PATCH_KM = 0.003; // a patch cord is taken as 3 m
+  function meterRead(S, hops, n) {
+    const { node } = mkGraph(S), l = S.links.find(x => x.a === n.id || x.b === n.id);
+    if (!l) return { status: 'none', why: 'not plugged into anything' };
+    const dev = node(l.a === n.id ? l.b : l.a), side = oadmSide(l, dev.id);
+    const h = hops.find(x => x.name === dev.name && x.kind === dev.type);
+    if (!h) return { status: 'none', why: `no service light passes ${dev.name}`, at: dev.name };
+    const dbn = 10 * Math.log10(Math.max(1, h.nch || 1)), T = x => x.sig + dbn;
+    const mk = (v, why) => ({ dbm: v, perCh: v - dbn, status: v > METER.max ? 'over' : v < METER.min ? 'low' : 'ok', why, at: dev.name });
+    if (dev.type === 'panel') {
+      const m = /^([rf])(\d+)$/.exec(side || ''); if (!m) return { status: 'none', why: 'the cable does not name a port', at: dev.name };
+      if (+m[2] !== h.port) return { status: 'none', why: `the service light goes through port ${h.port}, not port ${m[2]}`, at: dev.name };
+      return side === h.inSide ? mk(T(h.in), `the light arriving at ${dev.name} port ${m[2]}`) : mk(T(h.out), `the light leaving ${dev.name} port ${m[2]}, after the connector pair`);
+    }
+    if (side === h.inP) return mk(T(h.in), `the light arriving at port ${side.toUpperCase()}`);
+    if (side === h.outP) return mk(T(h.out), `the light leaving port ${side.toUpperCase()}`);
+    if (dev.type === 'splitter') return mk(T(h.in) - splitLossDb(dev, side), `the tap: ${f1(splitLossDb(dev, side))} dB below the input of the ${dev.p.ratio} splitter`);
+    return { status: 'none', why: `the switch is not passing light to port ${side.toUpperCase()}`, at: dev.name };
+  }
+  function otdrTrace(S, id) {
+    const { node } = mkGraph(S), o = node(id); if (!o || o.type !== 'otdr') return null;
+    const pulse = OTDR_PULSES.includes(+o.p.pulse) ? +o.p.pulse : 100, DR = OTDR_DR[pulse], dz = 1.5 * pulse * 0.0001, att1625 = 1.1; // dead zone in km; 1625 nm loses a little more than 1550
+    const out = { id, name: o.name, pulse, dr: DR, dz, points: [{ km: 0, db: 0 }], events: [], endKm: 0, loss: 0, endWhy: '' };
+    const l0 = S.links.find(x => x.a === id || x.b === id); if (!l0) { out.endWhy = 'The OTDR is not plugged into anything.'; return out; }
+    let km = 0, loss = 0, cur = l0.a === id ? l0.b : l0.a, arr = oadmSide(l0, cur), prev = l0;
+    const sideOf = (l, nid) => (l.a === nid ? l.p.sa : l.p.sb);
+    const ev = (kind, name, dl, refl, note) => { // an event at km, merged into the last one when it falls inside the dead zone
+      const last = out.events[out.events.length - 1];
+      if (last && km - last.km < dz && kind !== 'end' && kind !== 'break') { last.loss += dl; last.refl = Math.max(last.refl, refl); last.name += ' + ' + name; last.note = (last.note ? last.note + '; ' : '') + 'merged: inside the dead zone'; }
+      else out.events.push({ km, kind, name, loss: dl, refl, note });
+      loss += dl; out.points.push({ km, db: -(loss - dl) }, { km, db: -loss });
+    };
+    const finish = why => { out.endKm = km; out.loss = loss; out.endWhy = why; };
+    const far = () => loss > DR - 1.5;
+    for (let guard = 0; guard < 80; guard++) {
+      const n = node(cur); let outSide = null;
+      if (isDead(n)) { ev('end', n.name, 0, -30, 'has failed'); return finish(`${n.name} has failed`), out; }
+      if (n.type === 'panel') {
+        const m = /^([rf])(\d+)$/.exec(arr || ''); if (!m) { ev('end', n.name, 0, -14, 'the cable does not name a port'); return finish(`${n.name}: the cable does not name a port`), out; }
+        const dirty = (n.p.dirty && +n.p.dirty[+m[2]]) || 0; ev('connector', `${n.name} port ${m[2]}`, +n.p.il + dirty, dirty > 0.3 ? -30 : -50, dirty > 0.3 ? `dirty or damaged connector (${f1(dirty)} dB extra)` : 'connector pair');
+        outSide = (m[1] === 'r' ? 'f' : 'r') + m[2];
+      } else if (n.type === 'splitter') {
+        const to = arr === 'c' ? 'a' : 'c'; ev('splitter', n.name, splitLossDb(n, arr === 'c' ? 'a' : arr), -60, arr === 'c' ? 'the trace follows branch A; branch B is lit too' : 'combiner direction'); outSide = to;
+      } else if (n.type === 'switch') {
+        if (arr !== 'c' && arr !== n.p.pos) { ev('end', n.name, 0, -30, 'the switch is on the other port'); return finish(`${n.name} is switched to port ${n.p.pos.toUpperCase()}`), out; }
+        ev('switch', n.name, +n.p.il, -55, `passing port ${(arr === 'c' ? n.p.pos : arr).toUpperCase()}`); outSide = arr === 'c' ? n.p.pos : 'c';
+      } else { ev('end', n.name, 0, -30, `${(TYPES[n.type] || {}).label || n.type} does not pass 1625 nm light`); return finish(`the pulse is reflected at ${n.name}, which does not pass 1625 nm light`), out; }
+      if (far()) { ev('noise', 'noise floor', 0, -90, `the trace sinks into the noise (dynamic range ${DR} dB): use a longer pulse`); return finish('the trace sinks into the noise: use a longer pulse'), out; }
+      const nx = S.links.find(x => x !== prev && (x.a === cur || x.b === cur) && sideOf(x, cur) === outSide && !['meter', 'otdr'].includes((node(x.a === cur ? x.b : x.a) || {}).type));
+      if (!nx) { ev('end', 'end of fibre', 0, -14, `nothing is cabled to ${n.name} ${outSide.toUpperCase()}: an open connector reflects`); return finish(`nothing is cabled to ${n.name} ${outSide.toUpperCase()}`), out; }
+      const nid = nx.a === cur ? nx.b : nx.a;
+      if (nx.kind === 'fiber') {
+        const len = +nx.p.len || 0, a = (PHY_.FIBERS[nx.p.fiber] || PHY_.FIBERS.smf).att * att1625;
+        if (isCut(S, nx)) {
+          const at = nx.p.cutAt !== '' && Number.isFinite(+nx.p.cutAt) ? Math.min(len, +nx.p.cutAt) : len / 2, d = nx.a === cur ? at : len - at;
+          km += d; loss += a * d; out.points.push({ km, db: -loss }); ev('break', `fibre ${node(nx.a).name}–${node(nx.b).name}`, 0, -14, `a break ${f1(d)} km into the span`); return finish(`the fibre is cut ${f1(d)} km into ${node(nx.a).name}–${node(nx.b).name}`), out;
+        }
+        const room = DR - 1.5 - loss; // loss the trace can still take before it sinks into the noise
+        if (a * len > room) { const d = Math.max(0, room / a); km += d; loss += a * d; out.points.push({ km, db: -loss }); ev('noise', 'noise floor', 0, -90, `the trace sinks into the noise (dynamic range ${DR} dB): use a longer pulse`); return finish('the trace sinks into the noise: use a longer pulse'), out; }
+        km += len; loss += a * len; out.points.push({ km, db: -loss });
+        if (far()) { ev('noise', 'noise floor', 0, -90, `the trace sinks into the noise (dynamic range ${DR} dB): use a longer pulse`); return finish('the trace sinks into the noise: use a longer pulse'), out; }
+        if (+nx.p.extra > 0.05) ev('connector', 'connector / splice', +nx.p.extra, +nx.p.extra > 1 ? -32 : -48, +nx.p.extra > 1 ? 'a lossy joint: dirty connector or poor splice' : 'connector or splice');
+      } else {
+        km += PATCH_KM; if (isCut(S, nx)) { ev('break', 'patch cord', 0, -14, 'a cut patch cord'); return finish('a patch cord is cut'), out; }
+        if (+nx.p.il > 0.01) ev('connector', 'patch cord', +nx.p.il, -50, 'connector');
+      }
+      prev = nx; cur = nid; arr = sideOf(nx, nid);
+      if (guard === 79) return finish('stopped: the path loops'), out;
+    }
+    return out;
+  }
+
   // ---------- 1310 nm ports and the 1510 nm supervisory channel ----------
   // An OADM's 1310 nm port carries a legacy grey client optic. That light bypasses the C-band filters, so it only sees fibre (about 0.35 dB/km), patch
   // panel ports and the couplers of the OADMs at both ends; amplifiers, ROADMs, muxes and every other active or filtered device block it.
@@ -678,7 +775,7 @@ const MODEL = (() => {
         if (cut && !allowCut && !plan) continue;
         if (x.exclude && x.exclude.has(l.id)) continue;
         if ((l.p.dir === 'ab' && l.a !== me) || (l.p.dir === 'ba' && l.b !== me)) continue; // one-way fiber: light only travels the carried way
-        const v = other(l, me); if (node(v).type === 'host') continue; // a host hangs off a transponder; light never goes through it
+        const v = other(l, me); if (node(v).type === 'host' || node(v).type === 'meter' || node(v).type === 'otdr') continue; // an instrument or a host hangs off a transponder; light never goes through it
         let extra = 0;
         if (un.type === 'panel' && arr) { const m = /^([rf])(\d+)$/.exec(arr); if (!m || oadmSide(l, me) !== (m[1] === 'r' ? 'f' : 'r') + m[2]) continue; } // in at the rear of a port, out at the front of the same port
         if (isTriPort(un) && arr) {
@@ -1468,14 +1565,14 @@ const MODEL = (() => {
         const pn = +(/\d+/.exec(oadmSide(link(path.links[i]), nxt.id)) || [0])[0], dirty = +(nxt.p.dirty && nxt.p.dirty[pn]) || 0, b = snap(), lo = +nxt.p.il + dirty + degOf(nxt); loss(lo);
         if (planOn) { nch = litCount(i + 1); curAct = maskAt(i + 1); }
         if (dirty > 0.3 && !eol && !rv && !W) alarms.push({ sev: 'warn', text: `${nxt.name} port ${pn}: a dirty or damaged connector costs ${f1(dirty)} dB extra. Clean it.` });
-        rec(nxt.name, 'panel', b, { gain: -lo, note: `port ${pn}: ${f1(+nxt.p.il)} dB` + (dirty ? ` + ${f1(dirty)} dB dirty connector` : '') });
+        rec(nxt.name, 'panel', b, { port: pn, inSide: oadmSide(link(path.links[i]), nxt.id), gain: -lo, note: `port ${pn}: ${f1(+nxt.p.il)} dB` + (dirty ? ` + ${f1(dirty)} dB dirty connector` : '') });
       } else if (t === 'splitter' || t === 'switch') {
         // A splitter sends the light to both branches: the branch the route takes gets its share of the power (a 99/1 tap costs 0.05 dB on the main
         // branch and 20 dB on the tap). A switch passes one branch for about 1 dB. Which branch is the route's cable on that side of the device.
         const inP = oadmSide(link(path.links[i]), nxt.id), branch = inP !== 'c' ? inP : oadmSide(link(path.links[i + 1]), nxt.id);
         const b = snap(), lo = (t === 'splitter' ? splitLossDb(nxt, branch) : +nxt.p.il) + degOf(nxt); loss(lo);
         if (planOn) { nch = litCount(i + 1); curAct = maskAt(i + 1); }
-        rec(nxt.name, t, b, { gain: -lo, note: t === 'splitter' ? `${nxt.p.ratio} splitter, port ${branch.toUpperCase()}: ${f1(lo)} dB` : `switch passing port ${branch.toUpperCase()}${nxt.p.pos === branch ? '' : ' (it switched away from the selected port)'}` });
+        rec(nxt.name, t, b, { inP, outP: inP === 'c' ? branch : 'c', gain: -lo, note: t === 'splitter' ? `${nxt.p.ratio} splitter, port ${branch.toUpperCase()}: ${f1(lo)} dB` : `switch passing port ${branch.toUpperCase()}${nxt.p.pos === branch ? '' : ' (it switched away from the selected port)'}` });
       } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il') + degOf(nxt), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(), att = +nxt.p.att + degOf(nxt); loss(att); rec(nxt.name, 'voa', b, { gain: -att }); }
       else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs, degOf(nxt), +pd(nxt.p, 'pinMax')); }
@@ -1526,6 +1623,7 @@ const MODEL = (() => {
         res.osc.domains.length > 1 && alarms.push({ sev: 'warn', text: `The supervisory channel is split into ${res.osc.domains.length} management domains: ${res.osc.domains.map(d => d.join(' + ')).join('; ')}.` });
       }
     }
+    if (!eol && !rv && !W) { const ms = S.nodes.filter(n => n.type === 'meter'); if (ms.length) { res.meters = {}; ms.forEach(n => { res.meters[n.id] = meterRead(S, hops, n); }); } }
     if (S._derived) { res.derived = S._derived; if (!eol && !rv && !W) for (const dk of S._derived.dark) alarms.push({ sev: 'warn', text: dk.why }); }
     // Muxponder client ports: per-port optical budget plus rate aggregation into the line port.
     const clientFatal = [];
@@ -1743,6 +1841,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;
