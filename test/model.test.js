@@ -2018,3 +2018,19 @@ test('results panel reads in order: status, diagnosis, evidence', () => {
   const at = id => shell.indexOf(`id="${id}"`);
   assert.ok(at('headline') < at('alarms') && at('alarms') < at('kpis') && at('kpis') < at('diag') && at('diag') < at('tabs'), 'alarms come before the KPI cards');
 });
+
+test('a cut the service survives is explained: the detour, its cost and the old route', () => {
+  const S = M.sanitize(build('ring')), r0 = M.simulate(S);
+  assert.equal(r0.restored, undefined, 'nothing to explain while the lab is intact'); assert.doesNotMatch(r0.headline, /restored/);
+  const fib = S.links.filter(l => l.kind === 'fiber').find(l => r0.path.links.includes(l.id)); fib.p.cut = true;
+  const r = M.simulate(S);
+  assert.equal(r.status, 'up'); assert.ok(r.km > r0.km, 'the detour is longer');
+  assert.match(r.headline, /restored over ROADM-B after ROADM-A–ROADM-C is cut: \+140\.0 km, −[\d.]+ dB margin/);
+  const a = r.alarms[0]; assert.equal(a.sev, 'info'); assert.match(a.text, /restored itself over ROADM-B.*140\.0 km longer.*Q margin falls by .* dB.*Splice the fiber back/);
+  assert.deepEqual(new Set(r.restored.links), new Set(r0.path.links), 'the ghost is the original route');
+  // a failed device that is routed around gets the same story, and with no spare route it is the LOS message, not this one
+  const d = M.sanitize(build('ring')); d.nodes.find(n => n.name === 'ROADM-C').p.fail = 'dead'; const rd = M.simulate(d);
+  if (rd.status !== 'los' && rd.restored) assert.match(rd.restored.short, /ROADM-C has failed|is cut/);
+  const dead = M.sanitize(build('lh')); dead.links.filter(l => l.kind === 'fiber')[2].p.cut = true; const rl = M.simulate(dead);
+  assert.equal(rl.status, 'los'); assert.equal(rl.restored, undefined);
+});

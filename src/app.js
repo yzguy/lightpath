@@ -175,6 +175,7 @@ function renderCanvas() {
       'aria-label': `${l.kind === 'fiber' ? `Fiber span, ${l.p.len} km` : 'Patch cord'}: ${a0.name} to ${b0.name}${cutNow ? ', cut' : ''}` });
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'hit' }));
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'wire' }));
+    if (vr && vr.restored && vr.restored.links.includes(l.id)) og.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'ghost' })); // the route the service had before the cut
     if (hiLinks.has(l.id)) og.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'chroute' }));
     else if (stbyLinks.has(l.id)) og.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'chroute stby' }));
     if (onPath.has(l.id)) {

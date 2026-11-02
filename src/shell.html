@@ -120,6 +120,7 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .failmark { fill: var(--bad); font: 700 26px var(--f-mono); pointer-events: none }
 .degmark { fill: var(--warn); font-size: 12px; pointer-events: none }
 .chroute.stby { stroke-dasharray: 2 9; opacity: .8 }
+.ghost { stroke: var(--muted); stroke-width: 5; stroke-dasharray: 1 9; stroke-linecap: round; fill: none; opacity: .75; pointer-events: none }
 .chroute { stroke: var(--mpi); stroke-width: 6; stroke-linecap: round; fill: none; opacity: 0.55; pointer-events: none }
 .node.chnode .body, .node.chnode circle:first-child { stroke: var(--mpi); stroke-width: 3 }
 .plantbl tr.hirow td { background: color-mix(in srgb, var(--mpi) 16%, transparent) }
