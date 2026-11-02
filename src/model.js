@@ -9,6 +9,7 @@ const MODEL = (() => {
   const TYPES = {
     trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '', slot: null, off: 0, peer: '' }) },
     mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', slot: null, off: 0, peer: '', clients: defaultClients() }) },
+    host: { label: 'Host / router', hint: 'Traffic endpoint with Ethernet ports', maxLinks: 8, def: () => ({ ip: '', ports: 1, speed: 100 }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24 }) },
     oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, p1310: false }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
@@ -19,8 +20,8 @@ const MODEL = (() => {
   const defaultClients = () => Array.from({ length: 4 }, () => newClient());
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
-  const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '', sa: '', sb: '' } : { il: 0.5, dir: 'both', cut: false, mport: null, sa: '', sb: '' });
+  const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', host: 'HOST', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '', sa: '', sb: '' } : { il: 0.5, dir: 'both', cut: false, mport: null, sa: '', sb: '', cport: null, hport: null });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -178,6 +179,18 @@ const MODEL = (() => {
         const port = (t, r, k) => L(t, r, 'patch', { mport: k });
         return { nodes: [ra, rb, rc, a1, a2, b1, b2, c1, c2], links: [L(ra, rb, 'fiber', { len: 80 }), L(rb, rc, 'fiber', { len: 80 }), L(ra, rc, 'fiber', { len: 70 }), port(a1, ra, 0), port(a2, ra, 1), port(b1, rb, 0), port(b2, rb, 1), port(c1, rc, 0), port(c2, rc, 1)],
           g: { nch: 12, df: 75, launch: 0 }, svc: { a: a1.id, z: c1.id } };
+      }
+    },
+    reach: {
+      name: 'Hosts reaching each other over a muxponder link', build() {
+        const H = (nm, x, y, ip) => N('host', nm, x, y, { ip, speed: 100 });
+        const ha1 = H('HOST-A1', 60, 140, '10.0.0.1/24'), ha2 = H('HOST-A2', 60, 300, '10.0.0.3/24'), hb1 = H('HOST-B1', 1230, 140, '10.0.0.2/24'), hb2 = H('HOST-B2', 1230, 300, '10.0.0.4/24');
+        const a = N('mxp', 'MXP-A', 220, 220), ma = N('mux', 'MUX-A', 380, 220), ba = N('edfa', 'BST-A', 510, 220, { gmin: 5 });
+        const pb = N('edfa', 'PRE-B', 780, 220, { gmin: 5 }), mb = N('mux', 'MUX-B', 910, 220), z = N('mxp', 'MXP-B', 1060, 220);
+        const cli = (h, m, k) => L(h, m, 'patch', { hport: 0, cport: k });
+        return { nodes: [ha1, ha2, a, ma, ba, pb, mb, z, hb1, hb2], links: [cli(ha1, a, 0), cli(ha2, a, 1), L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, z, 'patch'), cli(hb1, z, 0), cli(hb2, z, 1)],
+          g: { nch: 16, df: 75, launch: 0 }, svc: { a: a.id, z: z.id },
+          flows: [{ a: ha1.id, z: hb1.id, gbps: 60 }, { a: ha2.id, z: hb2.id, gbps: 150 }, { a: hb1.id, z: ha1.id, gbps: 20 }] };
       }
     },
     sfp10: {
@@ -347,6 +360,7 @@ const MODEL = (() => {
         p.slot = n.p && Number.isInteger(n.p.slot) && n.p.slot >= 0 && n.p.slot < 128 ? n.p.slot : null;
         p.off = Number.isFinite(+(n.p && n.p.off)) && n.p.off !== '' && n.p.off !== null && typeof n.p.off !== 'boolean' ? Math.min(10, Math.max(-10, +n.p.off)) : 0;
       }
+      if (n.type === 'host') { p.ip = parseIp(p.ip) ? String(p.ip).trim() : ''; p.ports = Math.min(8, Math.max(1, Math.round(+p.ports) || 1)); p.speed = HOST_SPEEDS.includes(+p.speed) ? +p.speed : 100; }
       if (n.type === 'roadm') { p.degrees = Math.min(9, Math.max(1, Math.round(+p.degrees) || 4)); p.ports = Math.min(64, Math.max(1, Math.round(+p.ports) || 16)); p.first = Math.min(63, Math.max(0, Math.round(+p.first) || 0)); }
       if (n.type === 'mux') { p.ports = Math.min(64, Math.max(1, Math.round(+p.ports) || 16)); p.first = Math.min(63, Math.max(0, Math.round(+p.first) || 0)); }
       if (isEnd(n)) p.spare = ['switch', 'ycable'].includes(n.p && n.p.spare) ? n.p.spare : '';
@@ -375,7 +389,11 @@ const MODEL = (() => {
         p.mport = portable && l.p && Number.isInteger(l.p.mport) && l.p.mport >= 0 && l.p.mport < 64 ? l.p.mport : null;
         // a cable end on an OADM is on its east or west side (by default the side the neighbour lies on); on a ROADM it is a degree, or for a transponder cable
         // on a ROADM whose add/drop is not directionless, the degree its port belongs to
-        p.sa = sideFor(A, B, l.p && l.p.sa, usedDeg); p.sb = sideFor(B, A, l.p && l.p.sb, usedDeg); }
+        p.sa = sideFor(A, B, l.p && l.p.sa, usedDeg); p.sb = sideFor(B, A, l.p && l.p.sb, usedDeg);
+        // a client cable joins a host port to a transponder (one client port) or a muxponder client port
+        const cli = kind === 'patch' && A && B && ((isEnd(A) && B.type === 'host') || (isEnd(B) && A.type === 'host')), host = cli ? (A.type === 'host' ? A : B) : null, end = cli ? (isEnd(A) ? A : B) : null;
+        const idx = (v, n) => (Number.isInteger(v) && v >= 0 && v < n ? v : null);
+        p.cport = cli ? idx(l.p && l.p.cport, end.type === 'mxp' ? end.p.clients.length : 1) : null; p.hport = cli ? idx(l.p && l.p.hport, host.p.ports) : null; }
       lseen.add(l.id);
       links.push({ id: l.id, a: l.a, b: l.b, kind, p });
     }
@@ -391,9 +409,11 @@ const MODEL = (() => {
     const si = o.svc && typeof o.svc === 'object' ? o.svc : {};
     const svc = { a: seen.has(si.a) ? si.a : null, z: seen.has(si.z) ? si.z : null };
     // planner demands (a traffic list for the Planner tab)
+    const hostIds = new Set(nodes.filter(n => n.type === 'host').map(n => n.id));
+    const flows = (Array.isArray(o.flows) ? o.flows : []).slice(0, 40).map(f => (f && typeof f === 'object' && hostIds.has(f.a) && hostIds.has(f.z) && f.a !== f.z && Number.isFinite(+f.gbps) && f.gbps !== '' && f.gbps !== null && typeof f.gbps !== 'boolean' ? { a: f.a, z: f.z, gbps: Math.min(1600, Math.max(0, +f.gbps)) } : null)).filter(Boolean);
     const demands = (Array.isArray(o.demands) ? o.demands : []).slice(0, 40).map(d => (d && typeof d === 'object' && seen.has(d.a) && seen.has(d.z) && d.a !== d.z && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.a) || {}).type) && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.z) || {}).type)
       ? { a: d.a, z: d.z, mode: PHY_.MODES[d.mode] ? d.mode : 'zrp400', count: Math.min(96, Math.max(1, Math.round(num(d.count, 1)))) } : null)).filter(Boolean);
-    return { nodes, links, g, svc, demands };
+    return { nodes, links, g, svc, demands, flows };
   }
 
   // ---------- graph helpers ----------
@@ -473,7 +493,8 @@ const MODEL = (() => {
         if (cut && !allowCut && !plan) continue;
         if (x.exclude && x.exclude.has(l.id)) continue;
         if ((l.p.dir === 'ab' && l.a !== u) || (l.p.dir === 'ba' && l.b !== u)) continue; // one-way fiber: light only travels the carried way
-        const v = other(l, u), dead = isDead(node(v));
+        const v = other(l, u); if (node(v).type === 'host') continue; // a host hangs off a transponder; light never goes through it
+        const dead = isDead(node(v));
         if (dead && !allowCut && !plan) continue;
         if (x.excludeNodes && x.excludeNodes.has(v) && v !== zId) continue;
         const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0);
@@ -484,6 +505,114 @@ const MODEL = (() => {
     let c = zId;
     while (c !== aId) { links.unshift(prev[c].l); c = prev[c].u; nodes.unshift(c); }
     return { nodes, links };
+  }
+
+  // ---------- hosts: reachability and traffic over the optical network ----------
+  const HOST_SPEEDS = [1, 10, 25, 40, 50, 100, 200, 400, 800];
+  const LAT = { fiberUsPerKm: 4.9, coherentUs: 10, directUs: 1 }; // propagation in glass, and the DSP/FEC delay of one coherent (or one direct-detect) transceiver; representative
+  function parseIp(str) {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(String(str || '').trim()); if (!m) return null;
+    const o = m.slice(1, 5).map(Number), pl = +m[5]; if (o.some(x => x > 255) || pl > 32) return null;
+    const addr = (((o[0] << 24) >>> 0) + (o[1] << 16) + (o[2] << 8) + o[3]) >>> 0, mask = pl === 0 ? 0 : (0xFFFFFFFF << (32 - pl)) >>> 0;
+    return { addr, mask, net: (addr & mask) >>> 0, pl, text: `${o.join('.')}/${pl}` };
+  }
+  const fmtNet = x => [24, 16, 8, 0].map(sh => (x.net >>> sh) & 255).join('.') + '/' + x.pl;
+  // the lit channels that could carry host traffic: one entry per plan channel (or the service alone), with the two transponders at its ends
+  function channelTable(S, res) {
+    const E = effective(S), plan = E.g.plan, a = S.svc && S.svc.a, z = S.svc && S.svc.z, out = [];
+    if (Array.isArray(plan) && plan.length && res && res.channels) plan.forEach((c, i) => { const ch = res.channels[i]; if (c.filler || !ch) return; out.push({ i, slot: c.slot, a: c.svc || !c.from ? a : c.from, z: c.svc || !c.to ? z : c.to, ch, mode: PHY_.MODES[c.mode] || res.mode }); });
+    else if (res && res.mode) out.push({ i: -1, slot: null, a, z, ch: { status: res.status, notes: res.status === 'up' ? [] : [res.headline], routeLinks: res.path ? res.path.links : [], routeNodes: res.path ? res.path.nodes : [], qMargin: res.qMargin, rate: res.mode.rate }, mode: res.mode });
+    return out;
+  }
+  // One-way latency in microseconds along a channel: fibre, any dispersion-compensating fibre, and the two transceivers
+  function latencyUs(S, entry) {
+    const { link, node } = mkGraph(S); let us = 0, km = 0;
+    for (const id of entry.ch.routeLinks || []) { const l = link(id); if (l && l.kind === 'fiber') { km += +l.p.len; us += +l.p.len * LAT.fiberUsPerKm; } }
+    for (const id of entry.ch.routeNodes || []) { const n = node(id); if (n && n.type === 'dcm') us += Math.abs(+n.p.cd) / 17 * LAT.fiberUsPerKm; }
+    us += 2 * (entry.mode && entry.mode.coh === false ? LAT.directUs : LAT.coherentUs);
+    return { us, km };
+  }
+  // Can host A reach host Z? Every step the packet needs is checked in order, so the first one that fails says what is wrong:
+  // the client cable and optic at each end, the transponders, the channel between them, its optical status, and the addresses.
+  function reach(S, res) {
+    const { node } = mkGraph(S), hosts = S.nodes.filter(n => n.type === 'host'), tbl = channelTable(S, res), out = [];
+    const dark = new Map(((res && res.derived && res.derived.dark) || []).map(d => [d.id, d.why]));
+    const cables = h => S.links.filter(l => l.kind === 'patch' && (l.a === h.id || l.b === h.id)).map(l => ({ l, end: node(l.a === h.id ? l.b : l.a) })).filter(x => x.end && isEnd(x.end));
+    // the client side of one host cable: does the host port match the transponder's client port, and is that port itself healthy
+    const side = (h, c, steps) => {
+      const e = c.end, hp = c.l.p.hport == null ? 0 : c.l.p.hport, cp = c.l.p.cport == null ? 0 : c.l.p.cport;
+      steps.push({ ok: true, text: `${h.name} port ${hp + 1} is cabled to ${e.name}${e.type === 'mxp' ? ` client port ${cp + 1}` : ''}` });
+      const m = PHY_.MODES[e.p.mode];
+      if (e.type === 'trx') {
+        if (+h.p.speed !== m.rate) { steps.push({ ok: false, text: `${e.name} is a ${m.rate}G transponder (${m.short}) but ${h.name}'s port is ${h.p.speed}G: the client link cannot come up` }); return null; }
+        steps.push({ ok: true, text: `${h.name}'s ${h.p.speed}G port matches the ${m.rate}G ${e.name}` });
+        return { e, rate: m.rate, cp: 0 };
+      }
+      const cl = e.p.clients[cp]; if (!cl) { steps.push({ ok: false, text: `${e.name} has no client port ${cp + 1}` }); return null; }
+      const b = PHY_.clientBudget(cl);
+      if (+h.p.speed !== b.optic.rate) { steps.push({ ok: false, text: `${e.name} client port ${cp + 1} is a ${b.optic.name} (${b.optic.rate}G) but ${h.name}'s port is ${h.p.speed}G` }); return null; }
+      if (b.status === 'down') { steps.push({ ok: false, text: `${e.name} client port ${cp + 1}: ${b.notes[0]}` }); return null; }
+      const total = e.p.clients.reduce((t, c) => t + PHY_.CLIENT_OPTICS[c.optic].rate, 0);
+      if (total > m.rate) { steps.push({ ok: false, text: `${e.name}'s client ports add up to ${total}G, more than the ${m.short} line port carries (${m.rate}G)` }); return null; }
+      steps.push({ ok: true, text: `Client port ${cp + 1} (${b.optic.name}) has ${b.margin.toFixed(1)} dB of margin${b.status === 'warn' ? ': ' + b.notes[0] : ''}` });
+      return { e, rate: b.optic.rate, cp };
+    };
+    for (let i = 0; i < hosts.length; i++) for (let j = i + 1; j < hosts.length; j++) {
+      const A = hosts[i], Z = hosts[j], ca = cables(A), cz = cables(Z); let best = null;
+      const attempts = ca.length && cz.length ? ca.flatMap(x => cz.map(y => [x, y])) : [[null, null]];
+      for (const [x, y] of attempts) {
+        const steps = [], fail = text => { steps.push({ ok: false, text }); return { steps, ok: false }; };
+        let r;
+        if (!x) r = fail(!ca.length ? `${A.name} is not cabled to a transponder or muxponder` : `${Z.name} is not cabled to a transponder or muxponder`);
+        else {
+          const sa = side(A, x, steps), sz = sa ? side(Z, y, steps) : null;
+          if (!sa || !sz) r = { steps, ok: false };
+          else if (dark.get(sa.e.id)) r = fail(`${sa.e.name} is dark: ${dark.get(sa.e.id)}`);
+          else if (dark.get(sz.e.id)) r = fail(`${sz.e.name} is dark: ${dark.get(sz.e.id)}`);
+          else if (sa.e === sz.e) r = fail(`${A.name} and ${Z.name} hang off the same ${sa.e.type === 'mxp' ? 'muxponder' : 'transponder'}, ${sa.e.name}: it does not switch between its own ports, so this traffic never reaches the line`);
+          else if (sa.e.type !== sz.e.type) r = fail(`${sa.e.name} is a ${sa.e.type === 'mxp' ? 'muxponder' : 'transponder'} and ${sz.e.name} a ${sz.e.type === 'mxp' ? 'muxponder' : 'transponder'}: their client sides do not map onto each other`);
+          else if (sa.e.type === 'mxp' && sa.cp !== sz.cp) r = fail(`${sa.e.name} client port ${sa.cp + 1} is carried to client port ${sa.cp + 1} on the far muxponder, but ${Z.name} is on ${sz.e.name} client port ${sz.cp + 1}`);
+          else {
+            const en = tbl.find(t => (t.a === sa.e.id && t.z === sz.e.id) || (t.a === sz.e.id && t.z === sa.e.id));
+            if (!en) r = fail(`no channel connects ${sa.e.name} and ${sz.e.name}${res && res.derived ? ': plug each into the port for the same slot, with the same tuning, on a mux, OADM or ROADM on the way' : ': add a channel between them in the Channels tab'}`);
+            else if (sa.e.p.mode !== sz.e.p.mode) r = fail(`${sa.e.name} is ${PHY_.MODES[sa.e.p.mode].short} but ${sz.e.name} is ${PHY_.MODES[sz.e.p.mode].short}: the line ports will never lock`);
+            else if (['down', 'los', 'blocked', 'nopath', 'standby', 'unreachable'].includes(en.ch.status)) { steps.push({ ok: true, text: `Channel ${en.slot != null ? 'in slot ' + (en.slot + 1) : 'of the service'} joins ${sa.e.name} and ${sz.e.name}` }); r = fail(`the channel is ${en.ch.status.toUpperCase()}: ${(en.ch.notes && en.ch.notes[0]) || 'no light reaches the far end'}`); }
+            else {
+              steps.push({ ok: true, text: `Channel ${en.slot != null ? 'in slot ' + (en.slot + 1) : 'of the service'} joins ${sa.e.name} and ${sz.e.name} and is ${en.ch.status.toUpperCase()}${en.ch.qMargin != null ? ` (${en.ch.qMargin.toFixed(1)} dB Q margin)` : ''}` });
+              const ia = parseIp(A.p.ip), iz = parseIp(Z.p.ip);
+              if (ia && iz && ia.addr === iz.addr) r = fail(`both hosts use the address ${ia.text.split('/')[0]}`);
+              else if (ia && iz && (ia.net !== iz.net || ia.pl !== iz.pl)) r = fail(`${A.name} is on ${fmtNet(ia)} and ${Z.name} on ${fmtNet(iz)}: different subnets need a router, and a host cannot reach across them`);
+              else {
+                if (ia && iz) steps.push({ ok: true, text: `Both hosts are on ${fmtNet(ia)}` });
+                const lt = latencyUs(S, en);
+                r = { steps, ok: true, entry: en, rate: Math.min(sa.rate, sz.rate), latencyUs: lt.us, km: lt.km, degraded: en.ch.status === 'degraded', cp: sa.cp };
+              }
+            }
+          }
+        }
+        if (!best || (r.ok && !best.ok) || (!r.ok && !best.ok && r.steps.length > best.steps.length)) best = r;
+        if (best.ok) break;
+      }
+      out.push({ a: A.id, z: Z.id, ok: best.ok, degraded: !!best.degraded, steps: best.steps, why: best.ok ? '' : best.steps[best.steps.length - 1].text, latencyUs: best.latencyUs, km: best.km, rate: best.rate, entry: best.entry || null, cp: best.cp });
+    }
+    return out;
+  }
+  // The offered traffic (S.flows, Gb/s from one host to another) over the channels the hosts can use. A flow is capped by its host ports and client
+  // optics; the flows that share a channel in one direction are scaled down together when they add up to more than the line rate.
+  function traffic(S, res) {
+    const R = reach(S, res), { node } = mkGraph(S), flows = S.flows || [], chan = new Map(), out = [];
+    const find = (a, z) => R.find(r => (r.a === a && r.z === z) || (r.a === z && r.z === a));
+    for (const f of flows) {
+      const r = find(f.a, f.z), A = node(f.a), Z = node(f.z), cap = A && Z ? Math.min(+A.p.speed, +Z.p.speed) : 0, o = { a: f.a, z: f.z, offered: f.gbps, ok: !!(r && r.ok), why: r ? r.why : 'unknown hosts', delivered: 0, lossPct: 100, latencyUs: r ? r.latencyUs : null, slot: r && r.entry ? r.entry.slot : null };
+      if (r && r.ok) {
+        const want = Math.min(f.gbps, cap, r.rate), key = (r.entry.i) + '|' + (r.a === f.a ? 'ab' : 'ba');
+        if (!chan.has(key)) chan.set(key, { slot: r.entry.slot, dir: key.split('|')[1], cap: r.entry.ch.rate || (r.entry.mode && r.entry.mode.rate), load: 0, flows: [], a: r.a === f.a ? r.a : r.z, z: r.a === f.a ? r.z : r.a });
+        const c = chan.get(key); c.load += want; c.flows.push(o); o.want = want;
+      }
+      out.push(o);
+    }
+    for (const c of chan.values()) { const k = c.cap ? Math.min(1, c.cap / c.load) : 1; c.util = c.cap ? Math.min(1, c.load / c.cap) : 0; c.over = c.load > c.cap; for (const o of c.flows) { o.delivered = o.want * k; o.lossPct = o.offered > 0 ? 100 * (1 - o.delivered / o.offered) : 0; } }
+    return { flows: out, channels: [...chan.values()] };
   }
 
   // ---------- channels defined by the cabling ----------
@@ -1369,6 +1498,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

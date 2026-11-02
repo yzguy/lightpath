@@ -68,6 +68,12 @@ function nodeShape(n) {
     g.append(sv('path', { d: 'M-30,-30 L30,-14 L30,14 L-30,30 Z', class: 'body' }));
     for (let i = -2; i <= 2; i++) g.append(sv('line', { x1: -30, y1: i * 10, x2: -14, y2: i * 4, class: 'thin' }));
     g.append(sv('line', { x1: 0, y1: 0, x2: 30, y2: 0, class: 'thin' }));
+  } else if (n.type === 'host') {
+    g.append(sv('rect', { x: -38, y: -20, width: 76, height: 40, rx: 4, class: 'body' }));
+    g.append(sv('line', { x1: -38, y1: -7, x2: 38, y2: -7, class: 'thin' }));
+    const t = sv('text', { x: -30, y: -11, class: 'glyph small' }); t.textContent = 'HOST'; g.append(t);
+    const ip = sv('text', { x: 0, y: 9, class: 'glyph small', 'text-anchor': 'middle' }); ip.textContent = (n.p.ip || '').split('/')[0] || 'no address'; g.append(ip);
+    for (let k = 0; k < n.p.ports; k++) g.append(sv('circle', { cx: 30 - k * 9, cy: -14, r: 2.2, class: 'led' }));
   } else if (n.type === 'oadm') {
     g.append(sv('rect', { x: -34, y: -20, width: 68, height: 40, rx: 4, class: 'body' }));
     g.append(sv('line', { x1: -34, y1: 0, x2: 34, y2: 0, class: 'thin' }));
@@ -130,6 +136,7 @@ function renderCanvas() {
     { const pl = portLink(l), labelAt = (m, o, text) => { // a small label on the cable, next to the device end
         const dx = o.x - m.x, dy = o.y - m.y, d = Math.hypot(dx, dy) || 1, t = sv('text', { x: m.x + dx / d * 52, y: m.y + dy / d * 52 - 5, class: 'llabel', 'text-anchor': 'middle' }); t.textContent = text; g.append(t); };
       if (pl && l.p.mport != null) { const sd = sideOf(l, pl.m); labelAt(pl.m, pl.t, pl.m.type === 'roadm' ? `${sd ? 'D' + sd + '·' : ''}P${l.p.mport + 1}` : `${sd ? sd.toUpperCase() : 'P'}${l.p.mport + 1} · ${sideRange(pl.m, sd)[0] + l.p.mport + 1}`); }
+      if (clientLink(l)) { const h = a.type === 'host' ? a : b, e = h === a ? b : a; labelAt(h, e, `eth${(l.p.hport ?? 0) + 1}`); if (e.type === 'mxp') labelAt(e, h, `C${(l.p.cport ?? 0) + 1}`); }
       for (const n of [a, b]) if ((n.type === 'oadm' || n.type === 'roadm') && !(pl && pl.m === n) && sideOf(l, n)) labelAt(n, n === a ? b : a, n.type === 'roadm' ? 'D' + sideOf(l, n) : SIDE[sideOf(l, n)]); }
     lg.append(g);
   }
@@ -203,6 +210,9 @@ svg.addEventListener('wheel', e => {
 svg.addEventListener('dblclick', e => { const nEl = e.target.closest('.node'); if (nEl && isEnd(node(nEl.dataset.id))) setEnd(nEl.dataset.id); });
 
 // a transponder or muxponder plugged into a passive mux: the cable's `mport` is the mux port it uses (port k passes slot first+k)
+const clientLink = l => { const a = node(l.a), b = node(l.b); return !!a && !!b && l.kind === 'patch' && ((isEnd(a) && b.type === 'host') || (isEnd(b) && a.type === 'host')); }; // host port to transponder or muxponder client port
+const clientCount = e => (e.type === 'mxp' ? e.p.clients.length : 1);
+const fmtUs = us => (us < 1000 ? `${us.toFixed(0)} µs` : `${(us / 1000).toFixed(2)} ms`);
 const isDev = n => !!n && (n.type === 'mux' || n.type === 'oadm' || n.type === 'roadm');
 const portLink = l => { const a = node(l.a), b = node(l.b); if (!a || !b || l.kind !== 'patch') return null; return isEnd(a) && isDev(b) ? { t: a, m: b } : isEnd(b) && isDev(a) ? { t: b, m: a } : null; };
 const SIDE = { e: 'East', w: 'West' };
@@ -221,9 +231,21 @@ const portSlotText = (m, k, side) => `${side ? sideLabel(m, side) + ' port' : 'P
 function slotBox(obj, key, id) { const i = el('input', { type: 'number', step: 1, min: 1, max: 64, value: (Math.round(+obj[key]) || 0) + 1, id }); i.addEventListener('input', () => { if (i.value !== '' && isFinite(+i.value)) { obj[key] = Math.min(63, Math.max(0, Math.round(+i.value) - 1)); recompute(); } }); return i; }
 function connect(a, b, kind) {
   if (S.links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return toast('Those two are already connected.');
-  for (const n of [a, b]) if (linksOf(n.id).length >= TYPES[n.type].maxLinks) return toast(`${n.name} has no free port. ${TYPES[n.type].label}s have ${isEnd(n) ? 'two line ports: the second is for dual-homing' : TYPES[n.type].maxLinks === 1 ? 'one line port' : 'an input and an output'}.`);
+  const cli = (isEnd(a) && b.type === 'host') || (isEnd(b) && a.type === 'host');
+  if (!cli && (a.type === 'host' || b.type === 'host')) return toast('A host connects to a transponder or muxponder client port, nothing else.');
+  let hp = null, cp = null;
+  if (cli) {
+    const h = a.type === 'host' ? a : b, e = a.type === 'host' ? b : a, mine = S.links.filter(clientLink);
+    const usedH = new Set(mine.filter(x => x.a === h.id || x.b === h.id).map(x => x.p.hport)), usedC = new Set(mine.filter(x => x.a === e.id || x.b === e.id).map(x => x.p.cport));
+    for (let k = 0; k < h.p.ports && hp == null; k++) if (!usedH.has(k)) hp = k;
+    for (let k = 0; k < clientCount(e) && cp == null; k++) if (!usedC.has(k)) cp = k;
+    if (hp == null) return toast(`${h.name} has no free port (it has ${h.p.ports}). Raise the port count in its inspector.`);
+    if (cp == null) return toast(`${e.name} has no free client port.`);
+  }
+  else for (const n of [a, b]) if (S.links.filter(x => !clientLink(x) && (x.a === n.id || x.b === n.id)).length >= TYPES[n.type].maxLinks) return toast(`${n.name} has no free port. ${TYPES[n.type].label}s have ${isEnd(n) ? 'two line ports: the second is for dual-homing' : TYPES[n.type].maxLinks === 1 ? 'one line port' : 'an input and an output'}.`);
   for (const [n, o] of [[a, b], [b, a]]) if (n.type === 'roadm' && !isEnd(o) && S.links.filter(x => !portLink(x) && (x.a === n.id || x.b === n.id)).length >= n.p.degrees) return toast(`${n.name} has no free degree (it has ${n.p.degrees}). Raise the degree count in its inspector.`);
   const l = { id: uid('l'), a: a.id, b: b.id, kind, p: linkDefaults(kind) };
+  if (cli) { l.p.hport = hp; l.p.cport = cp; }
   S.links.push(l);
   for (const n of [a, b]) {
     const o = n === a ? b : a;
@@ -392,6 +414,11 @@ function renderInspector() {
       { const used = portsUsed(n), rows = []; for (const sd of deviceSides(n)) { const [f, e] = sideRange(n, sd); for (let k = 0; k < Math.min(64, e - f); k++) rows.push(`${portSlotText(n, k, sd)}: ${used.has(sd + '|' + k) ? used.get(sd + '|' + k).name : '—'}`); }
         box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the ROADM to plug it into a port. Typical add/drop loss: colored 4-6 dB, colorless 6-9 dB (with an amplifier), contentionless 9-12 dB.' }), el('pre', { class: 'muted small', style: 'max-height:150px;overflow:auto;white-space:pre-wrap', text: rows.join('\n') || 'No ports.' })); }
       box.append(el('p', { class: 'muted small', text: 'Express traffic passes two WSSs (route and select). Add or drop passes one WSS plus the add/drop structure. Each WSS pass narrows the passband a little.' }));
+    } else if (n.type === 'host') {
+      const ipi = el('input', { value: p.ip || '', id: 'f-ip', placeholder: '10.0.0.1/24' }); ipi.addEventListener('input', () => { p.ip = ipi.value.trim(); recompute(); });
+      box.append(field('Address / prefix', ipi, 'Optional. Two hosts can only reach each other if they are on the same subnet (there is no router between them). Leave empty to skip the check.'));
+      box.append(field('Ethernet ports', numIn(p, 'ports', 1, 1, 8)), field('Port speed (Gb/s)', selIn(p, 'speed', [1, 10, 25, 40, 50, 100, 200, 400, 800].map(v => [v, `${v}G`])), 'It has to match the client optic of the muxponder port, or the rate of the transponder, it is cabled to.'));
+      box.append(el('p', { class: 'muted small', text: 'Cable a port to a transponder or a muxponder client port. The Reachability tab shows whether it can reach the other hosts, and why not.' }));
     } else if (n.type === 'dcm') {
       box.append(field('Dispersion (ps/nm)', numIn(p, 'cd', 10, -8000, 8000)));
       box.append(field('Insertion loss (dB)', numIn(p, 'il', 0.5, 0, 20)));
@@ -408,6 +435,18 @@ function renderInspector() {
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
     if (l.p.dir == null) l.p.dir = 'both';
     { const na = node(l.a), nb = node(l.b); box.append(field('Carries light', selIn(l.p, 'dir', [['both', 'Both ways (a fiber pair)'], ['ab', `${na ? na.name : 'a'} → ${nb ? nb.name : 'b'} only`], ['ba', `${nb ? nb.name : 'b'} → ${na ? na.name : 'a'} only`]]), 'A one-way fiber lets each direction take a different route.')); }
+    if (clientLink(l)) {
+      const a = node(l.a), h = a.type === 'host' ? a : node(l.b), e = h === a ? node(l.b) : a, mine = S.links.filter(x => x !== l && clientLink(x));
+      const usedH = new Set(mine.filter(x => x.a === h.id || x.b === h.id).map(x => x.p.hport)), usedC = new Map(mine.filter(x => x.a === e.id || x.b === e.id).map(x => [x.p.cport, (node(x.a).type === 'host' ? node(x.a) : node(x.b)).name]));
+      const hs = el('select', { id: 'f-hport', 'aria-label': 'Host port' });
+      for (let k = 0; k < h.p.ports; k++) hs.append(el('option', { value: String(k), text: `Port ${k + 1} (${h.p.speed}G)` + (usedH.has(k) ? ' · in use' : '') }));
+      hs.value = String(l.p.hport ?? 0); hs.addEventListener('change', () => { l.p.hport = +hs.value; renderAll(); });
+      box.append(field(`Port on ${h.name}`, hs));
+      const cs = el('select', { id: 'f-cport', 'aria-label': 'Client port' });
+      for (let k = 0; k < clientCount(e); k++) { const o = e.type === 'mxp' ? PHY.CLIENT_OPTICS[e.p.clients[k].optic] : null; cs.append(el('option', { value: String(k), text: `Client port ${k + 1}` + (o ? ` (${o.name})` : ` (${PHY.MODES[e.p.mode].rate}G)`) + (usedC.has(k) ? ` · in use by ${usedC.get(k)}` : '') })); }
+      cs.value = String(l.p.cport ?? 0); cs.addEventListener('change', () => { l.p.cport = +cs.value; renderAll(); });
+      box.append(field(`Client port on ${e.name}`, cs, e.type === 'mxp' ? 'A muxponder client port is carried to the same-numbered client port on the far muxponder.' : 'A transponder has one client port; it has to match the line rate.'));
+    }
     if (portLink(l)) {
       const { t, m } = portLink(l), used = portsUsed(m, l), so = el('select', { id: 'f-mport', 'aria-label': 'Port' });
       so.append(el('option', { value: '', text: 'Not assigned (no port model)' }));
@@ -598,6 +637,7 @@ function renderTabBody() {
   if (tab === 'plan') return b.append(planView(r));
   if (tab === 'resil') return b.append(resilView());
   if (tab === 'planner') return b.append(plannerView());
+  if (tab === 'reach') return b.append(reachView());
   if (!r || !r.hops) return b.append(el('p', { class: 'muted pad', text: r ? r.headline : '' }));
   if (tab === 'power') b.append(powerChart(r));
   else if (tab === 'hops') b.append(hopTable(r));
@@ -926,6 +966,47 @@ function constView(r) {
   return wrap;
 }
 
+// can the hosts reach each other, and what is the first thing in the way if not; plus offered traffic over the channels
+let reachSel = null;
+function reachView() {
+  const hosts = S.nodes.filter(n => n.type === 'host'), wrap = el('div', { class: 'planwrap pad' });
+  if (hosts.length < 2) return el('p', { class: 'muted pad', text: 'Add two or more hosts (Host / router in the palette) and cable each to a transponder or a muxponder client port. This tab then shows whether they can reach each other over the optical network, how long it takes, and what is wrong when they cannot.' });
+  const R = MODEL.reach(S, lastRes), T = MODEL.traffic(S, lastRes), name = id => (node(id) || {}).name, hplan = lastRes && lastRes.derived ? lastRes.derived.plan : S.g.plan;
+  const key = r => r.a + '|' + r.z; if (!R.some(r => key(r) === reachSel)) reachSel = (R.find(r => !r.ok) || R[0]) ? key(R.find(r => !r.ok) || R[0]) : null;
+  const tbl = el('table', { class: 'tbl reachtbl' }), th = el('tr'); ['Between', 'Reachable', 'One-way latency', 'Rate', 'First problem'].forEach(h => th.append(el('th', { text: h })));
+  tbl.append(el('thead', {}, [th]));
+  const tb = el('tbody');
+  for (const r of R) tb.append(el('tr', { class: key(r) === reachSel ? 'selrow' : '', onclick: () => { reachSel = key(r); hiChan = r.entry && r.entry.i >= 0 && hplan ? hplan[r.entry.i] || null : null; renderCanvas(); renderTabBody(); } },
+    [`${name(r.a)} ↔ ${name(r.z)}`, el('span', { class: r.ok ? (r.degraded ? 'st-degraded' : 'st-up') : 'st-down', text: r.ok ? (r.degraded ? 'YES (degraded)' : 'YES') : 'NO' }), r.ok ? fmtUs(r.latencyUs) : '', r.ok ? `${r.rate}G` : '', r.ok ? '' : r.why].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x })))));
+  tbl.append(tb);
+  wrap.append(el('div', { class: 'planbar' }, [el('b', { text: 'Can they reach each other?' }), el('span', { class: 'muted small', text: `${R.filter(r => r.ok).length} of ${R.length} host pairs` })]), el('div', { style: 'overflow:auto;max-height:200px' }, [tbl]));
+  const cur = R.find(r => key(r) === reachSel);
+  if (cur) {
+    const ol = el('ol', { class: 'steps' }, cur.steps.map(st => el('li', { class: st.ok ? 'ok' : 'bad', text: st.text })));
+    wrap.append(el('h4', { text: `Trace: ${name(cur.a)} → ${name(cur.z)}` }), ol);
+    if (cur.ok) wrap.append(el('p', { class: 'muted small', text: `One way ${fmtUs(cur.latencyUs)} (${Math.round(cur.km)} km of fibre at 4.9 µs/km plus the transceivers), round trip ${fmtUs(2 * cur.latencyUs)}. Rate ${cur.rate}G.` }));
+  }
+  // offered traffic
+  S.flows ??= [];
+  const flowBar = el('div', { class: 'planbar' }, [el('b', { text: 'Traffic' }), el('button', { class: 'btn', text: 'Add flow', onclick: () => { S.flows.push({ a: hosts[0].id, z: hosts[1].id, gbps: 10 }); renderTabBody(); save(); } })]);
+  wrap.append(flowBar);
+  if (S.flows.length) {
+    const ft = el('table', { class: 'tbl' }), fh = el('tr'); ['From', 'To', 'Offered (Gb/s)', 'Delivered', 'Loss', 'Slot', 'Latency', ''].forEach(h => fh.append(el('th', { text: h })));
+    ft.append(el('thead', {}, [fh]));
+    const ftb = el('tbody');
+    S.flows.forEach((f, i) => {
+      const o = T.flows[i], hs = k => { const sl = el('select', { 'aria-label': k === 'a' ? 'From' : 'To' }); hosts.forEach(h => sl.append(el('option', { value: h.id, text: h.name }))); sl.value = f[k]; sl.addEventListener('change', () => { f[k] = sl.value; if (f.a === f.z) f[k === 'a' ? 'z' : 'a'] = hosts.find(h => h.id !== f[k]).id; renderTabBody(); save(); }); return sl; };
+      const g = el('input', { type: 'number', step: 1, min: 0, max: 1600, value: f.gbps, class: 'slotin', 'aria-label': 'Offered Gb/s' }); g.addEventListener('change', () => { if (isFinite(+g.value)) { f.gbps = Math.max(0, +g.value); renderTabBody(); save(); } });
+      ftb.append(el('tr', {}, [hs('a'), hs('z'), g, o && o.ok ? `${f1(o.delivered)}` : '0', el('span', { class: o && o.ok ? (o.lossPct > 0.05 ? 'st-degraded' : 'st-up') : 'st-down', text: o && o.ok ? `${f1(o.lossPct)} %` : '100 %' }), o && o.slot != null ? String(o.slot + 1) : '', o && o.ok ? fmtUs(o.latencyUs) : (o ? o.why : ''),
+        el('button', { class: 'btn', text: '×', title: 'Remove', onclick: () => { S.flows.splice(i, 1); renderTabBody(); save(); } })].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x })))));
+    });
+    ft.append(ftb); wrap.append(el('div', { style: 'overflow:auto;max-height:200px' }, [ft]));
+    if (T.channels.length) wrap.append(el('div', {}, T.channels.map(c => el('div', { class: 'small', style: 'display:flex;gap:10px;align-items:center;margin:3px 0' }, [el('span', { text: `${c.slot != null ? 'Slot ' + (c.slot + 1) : 'Service channel'} ${name(c.a)} → ${name(c.z)}: ${f1(c.load)} of ${c.cap}G` }), el('div', { class: 'ubar' + (c.over ? ' over' : ''), style: 'flex:0 0 140px' }, [el('i', { style: `width:${Math.round(100 * c.util)}%` })]), el('span', { class: 'muted', text: `${Math.round(100 * c.util)} %` })]))));
+  }
+  wrap.append(el('p', { class: 'muted small', text: 'Latency is propagation in glass (4.9 µs per km), any dispersion-compensating fibre, and about 10 µs of DSP and FEC at each coherent transceiver (1 µs for a 10G direct-detect one): representative figures. A flow is capped by its host port and client optic, and flows sharing a channel in one direction are scaled down together when they exceed the line rate. There is no packet network: this checks that the optical layer can carry the traffic, not how routing behaves.' }));
+  return wrap;
+}
+
 // channels defined by the cabling: transponders on numbered mux ports pair up by slot (see MODEL.derive); the table only shows them
 function derivedPlanView(r, D) {
   const wrap = el('div', { class: 'planwrap pad' }), res = r && r.channels ? r.channels : [];
@@ -1100,6 +1181,7 @@ const LEARN = {
   xpm: ['Cross-phase modulation', `<p><b>XPM</b> is the nonlinear effect where the intensity of one channel changes the phase of its neighbours. A coherent receiver sorts out phase, but a <b>direct-detection</b> receiver (a 10G NRZ optic) turns phase wobble into amplitude errors after dispersion, so legacy 10G channels are the ones that suffer, especially beside wide, high-power coherent channels.</p><p>The penalty here grows with the number of neighbours inside about 400 GHz, with launch power and with effective fiber length, summed over spans. The "Neighbouring channels" setting (inspector, nothing selected) chooses between same-type and coherent neighbours. Real fixes: lower the launch power, leave a gap of empty slots around the 10G channels, or give them their own band. The numbers are representative, not a full XPM model.</p>`],
   resil: ['Protection, switching time and availability', `<p>A fiber cut takes every channel on it down. What happens next depends on how the channel is protected.</p><ul><li><b>Unprotected:</b> the control plane notices, finds another route, and the ROADMs and amplifiers are reconfigured: tens of seconds to minutes. If there is no other route it stays down until the splice is repaired (hours).</li><li><b>1+1 dedicated:</b> a second copy of the signal is lit on a route that shares no fiber with the first; the receiver just picks the survivor after loss detection and a switch (tens of milliseconds). It costs the second route's wavelength and amplifier power all the time.</li><li><b>1:N shared:</b> the protection route is dark and may be shared by several channels whose working routes cannot fail together, so it costs nothing in normal operation, but it has to be lit after the failure: a second or more. Its margin is predicted by simulating the failure.</li><li><b>Wavelength converters:</b> regenerate a channel into another slot, resetting its noise; a protected converted channel is protected on each side of the converter separately.</li></ul><p>The Resilience tab turns cut rate, repair time and these switching times into expected downtime per year: each cut on the route happens at the cut rate times its length, then costs the switching or restoration time, plus the chance that both routes are down at once (the product of their unavailabilities, which is why a longer protection route matters less than its existence).</p>`],
   fail: ['Failures other than fiber cuts', `<p>Fibers are not the only thing that breaks. Select any device and set its <b>Condition</b>.</p><ul><li><b>Failed:</b> the device passes no light (a dead amplifier pump absorbs the signal, a ROADM loses power, a transponder goes dark). Routes avoid it: an unprotected channel restores around it if the network has another way, a 1+1 or shared protected channel switches to its protection route, and a service with no way round shows LOS and names the device. Channels that start or end at a failed ROADM are lost.</li><li><b>Degraded:</b> still lit but worse. An amplifier's output falls below its setting and its noise figure rises (pump ageing); a laser is weaker; a receiver loses SNR; a ROADM, mux, VOA or DCM adds loss (a partly stuck WSS or a dirty connector). Amplifiers downstream re-level the power, so what you see is mostly extra noise.</li></ul><p><b>Shared risk link groups:</b> two fibers in the same duct or trench do not fail independently. Give them the same group name on the cable inspector and cutting one cuts all of them. Protection planning then looks for a route that avoids the whole group, which is often a lot longer than the fiber-disjoint route that happens to share a trench. Try the \"Shared duct\" scenario.</p><p><b>Passive OADMs:</b> an optical add/drop multiplexer is a fixed filter with add/drop ports. Give it sides: <b>East and West</b> is a node in the middle of a line with a line port each way, <b>East only</b> or <b>West only</b> is a line terminal. Each side serves a block of channels (its ports, starting at a slot you choose), and a transponder is plugged into one of those ports like on a mux: it talks to that side's line only and has to be tuned to its port's slot. Every other slot passes straight through at a small loss, with no WSS, no equalisation and no amplifier, but a slot a side serves cannot pass the OADM (the filter drops it, or it would collide with the channel added there). A channel added at an OADM leaves at the transponder's power less the add loss, so it can sit above or below the channels already on the line. An optional <b>1310 nm port</b> puts a coupler on the line path (a little extra loss) for management, an optical supervisory channel or a legacy client. Try the \"Passive OADM bus\" scenario.</p><p><b>Ports and cards:</b> a ROADM or a passive mux can also lose a single add/drop port, or a whole card of 8 ports. Only the channels that join or leave the line through those ports go dark; the other channels, the amplifiers and the device itself carry on. A 1+1 service whose protection route avoids the failed device switches over. Try the \"Two muxponders per side\" scenario: fail a port on MUX-B and only that wave is lost.</p><p>The Resilience tab includes device failures (a rate per amplifier or ROADM): a device that has to be passed (the access ROADM of a single-homed transponder) costs the full repair time, an interior one costs only the switch or restoration time if another route avoids it.</p>`],
+  reach: ['Hosts and reachability', `<p>A <b>Host / router</b> is where traffic starts and ends. Give it an address (for example 10.0.0.1/24), a port speed, and cable a port to a <b>transponder</b> or to a <b>muxponder client port</b>. The <b>Reachability</b> tab then asks, for every pair of hosts, whether a packet could get across the optical network, and shows the trace step by step so the first thing that fails is obvious.</p><ul><li><b>Client side:</b> the host port speed has to match the transponder's rate or the muxponder client optic, and the client link has to have optical margin.</li><li><b>Line side:</b> the two transponders must be lit and paired (right port, right slot, same mode), the channel between them must be up, and a muxponder client port is carried to the <i>same-numbered</i> client port on the far muxponder.</li><li><b>Addresses:</b> hosts on different subnets cannot reach each other, because there is no router, and two hosts cannot share an address.</li></ul><p>Latency is propagation in glass (about 4.9 µs per km) plus the DSP and FEC delay of the transceivers (about 10 µs each for a coherent one). The traffic table offers Gb/s between hosts; a flow is capped by its host port and client optic, and flows that share a channel are scaled down together when they exceed the line rate. Try the \"Hosts reaching each other\" scenario and break it: change a host's port speed, cut the fiber, mistune a transponder, or give two hosts different subnets.</p>`],
   ports: ['Mux ports and wavelengths', `<p>A passive mux or demux has a numbered <b>port for every channel</b>. Cable a transponder to the mux and the cable takes the first free port; the cable inspector lets you move it to another. Port <i>k</i> passes slot <i>first + k − 1</i> (set \"First slot\" and the port count on the mux).</p><p>The transponder has a <b>Wavelength</b> setting. <b>Auto</b> follows the port it is plugged into. Choose a slot and the transponder is tuned there instead. A mux filter only passes its own port's slot, so a transponder tuned to a different slot is <b>dark</b>: its light is blocked and the Channels tab says why.</p><p>The channels are then whatever the cabling makes. A transmitter that gets through its port reaches the receiver plugged into the port for the same slot on a mux at the other end, and the pair is one channel. Both ends need the same mode. A transponder with nobody at the far end of its slot is dark too. The channel count on the left still fills the rest of the line with background channels, in the free slots nearest the lit ones, so the amplifiers see a realistic load.</p><p>A <b>ROADM</b> has ports too, with three settings: <i>colorless</i> (any port takes any slot), <i>directionless</i> (any port can reach any degree) and <i>contentionless</i> (the same slot on more than one port). Switch them off one at a time to see what each buys you: a colored port passes one slot, a port on a non-directionless ROADM belongs to one degree, and two transponders on a non-contentionless ROADM cannot use the same slot. When several transponders share a slot (wavelength reuse in a mesh), set a transponder's <b>Connect to</b> to say which far end it talks to. Per-channel results appear on the Channels tab (read-only here; \"Edit as a table\" turns them into a normal plan). Try the \"Transponders on mux ports\" scenario, then change the wavelength of one transponder.</p>`],
   raman2: ['Raman solver', `<p>The <b>coupled-wave solver</b> treats every pump wavelength and a sample of the channels as waves in the fiber, each with its own attenuation, and lets higher-frequency waves feed lower-frequency ones through the Raman gain curve: <code>±dP<sub>i</sub>/dz = −α<sub>i</sub>P<sub>i</sub> + P<sub>i</sub> Σ<sub>j above</sub> c(Δf) P<sub>j</sub> − P<sub>i</sub> Σ<sub>j below</sub> (f<sub>i</sub>/f<sub>j</sub>) c(Δf) P<sub>j</sub></code>. Forward waves are integrated from the start of the span and backward ones from the end, alternately, until the profiles settle. Photon number is conserved. This gives what the closed-form approximation cannot: <b>pump-to-pump transfer</b> (the short-wave pump of a multi-wavelength pump feeds the long-wave one), <b>depletion</b> as the signals grow, the real <b>gain spectrum</b> and the <b>power profile along the span</b> for forward, backward and bidirectional pumping, and signal-to-signal transfer (SRS tilt) in the span.</p><p>Turn it on per fiber in the cable inspector (Raman model). The gain at the service channel, the stage split between forward and backward pumps, the pump depletion and the per-channel gain differences then come from the solver; the noise is still modelled as the equivalent lumped amplifier and double Rayleigh scattering from the gain. The Raman tab plots the profile and the gain spectrum for each pumped span.</p>`],
   trans: ['Power transients', `<p>An EDFA amplifies all channels from one pool of inverted erbium ions. If many channels vanish suddenly (an upstream fiber cut, a protection switch, a failed transponder), the pool no longer has to feed them, so the gain per surviving channel jumps toward <code>10·log<sub>10</sub>(N / survivors)</code> within about a hundred microseconds. A fast gain-control loop (AGC) cancels most of it; a slow one does not. In a cascade of amplifiers each one adds its excursion, so the surviving channels can surge by many dB by the end of the line, into receiver overload and into nonlinearity (3 dB of nonlinear noise for each dB of power), and dip equally when the channels come back.</p><p>That is why added channels are ramped up slowly and why long amplified systems need fast gain control on every amplifier. The Transients tab evaluates a sudden loss of a share of the channels along the service path with the response time of each amplifier. Raman pumps and WSS blocking are not modelled.</p>`],

@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const PHY = require('../src/engine.js');
 const M = require('../src/model.js');
 
-const build = k => { const p = M.PRESETS[k].build(); return { nodes: p.nodes, links: p.links, g: p.g, svc: p.svc }; };
+const build = k => { const p = M.PRESETS[k].build(); return { nodes: p.nodes, links: p.links, g: p.g, svc: p.svc, flows: p.flows }; };
 const clone = o => JSON.parse(JSON.stringify(o));
 
 test('presets simulate to their intended status', () => {
@@ -1718,4 +1718,60 @@ test('ROADM add/drop ports: peers, degrees and port failures', () => {
   assert.deepEqual(c.links.filter(l => l.kind === 'fiber' && (l.a === idA || l.b === idA)).map(l => (l.a === idA ? l.p.sa : l.p.sb)).sort(), ['1', '2'], 'line cables get degrees 1 and 2');
   S = rp(); S.nodes.find(n => n.name === 'ROADM-C').p.badPorts = [29];
   const r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /port for slot 30 on ROADM-C/);
+});
+
+const hostPair = (S, a, b) => { const id = n => S.nodes.find(x => x.name === n).id, ia = id(a), ib = id(b); return M.reach(S, M.simulate(S)).find(r => (r.a === ia && r.z === ib) || (r.a === ib && r.z === ia)); };
+test('reachability: hosts on matching muxponder client ports reach each other, with a latency from the fibre', () => {
+  const S = M.sanitize(build('reach')), r = hostPair(S, 'HOST-A1', 'HOST-B1');
+  assert.equal(r.ok, true); assert.ok(r.steps.every(s => s.ok));
+  assert.ok(Math.abs(r.latencyUs - (80 * 4.9 + 20)) < 1e-6, `latency ${r.latencyUs}`); assert.equal(r.rate, 100);
+  assert.equal(hostPair(S, 'HOST-A2', 'HOST-B2').ok, true);
+  assert.match(hostPair(S, 'HOST-A1', 'HOST-B2').why, /client port 1 is carried to client port 1.*client port 2/);
+  assert.match(hostPair(S, 'HOST-A1', 'HOST-A2').why, /same muxponder/);
+});
+
+test('reachability: each thing that can be wrong says so, in the order a packet meets it', () => {
+  let S = M.sanitize(build('reach')); S.nodes.find(n => n.name === 'HOST-B1').p.speed = 10;
+  assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /100GBASE-LR4 \(100G\) but HOST-B1's port is 10G/);
+  S = M.sanitize(build('reach')); S.links.find(l => l.kind === 'fiber').p.cut = true;
+  assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /channel is LOS/);
+  S = M.sanitize(build('reach')); S.nodes.find(n => n.name === 'HOST-B1').p.ip = '10.0.1.2/24';
+  assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /different subnets/);
+  S.nodes.find(n => n.name === 'HOST-B1').p.ip = '10.0.0.1/24'; assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /both hosts use the address/);
+  S = M.sanitize(build('reach')); S.nodes.find(n => n.name === 'MXP-B').p.mode = 'zr400';
+  assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /will never lock/);
+  S = M.sanitize(build('reach')); S.links = S.links.filter(l => !(l.p.hport != null && S.nodes.find(n => n.id === (l.a === S.nodes.find(x => x.name === 'HOST-A1').id ? l.a : l.b)).name === 'HOST-A1'));
+  assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /HOST-A1 is not cabled/);
+  S = M.sanitize(build('reach')); S.nodes.find(n => n.name === 'MXP-A').p.clients[0].len = 200; // a client link far beyond what its optic can reach
+  assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /below the .* sensitivity/);
+});
+
+test('traffic: flows are capped by the host port and share the channel, with the loss reported', () => {
+  const S = M.sanitize(build('reach')), T = M.traffic(S, M.simulate(S)), nm = id => S.nodes.find(n => n.id === id).name;
+  const f = (a, z) => T.flows.find(x => nm(x.a) === a && nm(x.z) === z);
+  assert.equal(f('HOST-A1', 'HOST-B1').delivered, 60); assert.equal(f('HOST-A1', 'HOST-B1').lossPct, 0);
+  assert.equal(f('HOST-A2', 'HOST-B2').delivered, 100); assert.ok(Math.abs(f('HOST-A2', 'HOST-B2').lossPct - 100 / 3) < 1e-6);
+  const ab = T.channels.find(c => c.dir === 'ab'); assert.equal(ab.load, 160); assert.equal(ab.cap, 400); assert.ok(!ab.over);
+  S.g.plan = null; S.links.find(l => l.kind === 'fiber').p.cut = true;
+  assert.equal(M.traffic(S, M.simulate(S)).flows.every(x => x.delivered === 0 && !x.ok), true);
+});
+
+test('hosts: sanitize keeps valid addresses, speeds, ports and flows, and drops junk', () => {
+  const S = build('reach'), h = S.nodes.find(n => n.name === 'HOST-A1');
+  Object.assign(h.p, { ip: '999.1.1.1/24', speed: 77, ports: 99 }); S.flows.push({ a: h.id, z: h.id, gbps: 5 }, { a: 'x', z: h.id, gbps: 5 }, { a: h.id, z: S.nodes.find(n => n.name === 'HOST-B1').id, gbps: 'lots' });
+  S.links.find(l => l.p.hport === 0).p.cport = 9;
+  const c = M.sanitize(clone(S)), ch = c.nodes.find(n => n.name === 'HOST-A1');
+  assert.equal(ch.p.ip, ''); assert.equal(ch.p.speed, 100); assert.equal(ch.p.ports, 8); assert.equal(c.flows.length, 3, 'the three good flows survive');
+  assert.equal(c.links.filter(l => l.p.cport === 9).length, 0);
+  assert.equal(c.links.find(l => l.kind === 'fiber').p.hport, null);
+  assert.ok(M.route(c, c.svc.a, c.svc.z, true), 'hosts never become part of the light path');
+});
+
+test('reachability: transponders on mux ports carry hosts, and a mistuned transponder explains itself', () => {
+  const S = M.sanitize(build('ports')), id = n => S.nodes.find(x => x.name === n).id, mk = (nm, t) => ({ id: 'h' + nm, type: 'host', name: nm, x: 0, y: 0, p: { ip: '10.1.0.' + nm.slice(1) + '/24', ports: 1, speed: 400 } });
+  S.nodes.push(mk('H1'), mk('H2')); S.links.push({ id: 'lc1', a: 'hH1', b: id('TRX-A1'), kind: 'patch', p: { ...M.linkDefaults('patch'), hport: 0, cport: 0 } }, { id: 'lc2', a: 'hH2', b: id('TRX-B1'), kind: 'patch', p: { ...M.linkDefaults('patch'), hport: 0, cport: 0 } });
+  let r = M.reach(S, M.simulate(S))[0]; assert.equal(r.ok, true); assert.equal(r.entry.slot, 26);
+  S.nodes.find(n => n.name === 'TRX-B1').p.slot = 40;
+  const res = M.simulate(S); r = M.reach(S, res)[0]; assert.equal(r.ok, false); assert.match(r.why, /is dark/);
+  assert.ok(res.derived.dark.some(x => /TRX-B1 is tuned to slot 41/.test(x.why)), 'the mistuned end says why, and the other end has no partner');
 });
