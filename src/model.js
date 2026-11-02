@@ -15,7 +15,7 @@ const MODEL = (() => {
     panel: { label: 'Patch panel / ODF', hint: 'Fibre panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, dirty: {} }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24, bidi: false, role: 'low' }) },
     oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, osc: false, p1310: false, o1310: '10g-lr', bidi: false, eRole: 'low', wRole: 'high' }) },
-    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
+    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pinMax: 10, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5, degrees: 4, ports: 16, first: 24, colorless: true, directionless: true, contentionless: true }) },
     dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, cdRev: '', il: 7, ilRev: '' }) },
     voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
@@ -42,9 +42,10 @@ const MODEL = (() => {
     },
     lh: {
       name: 'Long haul: 5 spans with ILAs', build() {
-        const a = N('trx', 'TRX-A', 60, 120, { mode: 'zrp400' }), ma = N('mux', 'MUX-A', 60, 250), ba = N('edfa', 'BST-A', 220, 250, { gmin: 5 });
+        // 64 channels at 0 dBm each put 12 dBm into the booster and the return-direction preamp, so these two are the high-input type (the default limit is 10 dBm).
+        const a = N('trx', 'TRX-A', 60, 120, { mode: 'zrp400' }), ma = N('mux', 'MUX-A', 60, 250), ba = N('edfa', 'BST-A', 220, 250, { gmin: 5, pinMax: 14 });
         const i1 = N('edfa', 'ILA-1', 400, 250), i2 = N('edfa', 'ILA-2', 580, 250), i3 = N('edfa', 'ILA-3', 760, 250), i4 = N('edfa', 'ILA-4', 940, 250);
-        const pb = N('edfa', 'PRE-B', 1120, 250, { gmin: 5 }), mb = N('mux', 'MUX-B', 1260, 250), z = N('trx', 'TRX-Z', 1260, 120, { mode: 'zrp400' });
+        const pb = N('edfa', 'PRE-B', 1120, 250, { gmin: 5, pinMax: 14 }), mb = N('mux', 'MUX-B', 1260, 250), z = N('trx', 'TRX-Z', 1260, 120, { mode: 'zrp400' });
         return { nodes: [a, ma, ba, i1, i2, i3, i4, pb, mb, z], links: [L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, i1, 'fiber', { len: 80 }), L(i1, i2, 'fiber', { len: 95 }), L(i2, i3, 'fiber', { len: 80 }), L(i3, i4, 'fiber', { len: 100 }), L(i4, pb, 'fiber', { len: 85 }), L(pb, mb, 'patch'), L(mb, z, 'patch')],
           g: { nch: 64, df: 75, launch: 1 }, svc: { a: a.id, z: z.id } };
       }
@@ -195,7 +196,7 @@ const MODEL = (() => {
         // TRX-A to TRX-Z is the service in slot 32, passing all three OADMs. Each OADM has the supervisory channel (1510 nm) on, so the amplifiers and the OADMs form one
         // management domain, each span with its own budget. OADM-1 and OADM-2 also have a 1310 nm port with a 10GBASE-LR client over 15 km of fibre and a patch panel
         // port with a dirty connector (little margin left). The amplifier between OADM-2 and OADM-3 regenerates the OSC but blocks the 1310 nm client.
-        return { nodes: [ta, tz, ma, mz, ba, o1, od, o2, ac, o3], links: [L(ta, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, o1, 'fiber', { len: 5 }), L(o1, od, 'fiber', { len: 8 }), L(od, o2, 'fiber', { len: 7 }),
+        return { nodes: [ta, tz, ma, mz, ba, o1, od, o2, ac, o3], links: [L(ta, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, o1, 'fiber', { len: 20 }), L(o1, od, 'fiber', { len: 8 }), L(od, o2, 'fiber', { len: 7 }),
           L(o2, ac, 'fiber', { len: 40 }), L(ac, o3, 'fiber', { len: 40 }), L(o3, mz, 'patch'), L(mz, tz, 'patch', { mport: 7 })], g: { nch: 8, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
       }
     },
@@ -448,6 +449,7 @@ const MODEL = (() => {
       if (isEnd(n)) p.spare = ['switch', 'ycable'].includes(n.p && n.p.spare) ? n.p.spare : '';
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
+      if (n.type === 'edfa') p.pinMax = Number.isFinite(+p.pinMax) && p.pinMax !== null && typeof p.pinMax !== 'boolean' ? Math.min(20, Math.max(-10, +p.pinMax)) : 10;
       if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev', 'nfRev', 'gminRev', 'gmaxRev', 'pmaxRev', 'agcUs']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
       if (n.type === 'dcm') for (const k of ['cdRev', 'ilRev']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
       seen.add(n.id);
@@ -560,7 +562,8 @@ const MODEL = (() => {
           if (a.p.o1310 !== b.p.o1310) { out.push({ a: a.id, b: b.id, aName: a.name, bName: b.name, status: 'down', why: `${a.name} has ${oa.name} and ${b.name} has ${ob.name}: the ends do not match`, km, loss: null, hops }); continue; }
           const loss = oa.att * km + extra, rx = oa.tx - loss, margin = rx - oa.rxMin; let status = 'up', w = '';
           if (margin < 0) { status = 'down'; w = `Rx ${f1(rx)} dBm is below the ${oa.rxMin} dBm sensitivity`; }
-          else if (rx > oa.rxMax) { status = 'warn'; w = `Rx ${f1(rx)} dBm is above the ${oa.rxMax} dBm overload point: add a pad`; }
+          else if (rx > oa.rxMax + 3) { status = 'down'; w = `Rx ${f1(rx)} dBm overloads the receiver (limit ${oa.rxMax} dBm): add a ${Math.ceil(rx - oa.rxMax)} dB pad`; }
+          else if (rx > oa.rxMax) { status = 'warn'; w = `Rx ${f1(rx)} dBm is above the ${oa.rxMax} dBm overload point: add a ${Math.ceil(rx - oa.rxMax)} dB pad`; }
           else if (margin < 3) { status = 'warn'; w = `only ${f1(margin)} dB of margin`; }
           out.push({ a: a.id, b: b.id, aName: a.name, bName: b.name, optic: a.p.o1310, opticName: oa.name, km, loss, tx: oa.tx, rx, margin, rxMin: oa.rxMin, status, why: w, hops });
         } else if (why) {
@@ -602,6 +605,8 @@ const MODEL = (() => {
           const key = [a.id, b.id].sort().join('|') + '|' + [l0.id, l.id].sort().join('|'); if (seen.has(key)) continue; seen.add(key);
           const loss = OSC.att * km + extra, rx = OSC.tx - loss, margin = rx - OSC.rxMin; let status = 'up', w = '';
           if (margin < 0) { status = 'down'; w = `Rx ${f1(rx)} dBm is below the ${OSC.rxMin} dBm sensitivity`; }
+          else if (rx > OSC.rxMax + 3) { status = 'down'; w = `Rx ${f1(rx)} dBm overloads the receiver (limit ${OSC.rxMax} dBm): add a ${Math.ceil(rx - OSC.rxMax)} dB pad`; }
+          else if (rx > OSC.rxMax) { status = 'warn'; w = `Rx ${f1(rx)} dBm is above the ${OSC.rxMax} dBm overload point: add a ${Math.ceil(rx - OSC.rxMax)} dB pad`; }
           else if (margin < 3) { status = 'warn'; w = `only ${f1(margin)} dB of margin`; }
           out.push({ a: a.id, b: b.id, aName: a.name, bName: b.name, km, loss, tx: OSC.tx, rx, margin, rxMin: OSC.rxMin, status, why: w });
         } else if (why) { const key = a.id + '|' + l0.id; if (!seen.has(key)) { seen.add(key); out.push({ a: a.id, b: null, aName: a.name, bName: '', km, status: 'blocked', why }); } }
@@ -1356,8 +1361,9 @@ const MODEL = (() => {
       }
       return null;
     }
-    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl, look = -1, agc = '', deg = 0) {
+    function amp(name, nf, ctl, target, gFixed, gmin, gmax, pmax, tiltCtl, look = -1, agc = '', deg = 0, pinMax = null) {
       const before = snap(), pin = before.sig;
+      const pinTot = pin + db(nch), over = pinMax != null && pinTot > pinMax ? pinTot - pinMax : 0; // total power at the input against the amplifier's input limit
       let info = '';
       if (g.reopt && look >= 0 && ctl === 'auto') { const o = optFor(look, nf); if (o) { target = o.dbm; info = `Launch re-optimised for ${o.n} channel${o.n > 1 ? 's' : ''}: ${f1(o.dbm)} dBm/ch`; } }
       let G = ctl === 'auto' ? target - pin : +gFixed, note = '';
@@ -1372,8 +1378,9 @@ const MODEL = (() => {
       if (planOn) { ev.push({ k: 'A', G: lin(G), nfe }); if (tiltCtl) ev.push({ k: 'Z' }); }
       if (tiltCtl) tilt = 0; // gain-tilt control re-flattens the band at the amp output
       Pase = Pase * lin(G) + lin(nfe) * PHY_.H * PHY_.NU * lin(G) * PHY_.BREF;
-      rec(name, 'amp', before, { gain: G, nf: nfe, note: note || info, agcUs: agc === '' || agc == null || !Number.isFinite(+agc) ? null : +agc });
-      if (note) alarms.push({ sev: 'warn', text: `${name}: ${note}.` });
+      if (over > 0) { const t = `Input overload: ${f1(pinTot)} dBm total at the input, ${f1(over)} dB above the ${f1(pinMax)} dBm limit`; note = note ? note + '; ' + t.toLowerCase() : t; alarms.push({ sev: over > 3 ? 'bad' : 'warn', text: `${name}: ${t}${over > 3 ? ': the input stage saturates and can be damaged' : ''}. Add a pad in front of it.` }); }
+      rec(name, 'amp', before, { gain: G, nf: nfe, over: over > 0 ? over : undefined, note: note || info, agcUs: agc === '' || agc == null || !Number.isFinite(+agc) ? null : +agc });
+      if (note && over <= 0) alarms.push({ sev: 'warn', text: `${name}: ${note}.` });
     }
 
     rec(A.name, 'tx', snap(), { note: `Tx ${f1(txDbm)} dBm, Tx OSNR ${mode.txOsnr} dB` });
@@ -1471,7 +1478,7 @@ const MODEL = (() => {
         rec(nxt.name, t, b, { gain: -lo, note: t === 'splitter' ? `${nxt.p.ratio} splitter, port ${branch.toUpperCase()}: ${f1(lo)} dB` : `switch passing port ${branch.toUpperCase()}${nxt.p.pos === branch ? '' : ' (it switched away from the selected port)'}` });
       } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il') + degOf(nxt), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(), att = +nxt.p.att + degOf(nxt); loss(att); rec(nxt.name, 'voa', b, { gain: -att }); }
-      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs, degOf(nxt)); }
+      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs, degOf(nxt), +pd(nxt.p, 'pinMax')); }
       else if (t === 'roadm') {
         const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
@@ -1513,9 +1520,9 @@ const MODEL = (() => {
     const res = { mode, modeKey, A, Z, path, raman: ramanViews, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
     if (!eol && !rv && !W && S.nodes.some(n => n.type === 'oadm' && (n.p.p1310 || n.p.osc))) {
       res.b1310 = band1310(S); res.osc = oscSpans(S);
-      for (const r of res.b1310.links) if (r.status === 'down') alarms.push({ sev: 'warn', text: `The 1310 nm link ${r.aName} to ${r.bName} is down: ${r.why}.` });
+      for (const r of res.b1310.links) if (r.status === 'down' || (r.status === 'warn' && /overload/.test(r.why))) alarms.push({ sev: 'warn', text: `The 1310 nm link ${r.aName} to ${r.bName} ${r.status === 'down' ? 'is down' : 'is overloaded'}: ${r.why}.` });
       if (res.osc) {
-        for (const r of res.osc.links) if (r.status === 'down') alarms.push({ sev: 'warn', text: `The supervisory channel span ${r.aName} to ${r.bName} is down: ${r.why}.` });
+        for (const r of res.osc.links) if (r.status === 'down' || (r.status === 'warn' && /overload/.test(r.why))) alarms.push({ sev: 'warn', text: `The supervisory channel span ${r.aName} to ${r.bName} ${r.status === 'down' ? 'is down' : 'is overloaded'}: ${r.why}.` });
         res.osc.domains.length > 1 && alarms.push({ sev: 'warn', text: `The supervisory channel is split into ${res.osc.domains.length} management domains: ${res.osc.domains.map(d => d.join(' + ')).join('; ')}.` });
       }
     }

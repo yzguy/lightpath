@@ -1948,3 +1948,24 @@ test('1310 nm client ports and the 1510 nm supervisory channel', () => {
   const old = clone(S); const o = nm(old, 'OADM-1'); o.p.osc = false; o.p.p1310 = true; o.p.o1310 = 'osc'; const oo = nm(M.sanitize(old), 'OADM-1'); assert.equal(oo.p.osc, true); assert.equal(oo.p.p1310, false);
   const none = clone(S); none.nodes.filter(n => n.type === 'oadm').forEach(n => { n.p.osc = false; n.p.p1310 = false; }); assert.equal(M.simulate(none).osc, undefined);
 });
+
+test('overloads: amplifier input, OSC and 1310 nm receivers alert and show on the hop', () => {
+  const S = M.sanitize(build('osc')), nm = (X, n) => X.nodes.find(x => x.name === n);
+  assert.ok(!M.simulate(S).alarms.some(a => /overload/i.test(a.text)), 'the scenario starts without overloads');
+  // lower AMP-C's input limit below what it receives
+  const h0 = M.simulate(S).hops.find(x => x.name === 'AMP-C'), tot = h0.in.sig + 10 * Math.log10(h0.nch);
+  let o = clone(S); nm(o, 'AMP-C').p.pinMax = tot - 1; let r = M.simulate(o);
+  const h = r.hops.find(x => x.name === 'AMP-C'); assert.ok(h.over > 0, 'the hop is marked'); assert.match(h.note, /Input overload/);
+  assert.ok(r.alarms.some(a => /AMP-C: Input overload.*Add a pad/.test(a.text)));
+  const bad = r.alarms.find(a => /AMP-C: Input overload/.test(a.text)); o.nodes.find(n => n.name === 'AMP-C').p.pinMax = tot - 5; r = M.simulate(o);
+  assert.equal(r.alarms.find(a => /AMP-C: Input overload/.test(a.text)).sev, 'bad', 'well over the limit is a severe alarm'); assert.ok(bad);
+  o = clone(S); nm(o, 'AMP-C').p.pinMax = 100; assert.equal(nm(M.sanitize(o), 'AMP-C').p.pinMax <= 20, true, 'the limit is clamped');
+  // a short OSC span overloads its receiver: -3 dBm launch over 0.1 km and two 1 dB filters is -5.1 dBm, above the -8 dBm limit
+  const t = clone(S); t.links.find(l => l.kind === 'fiber' && l.p.len === 20 && nm(t, 'BST-A') && [l.a, l.b].includes(nm(t, 'BST-A').id)).p.len = 0.1; const rt = M.simulate(t);
+  const sp = rt.osc.links.find(l => l.aName === 'BST-A' && l.bName === 'OADM-1');
+  assert.equal(sp.status, 'warn'); assert.match(sp.why, /overload point.*pad/); assert.ok(rt.alarms.some(a => /supervisory channel span BST-A to OADM-1 is overloaded/.test(a.text)));
+  // a 1310 nm client that overloads: 25GBASE-ER launches 0 dBm but its receiver overloads at -3 dBm, so a short path with only the couplers' loss is over
+  const c = clone(S); nm(c, 'OADM-1').p.o1310 = nm(c, 'OADM-2').p.o1310 = '25g-er'; c.links.find(l => l.kind === 'fiber' && l.p.len === 8).p.len = 0.1; c.links.find(l => l.kind === 'fiber' && l.p.len === 7).p.len = 0.1; nm(c, 'ODF-1').p.il = 0; nm(c, 'ODF-1').p.dirty = {};
+  const rc = M.simulate(c), l = rc.b1310.links.find(x => x.bName === 'OADM-2');
+  assert.equal(l.status, 'warn'); assert.match(l.why, /overload point.*pad/); assert.ok(rc.alarms.some(a => /1310 nm link OADM-1 to OADM-2 is overloaded/.test(a.text)));
+});
