@@ -10,6 +10,8 @@ const MODEL = (() => {
     trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '' }) },
     mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '', clients: defaultClients() }) },
     host: { label: 'Host / router', hint: 'Traffic endpoint with Ethernet ports', maxLinks: 8, def: () => ({ ip: '', ports: 1, speed: 100 }) },
+    splitter: { label: 'Splitter / tap', hint: 'Passive power splitter, 50/50 up to a 99/1 monitor tap', maxLinks: 3, def: () => ({ ratio: '50/50', excess: 0.3 }) },
+    switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, switchMs: 20 }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24, bidi: false, role: 'low' }) },
     oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, p1310: false, bidi: false, eRole: 'low', wRole: 'high' }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
@@ -20,7 +22,7 @@ const MODEL = (() => {
   const defaultClients = () => Array.from({ length: 4 }, () => newClient());
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
-  const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', host: 'HOST', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
+  const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', splitter: 'SPL', switch: 'SW', host: 'HOST', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
   const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, srlg: '', sa: '', sb: '', single: false } : { il: 0.5, dir: 'both', cut: false, mport: null, sa: '', sb: '', cport: null, hport: null });
 
   // ---------- presets ----------
@@ -205,6 +207,17 @@ const MODEL = (() => {
         return { nodes: [...a, ...b, z, ma, ob, mz], links, g: { nch: 3, df: 75, launch: 0 }, svc: { a: a[0].id, z: b[0].id } };
       }
     },
+    olp: {
+      name: 'Optical line protection: splitter, tap and switch', build() {
+        const ta = N('trx', 'TRX-A', 50, 200, { mode: 'zrp400' }), tz = N('trx', 'TRX-Z', 1370, 200, { mode: 'zrp400' });
+        const ma = N('mux', 'MUX-A', 180, 280), ba = N('edfa', 'BST-A', 310, 280, { gmin: 5 }), tap = N('splitter', 'TAP-A', 440, 280, { ratio: '99/1' }), spl = N('splitter', 'SPL-A', 570, 280, { ratio: '50/50' });
+        const sw = N('switch', 'SW-Z', 900, 280), pz = N('edfa', 'PRE-Z', 1030, 280, { gmin: 5 }), mz = N('mux', 'MUX-Z', 1190, 280);
+        // The booster feeds a 99/1 tap (its monitor port is left free to read the power) and a 50/50 splitter that lights both fibres. The switch at the far end
+        // passes port A (60 km) and, being set to auto, goes to port B (80 km) if the light on A is lost. Cut the 60 km fibre, then set the switch to manual.
+        const links = [L(ta, ma, 'patch'), L(ma, ba, 'patch'), L(ba, tap, 'patch', { sb: 'c' }), L(tap, spl, 'patch', { sa: 'a', sb: 'c' }), L(spl, sw, 'fiber', { len: 60, sa: 'a', sb: 'a' }), L(spl, sw, 'fiber', { len: 80, sa: 'b', sb: 'b' }), L(sw, pz, 'patch', { sa: 'c' }), L(pz, mz, 'patch'), L(mz, tz, 'patch')];
+        return { nodes: [ta, tz, ma, ba, tap, spl, sw, pz, mz], links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
+      }
+    },
     sfp10: {
       name: 'Switch 10G DWDM optics over 60 km', build() {
         const a1 = N('trx', 'SW-A1', 80, 150, { mode: 'dwdm10' }), a2 = N('trx', 'SW-A2', 80, 290, { mode: 'dwdm10' });
@@ -317,11 +330,15 @@ const MODEL = (() => {
   // ---------- validation ----------
   // Takes untrusted topology JSON (localStorage or pasted import) and returns a clean {nodes, links, g, svc}.
   // Unknown device types and links to missing devices are dropped; missing or non-numeric parameters get defaults.
+  const SPLIT = { '50/50': [0.5, 0.5], '60/40': [0.6, 0.4], '70/30': [0.7, 0.3], '80/20': [0.8, 0.2], '90/10': [0.9, 0.1], '95/5': [0.95, 0.05], '99/1': [0.99, 0.01] }; // power share of ports a and b
+  const splitLossDb = (n, port) => -10 * Math.log10((SPLIT[n.p.ratio] || SPLIT['50/50'])[port === 'b' ? 1 : 0]) + (+n.p.excess || 0); // from the common port to a branch (and back)
+  const isTriPort = n => !!n && (n.type === 'splitter' || n.type === 'switch'); // a common port c and two branches a and b
   // The side of an OADM (e, w), or the degree of a ROADM ('1'..'9'), that one end of a cable uses. `given` is kept if valid; otherwise an OADM takes the side the
   // neighbour lies on, a ROADM the first degree no other line cable uses. A transponder cable on a ROADM that is not directionless belongs to a degree too.
   function sideFor(me, other, given, usedDeg) {
     if (!me) return '';
     if (me.type === 'oadm') return ['e', 'w'].includes(given) && me.p.sides.includes(given) ? given : me.p.sides.length === 1 ? me.p.sides : other.x < me.x ? 'w' : 'e';
+    if (isTriPort(me)) { const u = usedDeg.get(me.id) || new Set(); usedDeg.set(me.id, u); let d = ['c', 'a', 'b'].includes(given) ? given : ''; if (!d) d = ['c', 'a', 'b'].find(k => !u.has(k)) || ''; if (d) u.add(d); return d; }
     if (me.type !== 'roadm') return '';
     const ok = /^[1-9]$/.test(given) && +given <= me.p.degrees;
     if (isEnd(other)) return me.p.directionless ? '' : ok ? given : '1';
@@ -373,6 +390,8 @@ const MODEL = (() => {
         p.rxSlot = n.p && Number.isInteger(n.p.rxSlot) && n.p.rxSlot >= 0 && n.p.rxSlot < 128 ? n.p.rxSlot : null;
         p.off = Number.isFinite(+(n.p && n.p.off)) && n.p.off !== '' && n.p.off !== null && typeof n.p.off !== 'boolean' ? Math.min(10, Math.max(-10, +n.p.off)) : 0;
       }
+      if (n.type === 'splitter') { p.ratio = SPLIT[p.ratio] ? p.ratio : '50/50'; p.excess = Math.min(3, Math.max(0, Number.isFinite(+p.excess) && p.excess !== '' && p.excess !== null ? +p.excess : 0.3)); }
+      if (n.type === 'switch') { p.il = Math.min(10, Math.max(0, Number.isFinite(+p.il) && p.il !== '' && p.il !== null ? +p.il : 1)); p.pos = p.pos === 'b' ? 'b' : 'a'; p.auto = p.auto !== false; p.switchMs = Math.min(1000, Math.max(1, Number.isFinite(+p.switchMs) && p.switchMs !== '' && p.switchMs !== null ? +p.switchMs : 20)); }
       if (n.type === 'host') { p.ip = parseIp(p.ip) ? String(p.ip).trim() : ''; p.ports = Math.min(8, Math.max(1, Math.round(+p.ports) || 1)); p.speed = HOST_SPEEDS.includes(+p.speed) ? +p.speed : 100; }
       if (n.type === 'roadm') { p.degrees = Math.min(9, Math.max(1, Math.round(+p.degrees) || 4)); p.ports = Math.min(64, Math.max(1, Math.round(+p.ports) || 16)); p.first = Math.min(63, Math.max(0, Math.round(+p.first) || 0)); }
       if (n.type === 'mux') { p.bidi = p.bidi === true; p.role = p.role === 'high' ? 'high' : 'low'; }
@@ -494,31 +513,42 @@ const MODEL = (() => {
   // x.ignoreCut: plan on the intact network (cut flags are failures, not topology). x.exclude: link ids the route may not use.
   function route(S, aId, zId, allowCut, x = {}) {
     const { node, linksOf, other } = mkGraph(S);
-    const dist = { [aId]: 0 }, prev = {}, done = new Set(), plan = x.ignoreCut;
+    // The search state is a device, or for a splitter or switch the device plus the port the light came in by: a common port feeds the two branches,
+    // a branch only feeds the common port (never the other branch), and a switch passes its selected branch (the other too, if it is set to auto-switch).
+    const dist = { [aId]: 0 }, prev = {}, done = new Set(), plan = x.ignoreCut, idOf = k => k.split('#')[0];
     if (isDead(node(aId)) && !allowCut && !plan) return null;
+    let end = null;
     while (true) {
       let u = null, best = Infinity;
       for (const k in dist) if (!done.has(k) && dist[k] < best) { best = dist[k]; u = k; }
       if (u == null) return null;
-      if (u === zId) break;
+      const me = idOf(u);
+      if (me === zId) { end = u; break; }
       done.add(u);
-      if (u !== aId && isEnd(node(u))) continue;
-      for (const l of linksOf(u)) {
+      const un = node(me), arr = u.includes('#') ? u.split('#')[1] : '';
+      if (me !== aId && isEnd(un)) continue;
+      for (const l of linksOf(me)) {
+        if (prev[u] && prev[u].l === l.id) continue; // light does not turn round on the cable it arrived by
         const cut = isCut(S, l);
         if (cut && !allowCut && !plan) continue;
         if (x.exclude && x.exclude.has(l.id)) continue;
-        if ((l.p.dir === 'ab' && l.a !== u) || (l.p.dir === 'ba' && l.b !== u)) continue; // one-way fiber: light only travels the carried way
-        const v = other(l, u); if (node(v).type === 'host') continue; // a host hangs off a transponder; light never goes through it
+        if ((l.p.dir === 'ab' && l.a !== me) || (l.p.dir === 'ba' && l.b !== me)) continue; // one-way fiber: light only travels the carried way
+        const v = other(l, me); if (node(v).type === 'host') continue; // a host hangs off a transponder; light never goes through it
+        let extra = 0;
+        if (isTriPort(un) && arr) {
+          const out = oadmSide(l, me); if (arr === 'c' ? out === 'c' : out !== 'c') continue;
+          if (un.type === 'switch') { const branch = arr === 'c' ? out : arr; if (branch !== (un.p.pos === 'b' ? 'b' : 'a')) { if (!un.p.auto) continue; extra = 0.5; } }
+        }
         const dead = isDead(node(v));
         if (dead && !allowCut && !plan) continue;
         if (x.excludeNodes && x.excludeNodes.has(v) && v !== zId) continue;
-        const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0);
-        if (dist[v] == null || dist[u] + w < dist[v]) { dist[v] = dist[u] + w; prev[v] = { u, l: l.id }; }
+        const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + extra + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0), vk = isTriPort(node(v)) ? v + '#' + oadmSide(l, v) : v;
+        if (dist[vk] == null || dist[u] + w < dist[vk]) { dist[vk] = dist[u] + w; prev[vk] = { u, l: l.id }; }
       }
     }
-    const nodes = [zId], links = [];
-    let c = zId;
-    while (c !== aId) { links.unshift(prev[c].l); c = prev[c].u; nodes.unshift(c); }
+    const nodes = [idOf(end)], links = [];
+    let c = end;
+    while (c !== aId) { links.unshift(prev[c].l); c = prev[c].u; nodes.unshift(idOf(c)); }
     return { nodes, links };
   }
 
@@ -932,6 +962,8 @@ const MODEL = (() => {
     const P = {}; for (const k in RESIL) P[k] = num(g[k], RESIL[k]);
     const { link, node } = mkGraph(S), YEAR = 8760 * 3600, svc = S.svc || {};
     const len = id => { const l = link(id); return l && l.kind === 'fiber' ? +l.p.len : 0; }, km = ids => ids.reduce((a, id) => a + len(id), 0);
+    // restoring over a route through an auto-switching optical switch takes the detection plus the switch time, not the control plane's restoration time
+    const restoreOf = alt => { const sw = alt.nodes.map(id => node(id)).filter(n => n && n.type === 'switch' && n.p.auto); return sw.length ? (P.detectMs + Math.max(...sw.map(n => +n.p.switchMs || 20))) / 1000 : P.restoreSec; };
     const lam = k => P.cutRate * k / 1000, Uf = k => lam(k) * P.mttr / 8760;
     const plan = Array.isArray(g.plan) && g.plan.length ? g.plan : [{ svc: true, from: '', to: '', via: '', conv: '', prot: '' }];
     const section = (x, y, via, prot) => { // one routed stretch, optionally protected
@@ -947,7 +979,7 @@ const MODEL = (() => {
         let t;
         if (d === x || d === y) t = P.mttr * 3600;
         else if (isProt && !pp.P0.nodes.includes(d)) t = sw;
-        else t = route(S, x, y, true, { ignoreCut: true, excludeNodes: new Set([d]) }) ? P.restoreSec : P.mttr * 3600;
+        else { const alt = route(S, x, y, true, { ignoreCut: true, excludeNodes: new Set([d]) }); t = alt ? restoreOf(alt) : P.mttr * 3600; }
         devDown += P.devRate * t; devFail += P.devRate; devWorst = Math.max(devWorst, t);
       }
       for (const d of [x, y]) { // the transponders at the ends: a spare module takes over in the switch time, otherwise the repair time
@@ -968,7 +1000,7 @@ const MODEL = (() => {
       for (const id of W.links) {
         if (!len(id)) continue; fibers++;
         const grp = (link(id).p || {}).srlg, mates = grp ? S.links.filter(o => o.p.srlg === grp).map(o => o.id) : [id];
-        const alt = route(S, x, y, true, { ignoreCut: true, exclude: new Set([id, ...mates]) }), t = alt ? P.restoreSec : P.mttr * 3600;
+        const alt = route(S, x, y, true, { ignoreCut: true, exclude: new Set([id, ...mates]) }), t = alt ? restoreOf(alt) : P.mttr * 3600;
         if (alt) restorable++; down += lam(len(id)) * t; worst = Math.max(worst, t);
       }
       const kind = prot && !pp.P0 ? 'unprotected (no disjoint route)' : restorable === fibers ? 'restoration' : restorable ? 'partial restoration' : 'unprotected';
@@ -1278,6 +1310,13 @@ const MODEL = (() => {
         if (dropsX) nch = 1;
         if (planOn) { if (joining.length) ev.push({ k: 'J', idx: joining, padd: lin(+p.tx - +p.ad) / 1000 }); if (!dropsX) nch = litCount(k); curAct = maskAt(k); }
         rec(nxt.name, 'oadm', b, { gain: -lo, note: (joinsX ? 'add port' : dropsX ? 'drop port' : 'passive filter') + (leaving.length ? `, ${leaving.length} channel${leaving.length > 1 ? 's' : ''} dropped (${+p.ad} dB)` : '') + (joining.length ? `, ${joining.length} added (${+p.ad} dB)` : '') });
+      } else if (t === 'splitter' || t === 'switch') {
+        // A splitter sends the light to both branches: the branch the route takes gets its share of the power (a 99/1 tap costs 0.05 dB on the main
+        // branch and 20 dB on the tap). A switch passes one branch for about 1 dB. Which branch is the route's cable on that side of the device.
+        const inP = oadmSide(link(path.links[i]), nxt.id), branch = inP !== 'c' ? inP : oadmSide(link(path.links[i + 1]), nxt.id);
+        const b = snap(), lo = (t === 'splitter' ? splitLossDb(nxt, branch) : +nxt.p.il) + degOf(nxt); loss(lo);
+        if (planOn) { nch = litCount(i + 1); curAct = maskAt(i + 1); }
+        rec(nxt.name, t, b, { gain: -lo, note: t === 'splitter' ? `${nxt.p.ratio} splitter, port ${branch.toUpperCase()}: ${f1(lo)} dB` : `switch passing port ${branch.toUpperCase()}${nxt.p.pos === branch ? '' : ' (it switched away from the selected port)'}` });
       } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il') + degOf(nxt), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(), att = +nxt.p.att + degOf(nxt); loss(att); rec(nxt.name, 'voa', b, { gain: -att }); }
       else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs, degOf(nxt)); }
@@ -1537,6 +1576,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

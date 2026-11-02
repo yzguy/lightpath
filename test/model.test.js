@@ -1817,3 +1817,44 @@ test('single fibre: the flags survive sanitize and bad values are dropped', () =
   assert.ok(c.links.every(l => l.p.single === false), 'only a fibre span can be single, and only if true');
   assert.deepEqual(M.sanitizePlan([{ slot: 3, slotRev: 3 }, { slot: 5, slotRev: 9 }, { slot: 7, slotRev: 'x' }], 75).map(x => x.slotRev), [null, 9, null]);
 });
+
+const olp = () => M.sanitize(build('olp'));
+const fib = (S, km) => S.links.find(l => l.kind === 'fiber' && +l.p.len === km);
+test('splitter and switch: the service takes the selected branch, losing the splitter share and the switch loss', () => {
+  const S = olp(), r = M.simulate(S), hop = n => r.hops.find(h => h.name === n);
+  assert.equal(r.status, 'up'); assert.equal(Math.round(r.km), 60);
+  assert.ok(Math.abs(hop('SPL-A').gain + 3.31) < 0.01, `splitter ${hop('SPL-A').gain}`); assert.ok(Math.abs(hop('TAP-A').gain + 0.34) < 0.01);
+  assert.equal(hop('SW-Z').gain, -1);
+  assert.ok(Math.abs(M.splitLossDb({ p: { ratio: '99/1', excess: 0.3 } }, 'b') - 20.3) < 1e-9);
+});
+
+test('optical switch: auto-switching moves to the other branch on a cut, manual leaves it dark', () => {
+  const S = olp(); fib(S, 60).p.cut = true;
+  let r = M.simulate(S); assert.equal(r.status, 'up'); assert.equal(Math.round(r.km), 80, 'the 80 km fibre now carries it');
+  assert.ok(r.hops.find(h => h.name === 'SW-Z').note.includes('switched away'));
+  S.nodes.find(n => n.name === 'SW-Z').p.auto = false; r = M.simulate(S); assert.equal(r.status, 'los', 'a manual switch stays on its port');
+  S.nodes.find(n => n.name === 'SW-Z').p.pos = 'b'; r = M.simulate(S); assert.equal(r.status, 'up'); assert.equal(Math.round(r.km), 80);
+  fib(S, 60).p.cut = false; assert.equal(Math.round(M.simulate(S).km), 80, 'set to port B it uses B');
+});
+
+test('splitter: light goes common to branch and back, never branch to branch', () => {
+  const mk = (id, ty, p = {}) => ({ id, type: ty, name: id, x: 0, y: 0, p: { ...M.TYPES[ty].def(), ...p } });
+  const e = ['ea', 'eb', 'ec'].map(k => mk(k, 'edfa')), sp = mk('sp', 'splitter'), L = (a, b, port) => ({ id: a + b, a, b, kind: 'patch', p: { ...M.linkDefaults('patch'), sb: port } });
+  const S = { nodes: [...e, sp], links: [L('ea', 'sp', 'a'), L('eb', 'sp', 'b'), L('ec', 'sp', 'c')], g: {}, svc: {} };
+  assert.ok(M.route(S, 'ec', 'ea', true)); assert.ok(M.route(S, 'ea', 'ec', true)); assert.ok(M.route(S, 'ec', 'eb', true));
+  assert.equal(M.route(S, 'ea', 'eb', true), null, 'a splitter does not pass branch A to branch B');
+  const T = M.sanitize(clone(S)); assert.deepEqual(T.links.map(l => l.p.sb).sort(), ['a', 'b', 'c']);
+});
+
+test('optical switch: restoring through an auto switch takes the switch time, not the restoration time', () => {
+  const S = olp(); S.g.devRate = 0; const k = S.g.plan ? S.g.plan.findIndex(c => c.svc) : 0, a = M.resilience(S)[Math.max(0, k)];
+  assert.ok(a.outageSec < 1, `outage ${a.outageSec} s`);
+  S.nodes.find(n => n.name === 'SW-Z').p.auto = false;
+  const b = M.resilience(S)[Math.max(0, k)]; assert.ok(b.outageSec > 3600, `a manual switch waits for the repair: ${b.outageSec} s`);
+});
+
+test('splitter and switch: settings survive sanitize and bad values are dropped', () => {
+  const S = build('olp'); S.nodes.find(n => n.name === 'SPL-A').p.ratio = '13/87'; S.nodes.find(n => n.name === 'SW-Z').p.pos = 'z'; S.nodes.find(n => n.name === 'SW-Z').p.switchMs = 'fast'; S.nodes.find(n => n.name === 'SW-Z').p.auto = 'yes';
+  const c = M.sanitize(clone(S)), sp = c.nodes.find(n => n.name === 'SPL-A').p, sw = c.nodes.find(n => n.name === 'SW-Z').p;
+  assert.equal(sp.ratio, '50/50'); assert.equal(sw.pos, 'a'); assert.equal(sw.switchMs, 20); assert.equal(sw.auto, true);
+});
