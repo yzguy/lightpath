@@ -409,7 +409,7 @@ function selIn(obj, key, opts) {
 function renderInspector() {
   const box = $('#insp'); box.innerHTML = '';
   if (!sel) {
-    box.append(el('h3', { text: 'Inspector' }), el('p', { class: 'muted', html: 'Select a device or a cable to edit it. <b>Double-click</b> a transponder to make it an end of the service under test.' }));
+    box.append(el('h2', { text: 'Inspector' }), el('p', { class: 'muted', html: 'Select a device or a cable to edit it. <b>Double-click</b> a transponder to make it an end of the service under test.' }));
     S.g.eolSpan ??= PHY.EOL.spanLoss; S.g.eolTrx ??= PHY.EOL.trxPen;
     S.g.neighbors ??= 'same';
     S.g.reopt = S.g.reopt === true;
@@ -428,7 +428,7 @@ function renderInspector() {
   if (sel.kind === 'node') {
     const n = node(sel.id); if (!n) return;
     const nm = el('input', { value: n.name, id: 'f-name' }); nm.addEventListener('input', () => { n.name = nm.value; renderCanvas(); renderResults(); });
-    box.append(el('h3', { text: TYPES[n.type].label }), field('Name', nm));
+    box.append(el('h2', { text: TYPES[n.type].label }), field('Name', nm));
     const p = n.p; p.fail ??= ''; p.degDb ??= 3;
     box.append(field('Condition', selIn(p, 'fail', [['', 'Working'], ['degraded', 'Degraded'], ['dead', 'Failed (no light passes)']]), 'Failed: the device passes no light, so routes avoid it (restoration or protection) and a service through it is LOS. Degraded: an amplifier loses output (pump ageing) and gets noisier, a laser gets weaker, a receiver loses SNR, a ROADM, mux, VOA or DCM adds loss.'));
     if (p.fail === 'degraded') box.append(field('Degradation (dB)', numIn(p, 'degDb', 0.5, 0, 30)));
@@ -565,7 +565,7 @@ function renderInspector() {
     box.append(el('button', { class: 'btn danger', text: 'Delete device', onclick: del }));
   } else {
     const l = link(sel.id); if (!l) return;
-    box.append(el('h3', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('p', { class: 'muted', text: linkName(l) }));
+    box.append(el('h2', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('p', { class: 'muted', text: linkName(l) }));
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
     if (l.p.dir == null) l.p.dir = 'both';
     { const na = node(l.a), nb = node(l.b); box.append(field('Carries light', selIn(l.p, 'dir', [['both', 'Both ways (a fiber pair)'], ['ab', `${na ? na.name : 'a'} → ${nb ? nb.name : 'b'} only`], ['ba', `${nb ? nb.name : 'b'} → ${na ? na.name : 'a'} only`]]), 'A one-way fiber lets each direction take a different route.')); }

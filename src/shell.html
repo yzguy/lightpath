@@ -6,23 +6,23 @@
 /* Layout: lab bench. Toolbar on top, palette | canvas | inspector, readouts and scopes below. */
 :root {
   --bg: #e9eeec; --panel: #f7f9f8; --raised: #ffffff; --ink: #13201c; --muted: #5a6b66; --line: #cbd5d1; --grid: #dde4e1;
-  --accent: #b88400; --accent-ink: #1a1400; --jacket: #e2b100;
+  --accent: #b88400; --accent-text: #8a6200; --accent-ink: #1a1400; --jacket: #e2b100;
   --sig: #087a72; --ase: #c2413a; --nli: #6b4fbf; --mpi: #a8742b;
-  --good: #1d8048; --warn: #a86d00; --bad: #c0352b; --gap: rgba(8,122,114,.10);
+  --good: #1d8048; --warn: #956000; --bad: #c0352b; --gap: rgba(8,122,114,.10);
   --f-ui: 'Archivo', 'Helvetica Neue', Arial, sans-serif; --f-mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0c1311; --panel: #121b19; --raised: #18231f; --ink: #e2ebe7; --muted: #8b9d97; --line: #26332f; --grid: #1b2622;
-  --accent: #f0c23a; --accent-ink: #1a1400; --jacket: #f0c23a;
+  --accent: #f0c23a; --accent-text: #f0c23a; --accent-ink: #1a1400; --jacket: #f0c23a;
   --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --mpi: #e0a35c; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10); color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #0c1311; --panel: #121b19; --raised: #18231f; --ink: #e2ebe7; --muted: #8b9d97; --line: #26332f; --grid: #1b2622;
-  --accent: #f0c23a; --accent-ink: #1a1400; --jacket: #f0c23a;
+  --accent: #f0c23a; --accent-text: #f0c23a; --accent-ink: #1a1400; --jacket: #f0c23a;
   --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --mpi: #e0a35c; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10); color-scheme: dark }
 * { box-sizing: border-box }
 [hidden] { display: none !important }
 body { background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 14px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px 32px }
-h1, h3, h4 { margin: 0; text-wrap: balance }
+h1, h2, h3, h4 { margin: 0; text-wrap: balance }
 button, select, input { font: inherit; color: inherit }
 .muted { color: var(--muted) } .small { font-size: 12px } .pad { padding: 16px }
 kbd { font-family: var(--f-mono); font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; background: var(--raised) }
@@ -51,7 +51,7 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .bench { display: grid; grid-template-columns: 168px minmax(0, 1fr) 270px; gap: 10px; height: min(62vh, 620px); min-height: 440px }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0 }
 .palette { padding: 10px; display: flex; flex-direction: column; gap: 6px; overflow: auto }
-.palette h3, .insp h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 700; margin: 4px 2px }
+.palette h2, .insp h2, .palette h3, .insp h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 700; margin: 4px 2px }
 .pal-item { display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 8px; padding: 6px; border: 1px solid transparent; border-radius: 6px; cursor: grab; background: none; text-align: left; user-select: none }
 .pal-item:hover { background: var(--raised); border-color: var(--line) }
 .pal-item svg { width: 34px; height: 26px }
@@ -81,7 +81,7 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .node .glyph { font-family: var(--f-mono); font-size: 12px; font-weight: 600; fill: var(--ink) }
 .node .glyph.small { font-size: 10px }
 .node .nlabel { font-family: var(--f-mono); font-size: 11.5px; fill: var(--muted); font-weight: 500 }
-.node .endtag { font-family: var(--f-ui); font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; fill: var(--accent) }
+.node .endtag { font-family: var(--f-ui); font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; fill: var(--accent-text) }
 .node.sel .body { stroke: var(--accent); stroke-width: 3 }
 .node.sel .nlabel { fill: var(--ink) }
 .t-roadm .body, .t-oadm .body { fill: var(--raised) }
@@ -92,9 +92,9 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .steps { margin: 6px 0 0; padding-left: 0; list-style: none; font-size: 13px }
 .steps li { padding: 3px 0 3px 22px; position: relative }
 .steps li::before { position: absolute; left: 2px; font-weight: 800 }
-.steps li.ok::before { content: '\2713'; color: var(--ok, #2e7d5b) }
+.steps li.ok::before { content: '\2713'; color: var(--good) }
 .steps li.bad::before { content: '\2717'; color: var(--bad, #c0392b) }
-.ubar { height: 6px; border-radius: 3px; background: var(--rule, #ccc); overflow: hidden; min-width: 90px }
+.ubar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; min-width: 90px }
 .ubar > i { display: block; height: 100%; background: var(--accent) }
 .ubar.over > i { background: var(--bad, #c0392b) }
 .link .hit { stroke: transparent; stroke-width: 16; cursor: pointer }
@@ -109,7 +109,7 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .lightpath.degraded { stroke: var(--warn) }
 .node.failed .body, .node.failed circle:first-child, .node.failed path { stroke: var(--bad) !important; opacity: .55 }
 .node.degraded .body, .node.degraded circle:first-child, .node.degraded path { stroke: var(--warn) !important; stroke-width: 3 }
-.failmark { fill: var(--bad); font: 700 26px var(--mono, monospace); pointer-events: none }
+.failmark { fill: var(--bad); font: 700 26px var(--f-mono); pointer-events: none }
 .degmark { fill: var(--warn); font-size: 12px; pointer-events: none }
 .chroute.stby { stroke-dasharray: 2 9; opacity: .8 }
 .chroute { stroke: var(--mpi); stroke-width: 6; stroke-linecap: round; fill: none; opacity: 0.55; pointer-events: none }
@@ -125,7 +125,7 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .rubber.patch { stroke: var(--muted); stroke-width: 2 }
 
 .insp { padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 10px }
-.insp h3 { margin: 0 }
+.insp h2, .insp h3 { margin: 0 }
 .fld { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500 }
 .fld input, .fld select { color: var(--ink); font-size: 13px; width: 100% }
 .fld small { font-size: 11px }
@@ -144,7 +144,7 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .s-up { color: var(--good) } .s-degraded { color: var(--warn) } .s-down, .s-los, .s-nopath { color: var(--bad) } .s-none { color: var(--muted) }
 #headline { font-weight: 600; font-size: 15px; flex: 1 1 280px; min-width: 0 }
 .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px }
-.kpi { display: grid; gap: 2px; text-align: left; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: help; border-left: 3px solid var(--line) }
+.kpi { display: grid; grid-template-rows: 1fr auto; gap: 2px; text-align: left; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: help; border-left: 3px solid var(--line) }
 .kpi:hover { border-color: var(--muted) }
 .kpi .kl { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .02em }
 .kpi .kv { font-family: var(--f-mono); font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums }
@@ -225,7 +225,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 @media (max-width: 900px) {
   .bench { grid-template-columns: minmax(0, 1fr); height: auto }
   .palette { flex-direction: row; flex-wrap: wrap }
-  .palette h3 { width: 100% }
+  .palette h2 { width: 100% }
   .pal-item { flex: 1 1 140px }
   .tools { grid-template-columns: repeat(3, 1fr); width: 100% }
   .canvaswrap { height: 56vh; min-height: 360px }
@@ -257,7 +257,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 
 <section class="bench">
   <aside class="panel palette" aria-label="Component palette">
-    <h3>Devices</h3>
+    <h2>Devices</h2>
     <div class="pal-item" draggable="true" data-type="trx" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="2" y="5" width="30" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="5" height="6" fill="var(--jacket)"/></svg><span><b>Transponder</b><small>ZR, ZR+, 100G, 800G</small></span></div>
     <div class="pal-item" draggable="true" data-type="mxp" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="6" y="3" width="24" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M1 7h5M1 11h5M1 15h5M1 19h5" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="4" height="6" fill="var(--jacket)"/></svg><span><b>Muxponder</b><small>Client ports into one ZR line</small></span></div>
     <div class="pal-item" draggable="true" data-type="meter" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="3" y="4" width="28" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="7" y="8" width="20" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span><b>Power meter</b><small>Reads the light at a test point</small></span></div>
@@ -272,7 +272,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <div class="pal-item" draggable="true" data-type="roadm" role="button" tabindex="0"><svg viewBox="0 0 34 26"><circle cx="17" cy="13" r="11" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 10 H24 M10 16 H24" stroke="currentColor" stroke-width="1.4"/></svg><span><b>ROADM</b><small>WSS degree node</small></span></div>
     <div class="pal-item" draggable="true" data-type="dcm" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="4" y="5" width="26" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 17 C13 17 13 9 17 9 S21 17 25 17" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span><b>Dispersion comp.</b><small>DCM / FBG</small></span></div>
     <div class="pal-item" draggable="true" data-type="voa" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="4" y="5" width="26" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 18 L24 8" stroke="currentColor" stroke-width="1.4"/></svg><span><b>VOA / pad</b><small>Attenuator</small></span></div>
-    <h3>Cables &amp; tools</h3>
+    <h2>Cables &amp; tools</h2>
     <div class="tools">
       <button class="tool" data-tool="select"><i class="sel">↖</i>Select / move<kbd>V</kbd></button>
       <button class="tool" data-tool="patch"><i class="patch"></i>Patch cord<kbd>P</kbd></button>
@@ -289,6 +289,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 </section>
 
 <section class="panel results" id="results" aria-label="Service results">
+  <h2 class="sr-only">Service results</h2>
   <div class="svcbar">
     <label for="svc-a">Service A <select id="svc-a"></select></label>
     <button class="btn" id="svc-swap" title="Swap direction">⇄</button>
@@ -321,5 +322,5 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 
 <div id="toast" role="status" aria-live="polite" hidden></div>
 <div id="sr-live" class="sr-only" role="status" aria-live="polite"></div>
-<div id="io" hidden><div class="panel"><h3>Export / import topology</h3><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" aria-label="Topology JSON" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div>
-<h3>Build a line from a span list</h3><p class="muted small">One span per line: <code>km, fiber, extra loss dB</code> (fiber: smf, leaf, ull, legacy; the last two columns are optional). Replaces the canvas with TRX, mux, booster, an ILA between spans, preamp, mux, TRX.</p><textarea id="csv-text" class="csv" aria-label="Span list, one span per line" spellcheck="false" placeholder="km,fiber,extra_db\n80,smf,1.5\n95,smf,2\n70,ull,1"></textarea><div class="row"><select id="csv-mode"></select><button class="btn" id="csv-build">Build line</button></div></div></div>
+<div id="io" hidden><div class="panel"><h2>Export / import topology</h2><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" aria-label="Topology JSON" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div>
+<h2>Build a line from a span list</h2><p class="muted small">One span per line: <code>km, fiber, extra loss dB</code> (fiber: smf, leaf, ull, legacy; the last two columns are optional). Replaces the canvas with TRX, mux, booster, an ILA between spans, preamp, mux, TRX.</p><textarea id="csv-text" class="csv" aria-label="Span list, one span per line" spellcheck="false" placeholder="km,fiber,extra_db\n80,smf,1.5\n95,smf,2\n70,ull,1"></textarea><div class="row"><select id="csv-mode"></select><button class="btn" id="csv-build">Build line</button></div></div></div>

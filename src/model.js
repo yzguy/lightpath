@@ -578,7 +578,7 @@ const MODEL = (() => {
     const sideOf = (l, nid) => (l.a === nid ? l.p.sa : l.p.sb);
     const ev = (kind, name, dl, refl, note) => { // an event at km, merged into the last one when it falls inside the dead zone
       const last = out.events[out.events.length - 1];
-      if (last && km - last.km < dz && kind !== 'end' && kind !== 'break') { last.loss += dl; last.refl = Math.max(last.refl, refl); last.name += ' + ' + name; last.note = (last.note ? last.note + '; ' : '') + 'merged: inside the dead zone'; }
+      if (last && km - last.km < dz && kind !== 'end' && kind !== 'break') { last.loss += dl; last.refl = Math.max(last.refl, refl); last.name += ' + ' + name; last.note = /merged/.test(last.note || '') ? last.note : (last.note ? last.note + '; ' : '') + 'merged: inside the dead zone'; }
       else out.events.push({ km, kind, name, loss: dl, refl, note });
       loss += dl; out.points.push({ km, db: -(loss - dl) }, { km, db: -loss });
     };
