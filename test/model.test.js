@@ -1922,22 +1922,29 @@ test('Protection and a converter on cabled channels scenario is clean and has bo
   assert.ok(r.channels.every((c, i) => d[i].filler || c.status === 'up'));
 });
 
-test('1310 nm ports: link budget, blocking devices and management domains', () => {
-  const S = M.sanitize(build('osc')), nm = (X, n) => X.nodes.find(x => x.name === n), r = M.simulate(S), B = r.b1310;
+test('1310 nm client ports and the 1510 nm supervisory channel', () => {
+  const S = M.sanitize(build('osc')), nm = (X, n) => X.nodes.find(x => x.name === n), r = M.simulate(S), B = r.b1310, O = r.osc;
+  // 1310 nm client: 15 km at 0.35 dB/km + two 0.6 dB couplers + panel 0.5 dB + dirty 1.5 dB, from the optic's launch power
   const l12 = B.links.find(l => l.aName === 'OADM-1' && l.bName === 'OADM-2');
-  // 40 km at 0.35 dB/km + two 0.6 dB couplers + panel 0.5 dB + dirty 1.5 dB, from -3 dBm
-  assert.ok(Math.abs(l12.loss - (14 + 1.2 + 0.5 + 1.5)) < 1e-9); assert.ok(Math.abs(l12.rx - (-3 - l12.loss)) < 1e-9); assert.equal(l12.status, 'warn');
+  assert.ok(Math.abs(l12.loss - (15 * 0.35 + 1.2 + 0.5 + 1.5)) < 1e-9); assert.ok(Math.abs(l12.rx - (-3 - l12.loss)) < 1e-9); assert.equal(l12.status, 'warn');
   assert.ok(B.links.some(l => l.aName === 'OADM-3' && l.status === 'blocked' && /AMP-C/.test(l.why)), 'an amplifier blocks 1310 nm');
-  assert.deepEqual(B.domains.map(d => d.sort()).sort(), [['OADM-1', 'OADM-2'], ['OADM-3']]);
-  assert.ok(r.alarms.some(a => /OADM-3 has no supervisory channel/.test(a.text)));
-  // clean the connector: more margin; a longer span: down; mismatched optics: down
+  // the OSC at 1510 nm: the amplifiers regenerate it, so the sites form one domain; a mux ends the chain
+  const s12 = O.links.find(l => l.aName === 'OADM-1' && l.bName === 'OADM-2');
+  assert.ok(Math.abs(s12.loss - (15 * 0.25 + 2 + 0.5 + 1.5)) < 1e-9); assert.equal(s12.status, 'up');
+  assert.deepEqual(O.domains.map(d => d.sort()), [['AMP-C', 'BST-A', 'OADM-1', 'OADM-2', 'OADM-3']]);
+  assert.ok(O.links.some(l => l.aName === 'BST-A' && l.status === 'blocked' && /MUX-A/.test(l.why)));
+  assert.ok(!r.alarms.some(a => /supervisory/.test(a.text)), 'a healthy OSC raises no alarm');
+  // a dead amplifier breaks the chain; a long span goes down; a cut fibre does too
+  const d = clone(S); nm(d, 'AMP-C').p.fail = 'dead'; const rd = M.simulate(d);
+  assert.equal(rd.osc.domains.length, 2); assert.ok(rd.alarms.some(a => /2 management domains/.test(a.text)));
+  const lg = clone(S); lg.links.find(l => l.kind === 'fiber' && l.p.len === 40).p.len = 120; const rl = M.simulate(lg);
+  assert.equal(rl.osc.links.find(l => l.aName === 'OADM-2' && l.bName === 'AMP-C').status, 'down'); assert.ok(rl.alarms.some(a => /span OADM-2 to AMP-C is down/.test(a.text)));
+  const k = clone(S); k.links.find(l => l.kind === 'fiber' && l.p.len === 8).p.cut = true; assert.ok(M.simulate(k).osc.links.some(l => l.aName === 'OADM-1' && l.status === 'blocked' && /is cut/.test(l.why)));
+  // clean the connector: more margin on the 1310 nm link; mismatched optics are down
   const c = clone(S); nm(c, 'ODF-1').p.dirty = {}; assert.ok(M.simulate(c).b1310.links.find(l => l.bName === 'OADM-2').margin > l12.margin + 1.4);
-  const d = clone(S); d.links.find(l => l.kind === 'fiber' && l.p.len === 20).p.len = 80;
-  const rd = M.simulate(d); assert.equal(rd.b1310.links.find(l => l.bName === 'OADM-2').status, 'down'); assert.equal(rd.b1310.domains.length, 3, 'a down span splits the management domain'); 
-  const m = clone(S); nm(m, 'OADM-2').p.o1310 = '10g-lr'; assert.match(M.simulate(m).b1310.links.find(l => l.bName === 'OADM-2').why, /do not match/);
-  const k = clone(S); k.links.find(l => l.kind === 'fiber' && l.p.len === 20).p.cut = true; assert.ok(M.simulate(k).b1310.links.some(l => l.aName === 'OADM-1' && l.status === 'blocked' && /is cut/.test(l.why)));
-  // a legacy 10G LR client has its own optic budget; sanitize cleans a bad choice
-  const bad = clone(S); nm(bad, 'OADM-1').p.o1310 = '100g-lr4x'; assert.equal(nm(M.sanitize(bad), 'OADM-1').p.o1310, 'osc');
-  const dc = clone(S); nm(dc, 'OADM-1').p.o1310 = '10g-er'; assert.equal(nm(M.sanitize(dc), 'OADM-1').p.o1310, 'osc', 'only 1310 nm optics are allowed');
-  const noPort = clone(S); nm(noPort, 'OADM-2').p.p1310 = false; assert.ok(M.simulate(noPort).b1310.links.every(l => l.b === null));
+  const m = clone(S); nm(m, 'OADM-2').p.o1310 = '25g-lr'; assert.match(M.simulate(m).b1310.links.find(l => l.bName === 'OADM-2').why, /do not match/);
+  // sanitize: only 1310 nm optics; an older lab with o1310 'osc' becomes an OSC
+  const bad = clone(S); nm(bad, 'OADM-1').p.o1310 = '10g-er'; assert.equal(nm(M.sanitize(bad), 'OADM-1').p.o1310, '10g-lr');
+  const old = clone(S); const o = nm(old, 'OADM-1'); o.p.osc = false; o.p.p1310 = true; o.p.o1310 = 'osc'; const oo = nm(M.sanitize(old), 'OADM-1'); assert.equal(oo.p.osc, true); assert.equal(oo.p.p1310, false);
+  const none = clone(S); none.nodes.filter(n => n.type === 'oadm').forEach(n => { n.p.osc = false; n.p.p1310 = false; }); assert.equal(M.simulate(none).osc, undefined);
 });
