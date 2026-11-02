@@ -74,7 +74,8 @@ function applyView() { gRoot.setAttribute('transform', `scale(${S.view.k}) trans
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
 
 function nodeShape(n) {
-  const g = sv('g', { class: 'node t-' + n.type + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0 });
+  const g = sv('g', { class: 'node t-' + n.type + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === n.id ? 'true' : 'false',
+    'aria-label': `${n.name}, ${(TYPES[n.type] || {}).label || n.type}${n.p && n.p.fail === 'dead' ? ', failed' : n.p && n.p.fail === 'degraded' ? ', degraded' : ''}` });
   if (n.type === 'trx') {
     g.append(sv('rect', { x: -46, y: -22, width: 92, height: 44, rx: 4, class: 'body' }));
     g.append(sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' }));
@@ -167,7 +168,8 @@ function renderCanvas() {
     const grp = pairs.get([l.a, l.b].sort().join('|')), dxn = b0.x - a0.x, dyn = b0.y - a0.y, dn = Math.hypot(dxn, dyn) || 1, off = (grp.indexOf(l) - (grp.length - 1) / 2) * 16;
     const a = { ...a0, x: a0.x - dyn / dn * off, y: a0.y + dxn / dn * off }, b = { ...b0, x: b0.x - dyn / dn * off, y: b0.y + dxn / dn * off };
     const cutNow = MODEL.isCut(S, l);
-    const g = sv('g', { class: 'link k-' + l.kind + (cutNow ? ' cut' : '') + (sel && sel.id === l.id ? ' sel' : ''), 'data-id': l.id });
+    const g = sv('g', { class: 'link k-' + l.kind + (cutNow ? ' cut' : '') + (sel && sel.id === l.id ? ' sel' : ''), 'data-id': l.id, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === l.id ? 'true' : 'false',
+      'aria-label': `${l.kind === 'fiber' ? `Fiber span, ${l.p.len} km` : 'Patch cord'}: ${a0.name} to ${b0.name}${cutNow ? ', cut' : ''}` });
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'hit' }));
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'wire' }));
     if (hiLinks.has(l.id)) og.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'chroute' }));
@@ -260,6 +262,16 @@ svg.addEventListener('pointerup', e => {
   else if (d.kind === 'node' && d.moved) { save(); }
 });
 let pendingCable = null;
+// Enter or Space on a focused device or cable selects it, like a click does; the canvas is rebuilt on every change, so focus goes back to the same item
+svg.addEventListener('keydown', e => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const t = e.target.closest && e.target.closest('.node, .link'); if (!t) return;
+  e.preventDefault();
+  const id = t.dataset.id, kind = t.classList.contains('node') ? 'node' : 'link';
+  if (tool !== 'select') { if (kind === 'node') { const n = node(id); if (!pendingCable) { pendingCable = n; toast(`Now choose the second device to connect ${n.name}`); } else { const a = pendingCable; pendingCable = null; if (a.id !== n.id) connect(a, n, tool); } } return; }
+  select({ kind, id });
+  const again = svg.querySelector(`[data-id="${id}"]`); if (again) again.focus();
+});
 svg.addEventListener('wheel', e => {
   e.preventDefault();
   const w = toWorld(e.clientX, e.clientY), k = Math.min(2.5, Math.max(0.15, S.view.k * Math.exp(-e.deltaY * 0.0015)));
@@ -721,6 +733,7 @@ function renderResults() {
   }
   $('#status').className = 'status s-' + lastRes.status; $('#status').textContent = STATUS[lastRes.status];
   $('#headline').textContent = lastRes.headline;
+  { const msg = `${STATUS[lastRes.status]}. ${lastRes.headline}`; if (msg !== srLast) { srLast = msg; $('#sr-live').textContent = msg; } } // announced only when it changes
   const k = $('#kpis'); k.innerHTML = ''; $('#diag').innerHTML = '';
   if (!r.mode) { $('#tabbody').innerHTML = ''; $('#alarms').innerHTML = ''; renderTabBody(); return; }
   const m = r.mode;
@@ -765,13 +778,18 @@ function diagnose(r) {
   return wrap;
 }
 document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => { tab = t.dataset.tab; renderTabBody(); }));
+$('#tabs').addEventListener('keydown', e => { // arrow keys move between tabs (only the selected one is a Tab stop)
+  const all = [...document.querySelectorAll('.tab')], i = all.findIndex(t => t.dataset.tab === tab);
+  const j = e.key === 'ArrowRight' ? (i + 1) % all.length : e.key === 'ArrowLeft' ? (i + all.length - 1) % all.length : e.key === 'Home' ? 0 : e.key === 'End' ? all.length - 1 : -1;
+  if (j < 0) return; e.preventDefault(); tab = all[j].dataset.tab; renderTabBody(); all[j].focus();
+});
 $('#svc-a').addEventListener('change', e => { S.svc.a = e.target.value || null; renderAll(); });
 $('#svc-z').addEventListener('change', e => { S.svc.z = e.target.value || null; renderAll(); });
 $('#svc-swap').addEventListener('click', () => { [S.svc.a, S.svc.z] = [S.svc.z, S.svc.a]; renderAll(); });
 
 function renderTabBody() {
-  document.querySelectorAll('.tab').forEach(t => t.setAttribute('aria-selected', t.dataset.tab === tab));
-  const b = $('#tabbody'); b.innerHTML = '';
+  document.querySelectorAll('.tab').forEach(t => { const on = t.dataset.tab === tab; t.setAttribute('aria-selected', on); t.id = 'tab-' + t.dataset.tab; t.setAttribute('aria-controls', 'tabbody'); t.tabIndex = on ? 0 : -1; });
+  const b = $('#tabbody'); b.innerHTML = ''; b.setAttribute('role', 'tabpanel'); b.setAttribute('aria-labelledby', 'tab-' + tab);
   const r = view();
   if (tab === 'learn') return b.append(learnView());
   if (tab === 'plan') return b.append(planView(r));
@@ -1394,7 +1412,7 @@ function learnView() {
 }
 
 // ---------- misc ----------
-let toastT;
+let toastT, srLast = '';
 function toast(t, action) { // an action ({label, fn}) stays longer so there is time to use it
   const e = $('#toast'); e.textContent = t; e.hidden = false;
   if (action) e.append(el('button', { class: 'toast-act', text: action.label, onclick: () => { e.hidden = true; action.fn(); } }));

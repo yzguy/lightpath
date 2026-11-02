@@ -27,6 +27,10 @@ button, select, input { font: inherit; color: inherit }
 .muted { color: var(--muted) } .small { font-size: 12px } .pad { padding: 16px }
 kbd { font-family: var(--f-mono); font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; background: var(--raised) }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0 }
+.skip { position: absolute; left: 8px; top: -60px; z-index: 30; background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 600; text-decoration: none }
+.skip:focus { top: 8px }
+#cv:focus { outline: none }
 
 /* top bar */
 .top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin-bottom: 12px }
@@ -239,6 +243,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 .st-up { color: var(--good) } .st-degraded { color: var(--warn) } .st-down, .st-los { color: var(--bad) } .st-blocked, .st-nopath { color: var(--warn) } .st-standby { color: var(--muted) }
 </style>
 
+<a class="skip" href="#cv">Skip to canvas</a>
 <header class="top">
   <div class="brand"><h1>Light<span>path</span></h1><small>C-band · GN-model physics</small></div>
   <div class="globals">
@@ -276,7 +281,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <p class="muted small" style="margin:6px 2px 0">Drag devices onto the bench (or click to add). Pick a cable, then drag from one device to another.</p>
   </aside>
   <div class="panel canvaswrap">
-    <svg id="cv" aria-label="Topology canvas"><g id="world"></g></svg>
+    <svg id="cv" tabindex="-1" role="group" aria-label="Topology canvas: devices and cables, Enter selects"><g id="world"></g></svg>
     <div id="emptyhint">Empty bench. Drag a transponder in from the left, or load a scenario.</div>
     <div class="canvas-tools"><button class="btn" id="btn-undo" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo" disabled>Undo</button><button class="btn" id="btn-redo" title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo" disabled>Redo</button><button class="btn" id="btn-fit">Fit</button><button class="btn" id="btn-export">Export / import</button><button class="btn" id="btn-clear">Clear canvas</button></div>
   </div>
@@ -315,5 +320,6 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 </section>
 
 <div id="toast" role="status" aria-live="polite" hidden></div>
-<div id="io" hidden><div class="panel"><h3>Export / import topology</h3><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div>
-<h3>Build a line from a span list</h3><p class="muted small">One span per line: <code>km, fiber, extra loss dB</code> (fiber: smf, leaf, ull, legacy; the last two columns are optional). Replaces the canvas with TRX, mux, booster, an ILA between spans, preamp, mux, TRX.</p><textarea id="csv-text" class="csv" spellcheck="false" placeholder="km,fiber,extra_db\n80,smf,1.5\n95,smf,2\n70,ull,1"></textarea><div class="row"><select id="csv-mode"></select><button class="btn" id="csv-build">Build line</button></div></div></div>
+<div id="sr-live" class="sr-only" role="status" aria-live="polite"></div>
+<div id="io" hidden><div class="panel"><h3>Export / import topology</h3><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" aria-label="Topology JSON" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div>
+<h3>Build a line from a span list</h3><p class="muted small">One span per line: <code>km, fiber, extra loss dB</code> (fiber: smf, leaf, ull, legacy; the last two columns are optional). Replaces the canvas with TRX, mux, booster, an ILA between spans, preamp, mux, TRX.</p><textarea id="csv-text" class="csv" aria-label="Span list, one span per line" spellcheck="false" placeholder="km,fiber,extra_db\n80,smf,1.5\n95,smf,2\n70,ull,1"></textarea><div class="row"><select id="csv-mode"></select><button class="btn" id="csv-build">Build line</button></div></div></div>
