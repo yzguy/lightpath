@@ -14,7 +14,7 @@ const MODEL = (() => {
     switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, switchMs: 20 }) },
     panel: { label: 'Patch panel / ODF', hint: 'Fibre panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, dirty: {} }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24, bidi: false, role: 'low' }) },
-    oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, p1310: false, bidi: false, eRole: 'low', wRole: 'high' }) },
+    oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, p1310: false, o1310: 'osc', bidi: false, eRole: 'low', wRole: 'high' }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5, degrees: 4, ports: 16, first: 24, colorless: true, directionless: true, contentionless: true }) },
     dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, cdRev: '', il: 7, ilRev: '' }) },
@@ -182,6 +182,19 @@ const MODEL = (() => {
         const port = (t, r, k) => L(t, r, 'patch', { mport: k });
         return { nodes: [ra, rb, rc, a1, a2, b1, b2, c1, c2], links: [L(ra, rb, 'fiber', { len: 80 }), L(rb, rc, 'fiber', { len: 80 }), L(ra, rc, 'fiber', { len: 70 }), port(a1, ra, 0), port(a2, ra, 1), port(b1, rb, 0), port(b2, rb, 1), port(c1, rc, 0), port(c2, rc, 1)],
           g: { nch: 12, df: 75, launch: 0 }, svc: { a: a1.id, z: c1.id } };
+      }
+    },
+    osc: {
+      name: '1310 nm ports: supervisory channel and what blocks it', build() {
+        const ta = N('trx', 'TRX-A', 60, 300, { mode: 'zrp400' }), tz = N('trx', 'TRX-Z', 1330, 300, { mode: 'zrp400' });
+        const ma = N('mux', 'MUX-A', 200, 300, { ports: 16, first: 24 }), mz = N('mux', 'MUX-Z', 1200, 300, { ports: 16, first: 24 }), ba = N('edfa', 'BST-A', 330, 300, { gmin: 5 });
+        const o1 = N('oadm', 'OADM-1', 470, 300, { p1310: true, wFirst: 24, wPorts: 2, eFirst: 24, ePorts: 2 }), od = N('panel', 'ODF-1', 620, 300, { ports: 12, dirty: { 1: 1.5 } });
+        const o2 = N('oadm', 'OADM-2', 770, 300, { p1310: true, wFirst: 24, wPorts: 2, eFirst: 24, ePorts: 2 }), ac = N('edfa', 'AMP-C', 910, 300, { gmin: 5 });
+        const o3 = N('oadm', 'OADM-3', 1050, 300, { p1310: true, wFirst: 24, wPorts: 2, eFirst: 24, ePorts: 2 });
+        // TRX-A to TRX-Z is the service in slot 31, passing all three OADMs. Their 1310 nm ports carry a supervisory channel: OADM-1 and OADM-2 reach each other
+        // over 40 km of fibre and a patch panel port with a dirty connector (little margin left); the amplifier after OADM-2 blocks 1310 nm light, so OADM-3 is cut off.
+        return { nodes: [ta, tz, ma, mz, ba, o1, od, o2, ac, o3], links: [L(ta, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, o1, 'fiber', { len: 5 }), L(o1, od, 'fiber', { len: 20 }), L(od, o2, 'fiber', { len: 20 }),
+          L(o2, ac, 'fiber', { len: 20 }), L(ac, o3, 'fiber', { len: 20 }), L(o3, mz, 'patch'), L(mz, tz, 'patch', { mport: 7 })], g: { nch: 8, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
       }
     },
     cabprot: {
@@ -410,7 +423,7 @@ const MODEL = (() => {
           p.sides = ['ew', 'e', 'w'].includes(raw.sides) ? raw.sides : 'ew';
           if (legacy && legacy.length) { p.eFirst = p.wFirst = legacy[0]; p.ePorts = p.wPorts = Math.min(64, legacy[legacy.length - 1] - legacy[0] + 1); }
           else { p.eFirst = num(raw.eFirst, 24, 0, 127); p.ePorts = num(raw.ePorts, 4, 0, 64); p.wFirst = num(raw.wFirst, 24, 0, 127); p.wPorts = num(raw.wPorts, 4, 0, 64); }
-          p.p1310 = raw.p1310 === true; delete p.slots;
+          p.p1310 = raw.p1310 === true; p.o1310 = raw.o1310 === 'osc' || (PHY_.CLIENT_OPTICS[raw.o1310] && PHY_.CLIENT_OPTICS[raw.o1310].nm === 1310) ? raw.o1310 : 'osc'; delete p.slots;
         }
       }
       if (isEnd(n)) {
@@ -508,6 +521,56 @@ const MODEL = (() => {
   // one side and talks to that side's line; a channel entering from a side in one of that side's slots is dropped. A channel can also not pass
   // through in a slot either side serves (dropped at the input, or in the way of the added channel at the output).
   const P1310_LOSS = 0.6; // the 1310 nm coupler on the line path
+  // ---------- what a 1310 nm port carries ----------
+  // An OADM's 1310 nm port carries either a supervisory channel (management between sites, a 1 Gb/s long-reach grey optic) or a legacy grey client
+  // optic. The 1310 nm light bypasses the C-band filters, so it only sees fibre (about 0.35 dB/km), patch panel ports and the couplers of the OADMs at
+  // both ends; amplifiers, ROADMs, muxes and every other active or filtered device block it. The two ends must use the same optic.
+  const OSC_OPTIC = { name: 'Supervisory channel (1 Gb/s, 1310 nm)', rate: 1, reach: 40, nm: 1310, att: 0.35, tx: -3, rxMin: -23, rxMax: -3 };
+  const optic1310 = k => (k === 'osc' ? OSC_OPTIC : PHY_.CLIENT_OPTICS[k]);
+  function band1310(S) {
+    const { node, link } = mkGraph(S), out = [], seen = new Set(), ends = S.nodes.filter(n => n.type === 'oadm' && n.p.p1310);
+    const sideOf = (l, id) => (l.a === id ? l.p.sa : l.p.sb);
+    for (const a of ends) {
+      if (isDead(a)) continue;
+      for (const l0 of S.links) {
+        if (l0.kind !== 'fiber' || (l0.a !== a.id && l0.b !== a.id)) continue;
+        let l = l0, cur = a.id, km = 0, extra = P1310_LOSS, why = '', hops = [a.name], b = null;
+        for (let guard = 0; guard < 40; guard++) {
+          if (isCut(S, l)) { why = `the fibre ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; break; }
+          km += l.kind === 'fiber' ? +l.p.len : 0;
+          const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid); hops.push(n.name);
+          if (isDead(n)) { why = `${n.name} has failed`; break; }
+          if (n.type === 'oadm' && n.p.p1310) { b = n; extra += P1310_LOSS; break; }
+          if (n.type === 'panel') {
+            const m = /^([rf])(\d+)$/.exec(arr || ''); if (!m) { why = `${n.name}: the cable does not name a port`; break; }
+            const outSide = (m[1] === 'r' ? 'f' : 'r') + m[2], nx = S.links.find(x => x !== l && (x.a === nid || x.b === nid) && sideOf(x, nid) === outSide);
+            extra += (+n.p.il || 0) + ((n.p.dirty && +n.p.dirty[+m[2]]) || 0);
+            if (!nx) { why = `nothing is cabled to ${n.name} ${outSide.toUpperCase()}`; break; }
+            cur = nid; l = nx; continue;
+          }
+          why = n.type === 'oadm' ? `${n.name} has no 1310 nm port` : `${n.name} (${(TYPES[n.type] || {}).label || n.type}) does not pass 1310 nm light`; break;
+        }
+        if (b) {
+          const key = [a.id, b.id].sort().join('|') + '|' + [l0.id, l.id].sort().join('|'); if (seen.has(key)) continue; seen.add(key);
+          const oa = optic1310(a.p.o1310), ob = optic1310(b.p.o1310);
+          if (a.p.o1310 !== b.p.o1310) { out.push({ a: a.id, b: b.id, aName: a.name, bName: b.name, status: 'down', why: `${a.name} has ${oa.name} and ${b.name} has ${ob.name}: the ends do not match`, km, loss: null, hops }); continue; }
+          const loss = oa.att * km + extra, rx = oa.tx - loss, margin = rx - oa.rxMin; let status = 'up', w = '';
+          if (margin < 0) { status = 'down'; w = `Rx ${f1(rx)} dBm is below the ${oa.rxMin} dBm sensitivity`; }
+          else if (rx > oa.rxMax) { status = 'warn'; w = `Rx ${f1(rx)} dBm is above the ${oa.rxMax} dBm overload point: add a pad`; }
+          else if (margin < 3) { status = 'warn'; w = `only ${f1(margin)} dB of margin`; }
+          out.push({ a: a.id, b: b.id, aName: a.name, bName: b.name, optic: a.p.o1310, opticName: oa.name, km, loss, tx: oa.tx, rx, margin, rxMin: oa.rxMin, status, why: w, hops });
+        } else if (why) {
+          const key = a.id + '|' + l0.id; if (seen.has(key)) continue; seen.add(key);
+          out.push({ a: a.id, b: null, aName: a.name, bName: '', status: 'blocked', why, km, hops, optic: a.p.o1310, opticName: optic1310(a.p.o1310).name });
+        }
+      }
+    }
+    // supervisory channels join sites into management domains: sites linked by an OSC span that is up
+    const osc = ends.filter(n => n.p.o1310 === 'osc' && !isDead(n)), par = new Map(osc.map(n => [n.id, n.id])), find = x => (par.get(x) === x ? x : (par.set(x, find(par.get(x))), par.get(x)));
+    out.forEach(r => { if (r.optic === 'osc' && r.b && r.status !== 'down' && par.has(r.a) && par.has(r.b)) par.set(find(r.a), find(r.b)); });
+    const groups = new Map(); osc.forEach(n => { const k = find(n.id); (groups.get(k) || groups.set(k, []).get(k)).push(n.name); });
+    return { links: out, domains: [...groups.values()] };
+  }
   const oadmSide = (l, id) => (l ? (l.a === id ? l.p.sa : l.b === id ? l.p.sb : '') : '');
   const oadmRange = (n, side) => { if (!((n.p.sides || 'ew').includes(side))) return [0, 0]; const f = Math.round(+n.p[side + 'First']) || 0; const w = Math.round(+n.p[side + 'Ports']) || 0; return [f, f + (n.p.bidi ? 2 * w : w)]; }; // a BiDi side serves a low and a high band of that many slots each
   const oadmServes = (n, side, slot) => { const [a, b] = oadmRange(n, side); return slot >= a && slot < b; };
@@ -1405,6 +1468,14 @@ const MODEL = (() => {
     };
     if (isEnd(Z) && spareLoss(Z)) loss(spareLoss(Z)); // the switch or y-cable in front of the receiver
     const res = { mode, modeKey, A, Z, path, raman: ramanViews, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
+    if (!eol && !rv && !W && S.nodes.some(n => n.type === 'oadm' && n.p.p1310)) {
+      res.b1310 = band1310(S);
+      const alone = new Set(res.b1310.domains.filter(d => d.length === 1).map(d => d[0])), told = new Set();
+      for (const r of res.b1310.links) {
+        if (r.status === 'down') alarms.push({ sev: 'warn', text: `The 1310 nm link ${r.aName} to ${r.bName} is down: ${r.why}.` });
+        else if (r.status === 'blocked' && r.optic === 'osc' && alone.has(r.aName) && !told.has(r.aName)) { told.add(r.aName); alarms.push({ sev: 'warn', text: `${r.aName} has no supervisory channel to any other site: ${r.why}.` }); }
+      }
+    }
     if (S._derived) { res.derived = S._derived; if (!eol && !rv && !W) for (const dk of S._derived.dark) alarms.push({ sev: 'warn', text: dk.why }); }
     // Muxponder client ports: per-port optical budget plus rate aggregation into the line port.
     const clientFatal = [];
@@ -1622,6 +1693,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, band1310, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

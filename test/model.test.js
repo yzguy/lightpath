@@ -1921,3 +1921,23 @@ test('Protection and a converter on cabled channels scenario is clean and has bo
   assert.ok(real.some(c => c.prot === '1+1') && real.some(c => c.conv));
   assert.ok(r.channels.every((c, i) => d[i].filler || c.status === 'up'));
 });
+
+test('1310 nm ports: link budget, blocking devices and management domains', () => {
+  const S = M.sanitize(build('osc')), nm = (X, n) => X.nodes.find(x => x.name === n), r = M.simulate(S), B = r.b1310;
+  const l12 = B.links.find(l => l.aName === 'OADM-1' && l.bName === 'OADM-2');
+  // 40 km at 0.35 dB/km + two 0.6 dB couplers + panel 0.5 dB + dirty 1.5 dB, from -3 dBm
+  assert.ok(Math.abs(l12.loss - (14 + 1.2 + 0.5 + 1.5)) < 1e-9); assert.ok(Math.abs(l12.rx - (-3 - l12.loss)) < 1e-9); assert.equal(l12.status, 'warn');
+  assert.ok(B.links.some(l => l.aName === 'OADM-3' && l.status === 'blocked' && /AMP-C/.test(l.why)), 'an amplifier blocks 1310 nm');
+  assert.deepEqual(B.domains.map(d => d.sort()).sort(), [['OADM-1', 'OADM-2'], ['OADM-3']]);
+  assert.ok(r.alarms.some(a => /OADM-3 has no supervisory channel/.test(a.text)));
+  // clean the connector: more margin; a longer span: down; mismatched optics: down
+  const c = clone(S); nm(c, 'ODF-1').p.dirty = {}; assert.ok(M.simulate(c).b1310.links.find(l => l.bName === 'OADM-2').margin > l12.margin + 1.4);
+  const d = clone(S); d.links.find(l => l.kind === 'fiber' && l.p.len === 20).p.len = 80;
+  const rd = M.simulate(d); assert.equal(rd.b1310.links.find(l => l.bName === 'OADM-2').status, 'down'); assert.equal(rd.b1310.domains.length, 3, 'a down span splits the management domain'); 
+  const m = clone(S); nm(m, 'OADM-2').p.o1310 = '10g-lr'; assert.match(M.simulate(m).b1310.links.find(l => l.bName === 'OADM-2').why, /do not match/);
+  const k = clone(S); k.links.find(l => l.kind === 'fiber' && l.p.len === 20).p.cut = true; assert.ok(M.simulate(k).b1310.links.some(l => l.aName === 'OADM-1' && l.status === 'blocked' && /is cut/.test(l.why)));
+  // a legacy 10G LR client has its own optic budget; sanitize cleans a bad choice
+  const bad = clone(S); nm(bad, 'OADM-1').p.o1310 = '100g-lr4x'; assert.equal(nm(M.sanitize(bad), 'OADM-1').p.o1310, 'osc');
+  const dc = clone(S); nm(dc, 'OADM-1').p.o1310 = '10g-er'; assert.equal(nm(M.sanitize(dc), 'OADM-1').p.o1310, 'osc', 'only 1310 nm optics are allowed');
+  const noPort = clone(S); nm(noPort, 'OADM-2').p.p1310 = false; assert.ok(M.simulate(noPort).b1310.links.every(l => l.b === null));
+});
