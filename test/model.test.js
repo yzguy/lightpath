@@ -1686,3 +1686,36 @@ test('cabling defines channels: a lab without mux ports behaves as before, and p
   const cc = M.sanitize(bad); assert.equal(cc.links.filter(l => l.p.mport === 2 || l.p.mport === 3).length, 0);
   assert.ok(cc.links.filter(l => l.kind === 'fiber').every(l => l.p.mport === null), 'only a transponder-to-mux patch has a port');
 });
+
+const rp = () => M.sanitize(build('roadmports'));
+test('ROADM add/drop ports: transponders pair across the ring, and a slot is reused on different fibers', () => {
+  const S = rp(), d = M.derive(S), r = M.simulate(S), nm = id => S.nodes.find(n => n.id === id).name;
+  assert.equal(d.paired, 3); assert.equal(d.dark.length, 0);
+  assert.deepEqual(d.plan.filter(c => !c.filler).map(c => `${nm(c.from)}>${nm(c.to)}@${c.slot + 1}`).sort(), ['TRX-A1>TRX-C1@30', 'TRX-A2>TRX-B1@31', 'TRX-C2>TRX-B2@31']);
+  assert.equal(r.status, 'up'); assert.ok(r.channels.every(c => c.status === 'up'), 'the reused slot is not blocked');
+  assert.equal(d.plan.length, 12);
+});
+
+test('ROADM add/drop ports: colored, contentionless and directionless change what can be plugged where', () => {
+  let S = rp(); S.nodes.find(n => n.name === 'ROADM-B').p.contentionless = false; // B1 and B2 are both in slot 31 on ROADM-B
+  assert.ok(M.derive(S).dark.some(x => /not contentionless/.test(x.why)));
+  S = rp(); S.nodes.find(n => n.name === 'ROADM-A').p.colorless = false; // A1 is tuned to slot 30 but port 1 now passes slot 25
+  assert.ok(M.derive(S).dark.some(x => x.name === 'TRX-A1' && /plugged into ROADM-A port 1, which passes slot 25/.test(x.why)));
+  S = rp(); S.nodes.find(n => n.name === 'ROADM-A').p.directionless = false; // each port now belongs to a degree
+  S = M.sanitize(clone(S));
+  assert.equal(M.derive(S).paired, 3);
+  const l = S.links.find(x => S.nodes.find(n => n.id === (x.a === S.nodes.find(q => q.name === 'ROADM-A').id ? x.b : x.a)).name === 'TRX-A1');
+  (l.a === S.nodes.find(n => n.name === 'ROADM-A').id ? (l.p.sa = '4') : (l.p.sb = '4')); // a degree with no line cable
+  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-A1').why, /no partner.*degree 4/);
+});
+
+test('ROADM add/drop ports: peers, degrees and port failures', () => {
+  let S = rp(); S.nodes.find(n => n.name === 'TRX-A2').p.peer = S.nodes.find(n => n.name === 'TRX-C2').id; S.nodes.find(n => n.name === 'TRX-B1').p.peer = '';
+  assert.ok(M.derive(S).dark.length > 0, 'a peer that is already taken leaves someone without a partner');
+  S = rp(); const ra = S.nodes.find(n => n.name === 'ROADM-A'); ra.p.degrees = 99; ra.p.colorless = 'yes'; S.nodes.find(n => n.name === 'TRX-B1').p.peer = 'nope';
+  const c = M.sanitize(clone(S)); assert.equal(c.nodes.find(n => n.name === 'ROADM-A').p.degrees, 9); assert.equal(c.nodes.find(n => n.name === 'ROADM-A').p.colorless, true); assert.equal(c.nodes.find(n => n.name === 'TRX-B1').p.peer, '');
+  const idA = c.nodes.find(n => n.name === 'ROADM-A').id;
+  assert.deepEqual(c.links.filter(l => l.kind === 'fiber' && (l.a === idA || l.b === idA)).map(l => (l.a === idA ? l.p.sa : l.p.sb)).sort(), ['1', '2'], 'line cables get degrees 1 and 2');
+  S = rp(); S.nodes.find(n => n.name === 'ROADM-C').p.badPorts = [29];
+  const r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /port for slot 30 on ROADM-C/);
+});
