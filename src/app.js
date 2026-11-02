@@ -51,7 +51,7 @@ const redo = () => { if (stepHistory(1)) toast('Redone', { label: 'Undo', fn: un
 function applyPreset(k, quiet) {
   const p = MODEL.sanitize(PRESETS[k].build());
   S = { nodes: p.nodes, links: p.links, g: p.g, svc: p.svc, view: { x: -40, y: -60, k: 1 } };
-  sel = null; if (!quiet) { fitView(); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
+  sel = null; if (!quiet) { fitView(true); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
 }
 const node = id => S.nodes.find(n => n.id === id);
 const link = id => S.links.find(l => l.id === id);
@@ -62,13 +62,15 @@ const reqOsnr = MODEL.reqOsnr;
 
 // ---------- canvas ----------
 const svg = $('#cv'), gRoot = $('#world');
-function fitView() {
+function fitView(readable) {
   if (!S.nodes.length) return;
   const xs = S.nodes.map(n => n.x), ys = S.nodes.map(n => n.y);
   const r = svg.getBoundingClientRect();
   const w = Math.max(...xs) - Math.min(...xs) + 220, h = Math.max(...ys) - Math.min(...ys) + 200;
   const k = Math.min(1.4, Math.max(0.15, Math.min(r.width / w, r.height / h)));
   S.view = { k, x: (Math.min(...xs) + Math.max(...xs)) / 2 - r.width / 2 / k, y: (Math.min(...ys) + Math.max(...ys)) / 2 - r.height / 2 / k };
+  // On a phone the whole-lab overview would render labels at 5px: open at a readable zoom from the left (pan or pinch for the rest; Fit gives the overview)
+  if (readable && r.width < 600 && k < 0.6) { const k2 = 0.6; S.view = { k: k2, x: Math.min(...xs) - 70 / k2, y: (Math.min(...ys) + Math.max(...ys)) / 2 - r.height / 2 / k2 }; }
 }
 function applyView() { gRoot.setAttribute('transform', `scale(${S.view.k}) translate(${-S.view.x},${-S.view.y})`); }
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
@@ -406,6 +408,8 @@ function selIn(obj, key, opts) {
   const s = el('select', { id: 'f-' + key }); for (const [v, t] of opts) s.append(el('option', { value: v, text: t }));
   s.value = String(obj[key]); s.addEventListener('change', () => { obj[key] = s.value === 'true' ? true : s.value === 'false' ? false : s.value; renderAll(); }); return s;
 }
+let assumeOpen;
+const narrow = window.matchMedia('(max-width: 900px)');
 function renderInspector() {
   const box = $('#insp'); box.innerHTML = '';
   if (!sel) {
@@ -413,15 +417,18 @@ function renderInspector() {
     S.g.eolSpan ??= PHY.EOL.spanLoss; S.g.eolTrx ??= PHY.EOL.trxPen;
     S.g.neighbors ??= 'same';
     S.g.reopt = S.g.reopt === true;
-    box.append(el('h3', { text: 'Line loading' }), field('Launch power', selIn(S.g, 'reopt', [['false', 'Fixed: amplifier targets and the global launch'], ['true', 'Re-optimised for the load on each span']]), 'Re-optimised: every amplifier whose output target is blank sets the GN-optimal power for the span after it, given the channels actually lit there, so the setting follows channels as they are added and dropped. Amplifiers with an explicit target keep it.'), field('Neighbouring channels', selIn(S.g, 'neighbors', [['same', 'Same type as the service'], ['coh', '60 GBd coherent channels']]), 'Only matters for direct-detection optics (10G DWDM): cross-phase modulation from neighbours is stronger when they are wide coherent channels.'));
-    box.append(el('h3', { text: 'End-of-life allowances' }), field('Extra loss per fiber span (dB)', numIn(S.g, 'eolSpan', 0.1, 0, 5)), field('Transceiver ageing (dB)', numIn(S.g, 'eolTrx', 0.1, 0, 3)),
+    // the model-wide settings are there to look up, not to read first: collapsed on a phone, where they would push everything else a screen down
+    const det = el('details', { class: 'assume' }, [el('summary', { text: 'Model assumptions' })]); det.open = assumeOpen ?? !narrow.matches; det.addEventListener('toggle', () => { assumeOpen = det.open; });
+    det.append(el('h3', { text: 'Line loading' }), field('Launch power', selIn(S.g, 'reopt', [['false', 'Fixed: amplifier targets and the global launch'], ['true', 'Re-optimised for the load on each span']]), 'Re-optimised: every amplifier whose output target is blank sets the GN-optimal power for the span after it, given the channels actually lit there, so the setting follows channels as they are added and dropped. Amplifiers with an explicit target keep it.'), field('Neighbouring channels', selIn(S.g, 'neighbors', [['same', 'Same type as the service'], ['coh', '60 GBd coherent channels']]), 'Only matters for direct-detection optics (10G DWDM): cross-phase modulation from neighbours is stronger when they are wide coherent channels.'));
+    det.append(el('h3', { text: 'End-of-life allowances' }), field('Extra loss per fiber span (dB)', numIn(S.g, 'eolSpan', 0.1, 0, 5)), field('Transceiver ageing (dB)', numIn(S.g, 'eolTrx', 0.1, 0, 3)),
       el('p', { class: 'muted small', text: 'Used for the end-of-life margin: repairs, connector wear and laser ageing. Typical planning values are 0.5 to 1.5 dB per span.' }));
     S.g.lossPct ??= PHY.TRANSIENT.lossPct; S.g.agcUs ??= PHY.TRANSIENT.agcUs; S.g.rampMs ??= 0;
-    box.append(el('h3', { text: 'Transients' }), field('Channels lost at once (%)', numIn(S.g, 'lossPct', 5, 1, 95), 'The event the Transients tab analyses: this share of the channels vanishes at every amplifier together (an upstream cut, a protection switch). The service survives.'), field('Channel add ramp (ms)', numIn(S.g, 'rampMs', 0.5, 0, 10000), 'How slowly returning channels are brought up. 0 = all at once. A ramp longer than the amplifiers\' ~200 µs time constant lets their control loops follow, so the dip shrinks; the surge when channels vanish cannot be ramped.'), field('Amplifier control response (µs)', numIn(S.g, 'agcUs', 5, 0, 5000), 'How fast an amplifier\'s gain control reacts. About 10 to 50 µs is a fast AGC loop; milliseconds is slow and lets the surge through. A single amplifier can override it.'));
+    det.append(el('h3', { text: 'Transients' }), field('Channels lost at once (%)', numIn(S.g, 'lossPct', 5, 1, 95), 'The event the Transients tab analyses: this share of the channels vanishes at every amplifier together (an upstream cut, a protection switch). The service survives.'), field('Channel add ramp (ms)', numIn(S.g, 'rampMs', 0.5, 0, 10000), 'How slowly returning channels are brought up. 0 = all at once. A ramp longer than the amplifiers\' ~200 µs time constant lets their control loops follow, so the dip shrinks; the surge when channels vanish cannot be ramped.'), field('Amplifier control response (µs)', numIn(S.g, 'agcUs', 5, 0, 5000), 'How fast an amplifier\'s gain control reacts. About 10 to 50 µs is a fast AGC loop; milliseconds is slow and lets the surge through. A single amplifier can override it.'));
     S.g.cutRate ??= MODEL.RESIL.cutRate; for (const k in MODEL.RESIL) S.g[k] ??= MODEL.RESIL[k];
-    box.append(el('h3', { text: 'Resilience assumptions' }), field('Fiber cuts per 1000 km per year', numIn(S.g, 'cutRate', 0.5, 0, 50)), field('Mean time to repair (h)', numIn(S.g, 'mttr', 1, 0.5, 720)),
+    det.append(el('h3', { text: 'Resilience assumptions' }), field('Fiber cuts per 1000 km per year', numIn(S.g, 'cutRate', 0.5, 0, 50)), field('Mean time to repair (h)', numIn(S.g, 'mttr', 1, 0.5, 720)),
       field('Loss detection (ms)', numIn(S.g, 'detectMs', 1, 0, 1000)), field('1+1 switch time (ms)', numIn(S.g, 'switchMs', 5, 0, 10000)), field('Shared protection turn-up (s)', numIn(S.g, 'sharedSec', 0.5, 0, 600), 'Extra time to light a dark protection route: laser turn-up, WSS configuration and amplifier settling.'), field('Restoration time (s)', numIn(S.g, 'restoreSec', 5, 0, 3600), 'How long an unprotected channel takes to re-route over another path.'), field('Device failures per year', numIn(S.g, 'devRate', 0.01, 0, 5), 'Per amplifier or ROADM on a route. A failed ROADM at the end of a channel keeps it down until repaired; one in the middle is bypassed by protection or restoration if another route avoids it.'),
       el('p', { class: 'muted small', text: 'Expectations for the Resilience tab. Typical terrestrial fiber sees 2 to 4 cuts per 1000 km per year.' }));
+    box.append(det);
     box.append(el('div', { class: 'keys' }, [el('div', { html: '<kbd>V</kbd> select / move' }), el('div', { html: '<kbd>P</kbd> patch cord' }), el('div', { html: '<kbd>F</kbd> fiber span' }), el('div', { html: '<kbd>Del</kbd> delete' }), el('div', { html: '<kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Shift</kbd> to redo' }), el('div', { html: 'Drag empty space to pan, scroll to zoom' })]));
     return;
   }
@@ -685,6 +692,7 @@ $('#g-df').addEventListener('change', e => { const old = +S.g.df; S.g.df = +e.ta
 $('#g-launch').addEventListener('input', e => { S.g.launch = +e.target.value; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch; recompute(); });
 $('#preset').addEventListener('change', e => { if (e.target.value) { applyPreset(e.target.value); e.target.value = ''; } });
 $('#btn-fit').addEventListener('click', () => { fitView(); applyView(); });
+{ const pd = $('#paldet'), sync = () => { pd.open = !narrow.matches; }; sync(); narrow.addEventListener('change', sync); } // the palette is one tap away on a phone, open on a wide screen
 $('#btn-undo').addEventListener('click', undo); $('#btn-redo').addEventListener('click', redo);
 $('#btn-clear').addEventListener('click', () => {
   const b = $('#btn-clear');
@@ -695,7 +703,7 @@ $('#btn-export').addEventListener('click', () => { $('#io').hidden = false; $('#
 $('#io-close').addEventListener('click', () => { $('#io').hidden = true; });
 $('#io-copy').addEventListener('click', () => { const t = $('#io-text'); navigator.clipboard?.writeText(t.value).then(() => toast('Copied topology JSON'), () => { t.select(); toast('Select-all done; press Ctrl/Cmd+C'); }) ?? t.select(); });
 $('#io-load').addEventListener('click', () => {
-  try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; sel = null; $('#io').hidden = true; fitView(); checkpoint(); renderAll(); toast('Topology loaded', { label: 'Undo', fn: undo }); }
+  try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; sel = null; $('#io').hidden = true; fitView(true); checkpoint(); renderAll(); toast('Topology loaded', { label: 'Undo', fn: undo }); }
   catch (e) { toast('That text is not a topology export. Paste the JSON from Export.'); }
 });
 
@@ -705,7 +713,7 @@ csvMode.value = 'zrp400';
 $('#csv-build').addEventListener('click', () => {
   const r = MODEL.fromSpans($('#csv-text').value, csvMode.value);
   if (!r.topo) return toast(r.errors[0]);
-  S = { ...S, ...MODEL.sanitize(r.topo) }; sel = null; $('#io').hidden = true; fitView(); checkpoint(); renderAll();
+  S = { ...S, ...MODEL.sanitize(r.topo) }; sel = null; $('#io').hidden = true; fitView(true); checkpoint(); renderAll();
   toast(`Built ${r.spans.length} span${r.spans.length === 1 ? '' : 's'}` + (r.errors.length ? `. ${r.errors.length} row${r.errors.length === 1 ? '' : 's'} skipped: ${r.errors[0]}` : ''));
 });
 
@@ -1424,5 +1432,5 @@ window.addEventListener('resize', applyView);
 
 load();
 setTool('select');
-requestAnimationFrame(() => { fitView(); renderAll(); });
+requestAnimationFrame(() => { fitView(true); renderAll(); });
 })();

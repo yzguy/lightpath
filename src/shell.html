@@ -42,7 +42,7 @@ kbd { font-family: var(--f-mono); font-size: 11px; border: 1px solid var(--line)
 .g { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600 }
 .g output { font-family: var(--f-mono); color: var(--ink); font-size: 13px; min-width: 3.2em; text-transform: none; letter-spacing: 0 }
 .g input[type=range] { width: 110px; accent-color: var(--accent) }
-select, input[type=number], input:not([type]) { background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; min-width: 0 }
+select, input[type=number], input:not([type]) { max-width: 100%; background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; min-width: 0 }
 .btn { background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 6px 10px; cursor: pointer; font-weight: 500 }
 .btn:hover { border-color: var(--muted) }
 .btn.danger { color: var(--bad) }
@@ -50,7 +50,15 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 /* bench */
 .bench { display: grid; grid-template-columns: 168px minmax(0, 1fr) 270px; gap: 10px; height: min(62vh, 620px); min-height: 440px }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0 }
-.palette { padding: 10px; display: flex; flex-direction: column; gap: 6px; overflow: auto }
+.palette { padding: 10px; overflow: auto }
+.paldet { display: flex; flex-direction: column; gap: 6px }
+.paldet > summary { display: none; cursor: pointer; font-weight: 600; font-size: 13px; align-items: center; min-height: 44px; width: 100%; list-style: none }
+.paldet > summary::-webkit-details-marker { display: none }
+.paldet > summary::before { content: '+'; display: inline-block; width: 22px; font-family: var(--f-mono); font-weight: 700 }
+.paldet[open] > summary::before { content: '\2212' }
+.assume > summary { cursor: pointer; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: 8px 2px; min-height: 24px }
+.assume > summary + * { margin-top: 4px }
+.assume { display: grid; gap: 10px }
 .palette h2, .insp h2, .palette h3, .insp h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 700; margin: 4px 2px }
 .pal-item { display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 8px; padding: 6px; border: 1px solid transparent; border-radius: 6px; cursor: grab; background: none; text-align: left; user-select: none }
 .pal-item:hover { background: var(--raised); border-color: var(--line) }
@@ -219,18 +227,25 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 
 @media (pointer: coarse) {
   .link .hit { stroke-width: 30 }
-  .pal-item { padding: 10px 8px } .tool, .canvas-tools .btn, .btn { min-height: 40px }
-  .tab, .chip { min-height: 40px }
+  .pal-item { padding: 10px 8px; min-height: 44px } .tool, .canvas-tools .btn, .btn { min-height: 44px; min-width: 44px }
+  .tab, .chip { min-height: 44px }
+  /* 16px fields stop iOS zooming the page on focus, and 44px is a comfortable touch target */
+  select, input[type=number], input:not([type]), textarea, .fld input, .fld select { font-size: 16px; min-height: 44px }
+  .g input[type=range] { height: 32px }
+  #toast .toast-act { min-height: 44px; padding: 10px 8px }
 }
 @media (max-width: 900px) {
   .bench { grid-template-columns: minmax(0, 1fr); height: auto }
-  .palette { flex-direction: row; flex-wrap: wrap }
-  .palette h2 { width: 100% }
+  .paldet { flex-direction: row; flex-wrap: wrap }
+  .paldet > summary { display: flex }
+  .paldet h2 { width: 100% }
   .pal-item { flex: 1 1 140px }
   .tools { grid-template-columns: repeat(3, 1fr); width: 100% }
   .canvaswrap { height: 56vh; min-height: 360px }
   .canvaswrap { order: -2 } .insp { order: -1 } /* canvas first, then the inspector, then the palette */
-  .globals { margin-left: 0 }
+  .globals { margin-left: 0; width: 100%; gap: 8px 14px }
+  .g { min-width: 0; max-width: 100% }
+  .g select { flex: 1 1 auto; min-width: 0 }
   .constwrap, .learn { grid-template-columns: minmax(0, 1fr) }
   .lnav { flex-direction: row; flex-wrap: wrap }
 }
@@ -257,6 +272,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 
 <section class="bench">
   <aside class="panel palette" aria-label="Component palette">
+  <details class="paldet" id="paldet" open><summary>Add devices and cables</summary>
     <h2>Devices</h2>
     <div class="pal-item" draggable="true" data-type="trx" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="2" y="5" width="30" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="5" height="6" fill="var(--jacket)"/></svg><span><b>Transponder</b><small>ZR, ZR+, 100G, 800G</small></span></div>
     <div class="pal-item" draggable="true" data-type="mxp" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="6" y="3" width="24" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M1 7h5M1 11h5M1 15h5M1 19h5" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="4" height="6" fill="var(--jacket)"/></svg><span><b>Muxponder</b><small>Client ports into one ZR line</small></span></div>
@@ -279,6 +295,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
       <button class="tool" data-tool="fiber"><i></i>Fiber span<kbd>F</kbd></button>
     </div>
     <p class="muted small" style="margin:6px 2px 0">Drag devices onto the bench (or click to add). Pick a cable, then drag from one device to another.</p>
+    </details>
   </aside>
   <div class="panel canvaswrap">
     <svg id="cv" tabindex="-1" role="group" aria-label="Topology canvas: devices and cables, Enter selects"><g id="world"></g></svg>
