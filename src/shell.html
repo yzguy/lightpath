@@ -205,6 +205,8 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 .learn h4 { font-size: 18px; margin-bottom: 4px }
 .learn code { font-family: var(--f-mono); font-size: 12.5px; background: var(--raised); border: 1px solid var(--line); padding: 1px 5px; border-radius: 3px; white-space: nowrap }
 
+#toast .toast-act { background: none; border: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; margin-left: 12px; padding: 4px 2px; cursor: pointer }
+#toast .toast-act:focus-visible { outline: 2px solid currentColor; outline-offset: 2px }
 #toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 20; max-width: calc(100% - 32px) }
 #io { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 30; padding: 16px }
 #io .panel { width: min(640px, 100%); padding: 14px; display: grid; gap: 10px }
@@ -276,7 +278,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div class="panel canvaswrap">
     <svg id="cv" aria-label="Topology canvas"><g id="world"></g></svg>
     <div id="emptyhint">Empty bench. Drag a transponder in from the left, or load a scenario.</div>
-    <div class="canvas-tools"><button class="btn" id="btn-fit">Fit</button><button class="btn" id="btn-export">Export / import</button><button class="btn" id="btn-clear">Clear canvas</button></div>
+    <div class="canvas-tools"><button class="btn" id="btn-undo" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo" disabled>Undo</button><button class="btn" id="btn-redo" title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo" disabled>Redo</button><button class="btn" id="btn-fit">Fit</button><button class="btn" id="btn-export">Export / import</button><button class="btn" id="btn-clear">Clear canvas</button></div>
   </div>
   <aside class="panel insp" id="insp" aria-label="Inspector"></aside>
 </section>
@@ -312,6 +314,6 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div id="tabbody"></div>
 </section>
 
-<div id="toast" hidden></div>
+<div id="toast" role="status" aria-live="polite" hidden></div>
 <div id="io" hidden><div class="panel"><h3>Export / import topology</h3><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div>
 <h3>Build a line from a span list</h3><p class="muted small">One span per line: <code>km, fiber, extra loss dB</code> (fiber: smf, leaf, ull, legacy; the last two columns are optional). Replaces the canvas with TRX, mux, booster, an ILA between spans, preamp, mux, TRX.</p><textarea id="csv-text" class="csv" spellcheck="false" placeholder="km,fiber,extra_db\n80,smf,1.5\n95,smf,2\n70,ull,1"></textarea><div class="row"><select id="csv-mode"></select><button class="btn" id="csv-build">Build line</button></div></div></div>

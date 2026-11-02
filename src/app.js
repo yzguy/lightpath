@@ -24,11 +24,34 @@ function load() {
   } catch (e) { /* corrupt or outdated save: fall through to the default scenario */ }
   applyPreset('dci', true);
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} if (!restoring) remember(); }
+// Undo and redo: every change ends in save(), which records a snapshot of the lab (not the pan and zoom). Edits that come in a quick burst (typing a number,
+// dragging a slider or a node) are one step; checkpoint() makes the next change a step of its own (a scenario load, a delete, an import, a clear).
+const hist = { stack: [], i: -1, last: 0, seal: false, max: 60 };
+let restoring = false;
+const snapshot = () => { const { view, ...rest } = S; return JSON.stringify(rest); };
+function checkpoint() { hist.last = 0; hist.seal = true; }
+function remember() {
+  const j = snapshot(); if (hist.stack[hist.i] === j) return;
+  const now = Date.now(), burst = hist.i >= 1 && hist.i === hist.stack.length - 1 && now - hist.last < 500;
+  hist.stack.length = hist.i + 1; // a new change ends the redo branch
+  if (burst) hist.stack[hist.i] = j; else { hist.stack.push(j); hist.i++; }
+  if (hist.stack.length > hist.max) { hist.stack.shift(); hist.i--; }
+  hist.last = hist.seal ? 0 : now; hist.seal = false; syncUndo();
+}
+function syncUndo() { const u = $('#btn-undo'), r = $('#btn-redo'); if (u) u.disabled = hist.i < 1; if (r) r.disabled = hist.i >= hist.stack.length - 1; }
+function stepHistory(d) {
+  const j = hist.i + d; if (j < 0 || j >= hist.stack.length) return false;
+  hist.i = j; restoring = true;
+  try { S = { ...S, ...MODEL.sanitize(JSON.parse(hist.stack[j])) }; if (sel && !(node(sel.id) || link(sel.id))) sel = null; renderAll(); } finally { restoring = false; }
+  hist.last = 0; syncUndo(); return true;
+}
+const undo = () => { if (stepHistory(-1)) toast('Undone', { label: 'Redo', fn: redo }); else toast('Nothing to undo'); };
+const redo = () => { if (stepHistory(1)) toast('Redone', { label: 'Undo', fn: undo }); else toast('Nothing to redo'); };
 function applyPreset(k, quiet) {
   const p = MODEL.sanitize(PRESETS[k].build());
   S = { nodes: p.nodes, links: p.links, g: p.g, svc: p.svc, view: { x: -40, y: -60, k: 1 } };
-  sel = null; if (!quiet) { fitView(); renderAll(); toast('Loaded: ' + PRESETS[k].name); }
+  sel = null; if (!quiet) { fitView(); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
 }
 const node = id => S.nodes.find(n => n.id === id);
 const link = id => S.links.find(l => l.id === id);
@@ -217,7 +240,12 @@ svg.addEventListener('pointermove', e => {
   else if (drag.kind === 'cable') { const rb = $('#rubber'); rb.setAttribute('x2', w.x); rb.setAttribute('y2', w.y); }
 });
 const endPointer = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; };
-svg.addEventListener('pointercancel', e => { endPointer(e); drag = null; $('#rubber').setAttribute('visibility', 'hidden'); });
+// A drag that is cancelled (the browser takes the gesture to scroll), loses its capture, or is interrupted by switching windows ends cleanly: the node stays
+// where it was dropped and the change is saved (so it can be undone), and the next tap or drag works without a reload.
+function abortDrag(e) { if (e) endPointer(e); else { ptrs.clear(); pinch = null; } const d = drag; drag = null; $('#rubber').setAttribute('visibility', 'hidden'); if (d && d.kind === 'node' && d.moved) save(); }
+svg.addEventListener('pointercancel', abortDrag);
+svg.addEventListener('lostpointercapture', e => { if (drag) abortDrag(e); });
+window.addEventListener('blur', () => abortDrag(null));
 svg.addEventListener('pointerup', e => {
   const wasPinch = !!pinch; endPointer(e);
   if (wasPinch) { drag = null; return; }
@@ -323,9 +351,10 @@ function addNode(type, x, y) {
 }
 function del() {
   if (!sel) return;
+  const node0 = sel.kind === 'node' ? node(sel.id) : null;
   if (sel.kind === 'node') { S.nodes = S.nodes.filter(n => n.id !== sel.id); S.links = S.links.filter(l => l.a !== sel.id && l.b !== sel.id); }
   else S.links = S.links.filter(l => l.id !== sel.id);
-  sel = null; renderAll();
+  const what = sel.kind === 'node' ? (node0 ? node0.name : 'device') : 'cable'; sel = null; checkpoint(); renderAll(); toast('Deleted ' + what, { label: 'Undo', fn: undo });
 }
 function setEnd(id) {
   if (S.svc.a === id || S.svc.z === id) { [S.svc.a, S.svc.z] = [S.svc.z, S.svc.a]; }
@@ -344,7 +373,9 @@ svg.addEventListener('drop', e => { e.preventDefault(); const t = e.dataTransfer
 document.querySelectorAll('.tool').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 function setTool(t) { tool = t; pendingCable = null; document.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === t)); svg.dataset.tool = t; }
 document.addEventListener('keydown', e => {
-  if (e.target.closest('input,select,textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.closest('input,select,textarea')) return; // a field keeps its own undo
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'y')) { e.preventDefault(); (e.key === 'y' || e.shiftKey ? redo : undo)(); return; }
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'Delete' || e.key === 'Backspace') { del(); e.preventDefault(); }
   else if (e.key === 'v' || e.key === 'Escape') setTool('select');
   else if (e.key === 'p') setTool('patch');
@@ -379,7 +410,7 @@ function renderInspector() {
     box.append(el('h3', { text: 'Resilience assumptions' }), field('Fiber cuts per 1000 km per year', numIn(S.g, 'cutRate', 0.5, 0, 50)), field('Mean time to repair (h)', numIn(S.g, 'mttr', 1, 0.5, 720)),
       field('Loss detection (ms)', numIn(S.g, 'detectMs', 1, 0, 1000)), field('1+1 switch time (ms)', numIn(S.g, 'switchMs', 5, 0, 10000)), field('Shared protection turn-up (s)', numIn(S.g, 'sharedSec', 0.5, 0, 600), 'Extra time to light a dark protection route: laser turn-up, WSS configuration and amplifier settling.'), field('Restoration time (s)', numIn(S.g, 'restoreSec', 5, 0, 3600), 'How long an unprotected channel takes to re-route over another path.'), field('Device failures per year', numIn(S.g, 'devRate', 0.01, 0, 5), 'Per amplifier or ROADM on a route. A failed ROADM at the end of a channel keeps it down until repaired; one in the middle is bypassed by protection or restoration if another route avoids it.'),
       el('p', { class: 'muted small', text: 'Expectations for the Resilience tab. Typical terrestrial fiber sees 2 to 4 cuts per 1000 km per year.' }));
-    box.append(el('div', { class: 'keys' }, [el('div', { html: '<kbd>V</kbd> select / move' }), el('div', { html: '<kbd>P</kbd> patch cord' }), el('div', { html: '<kbd>F</kbd> fiber span' }), el('div', { html: '<kbd>Del</kbd> delete' }), el('div', { html: 'Drag empty space to pan, scroll to zoom' })]));
+    box.append(el('div', { class: 'keys' }, [el('div', { html: '<kbd>V</kbd> select / move' }), el('div', { html: '<kbd>P</kbd> patch cord' }), el('div', { html: '<kbd>F</kbd> fiber span' }), el('div', { html: '<kbd>Del</kbd> delete' }), el('div', { html: '<kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Shift</kbd> to redo' }), el('div', { html: 'Drag empty space to pan, scroll to zoom' })]));
     return;
   }
   if (sel.kind === 'node') {
@@ -642,16 +673,17 @@ $('#g-df').addEventListener('change', e => { const old = +S.g.df; S.g.df = +e.ta
 $('#g-launch').addEventListener('input', e => { S.g.launch = +e.target.value; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch; recompute(); });
 $('#preset').addEventListener('change', e => { if (e.target.value) { applyPreset(e.target.value); e.target.value = ''; } });
 $('#btn-fit').addEventListener('click', () => { fitView(); applyView(); });
+$('#btn-undo').addEventListener('click', undo); $('#btn-redo').addEventListener('click', redo);
 $('#btn-clear').addEventListener('click', () => {
   const b = $('#btn-clear');
-  if (b.dataset.armed) { S.nodes = []; S.links = []; S.svc = { a: null, z: null }; sel = null; delete b.dataset.armed; b.textContent = 'Clear canvas'; renderAll(); }
+  if (b.dataset.armed) { S.nodes = []; S.links = []; S.svc = { a: null, z: null }; sel = null; delete b.dataset.armed; b.textContent = 'Clear canvas'; checkpoint(); renderAll(); toast('Cleared the canvas', { label: 'Undo', fn: undo }); }
   else { b.dataset.armed = '1'; b.textContent = 'Click again to clear'; setTimeout(() => { delete b.dataset.armed; b.textContent = 'Clear canvas'; }, 2500); }
 });
 $('#btn-export').addEventListener('click', () => { $('#io').hidden = false; $('#io-text').value = JSON.stringify({ nodes: S.nodes, links: S.links, g: S.g, svc: S.svc }, null, 1); });
 $('#io-close').addEventListener('click', () => { $('#io').hidden = true; });
 $('#io-copy').addEventListener('click', () => { const t = $('#io-text'); navigator.clipboard?.writeText(t.value).then(() => toast('Copied topology JSON'), () => { t.select(); toast('Select-all done; press Ctrl/Cmd+C'); }) ?? t.select(); });
 $('#io-load').addEventListener('click', () => {
-  try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; sel = null; $('#io').hidden = true; fitView(); renderAll(); toast('Topology loaded'); }
+  try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; sel = null; $('#io').hidden = true; fitView(); checkpoint(); renderAll(); toast('Topology loaded', { label: 'Undo', fn: undo }); }
   catch (e) { toast('That text is not a topology export. Paste the JSON from Export.'); }
 });
 
@@ -661,7 +693,7 @@ csvMode.value = 'zrp400';
 $('#csv-build').addEventListener('click', () => {
   const r = MODEL.fromSpans($('#csv-text').value, csvMode.value);
   if (!r.topo) return toast(r.errors[0]);
-  S = { ...S, ...MODEL.sanitize(r.topo) }; sel = null; $('#io').hidden = true; fitView(); renderAll();
+  S = { ...S, ...MODEL.sanitize(r.topo) }; sel = null; $('#io').hidden = true; fitView(); checkpoint(); renderAll();
   toast(`Built ${r.spans.length} span${r.spans.length === 1 ? '' : 's'}` + (r.errors.length ? `. ${r.errors.length} row${r.errors.length === 1 ? '' : 's'} skipped: ${r.errors[0]}` : ''));
 });
 
@@ -1363,7 +1395,11 @@ function learnView() {
 
 // ---------- misc ----------
 let toastT;
-function toast(t) { const e = $('#toast'); e.textContent = t; e.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (e.hidden = true), 2600); }
+function toast(t, action) { // an action ({label, fn}) stays longer so there is time to use it
+  const e = $('#toast'); e.textContent = t; e.hidden = false;
+  if (action) e.append(el('button', { class: 'toast-act', text: action.label, onclick: () => { e.hidden = true; action.fn(); } }));
+  clearTimeout(toastT); toastT = setTimeout(() => (e.hidden = true), action ? 7000 : 2600);
+}
 function recompute() { MODEL.assignSides(S); lastRes = simulate(); renderCanvas(); renderResults(); save(); }
 function renderAll() { MODEL.assignSides(S); lastRes = simulate(); bindGlobals(); renderCanvas(); renderInspector(); renderResults(); save(); }
 window.addEventListener('resize', applyView);
