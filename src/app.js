@@ -156,6 +156,7 @@ function nodeShape(n) {
 }
 let lastRes = null;
 let hiChan = null; // plan entry whose route is highlighted on the canvas
+let planEdit = null; // plan entry whose controls are open in the Channels table
 let dir = 'fwd'; // which direction the results panel shows: forward (A to Z) or return (Z to A)
 const view = () => (dir === 'rev' && lastRes && lastRes.rev && lastRes.rev.mode ? lastRes.rev : lastRes);
 function renderCanvas() {
@@ -1287,7 +1288,7 @@ function planView(r) {
   // Any ROADM or transponder can be where a channel is added or dropped: the channel is routed between them over the cabled network
   const pathRoadms = S.nodes.filter(n => n.type === 'roadm' || n.type === 'oadm' || isEnd(n));
   const anySingle = S.links.some(l => l.kind === 'fiber' && l.p.single); // a single fibre carries both directions, so a channel has a slot each way
-  const tbl = el('table', { class: 'tbl plantbl' }), th = el('tr'); ['', 'Slot', ...(anySingle ? ['Slot back'] : []), 'THz', 'Mode', 'Add at', 'Drop at', 'Via', 'Convert at', 'Protect', 'Offset dB', 'Rx dBm', 'GSNR', 'Q margin', 'XPM', 'Status', ''].forEach(h => th.append(el('th', { text: h })));
+  const tbl = el('table', { class: 'tbl plantbl' }), th = el('tr'); ['', 'Slot', ...(anySingle ? ['Slot back'] : []), 'THz', 'Mode', 'Route', 'Offset dB', 'Rx dBm', 'GSNR', 'Q margin', 'XPM', 'Status', '', ''].forEach(h => th.append(el('th', { text: h })));
   tbl.append(el('thead', {}, [th]));
   const tb = el('tbody');
   for (const c of plan) {
@@ -1318,10 +1319,23 @@ function planView(r) {
     protSel.title = c.conv ? '1+1 on each side of the converter, separately (the converter ROADM itself is shared). ' + '1+1:' : '1+1: a second copy runs on the shortest route that shares no fiber with the working one. Both are lit; the receiver takes the working copy until it fails. 1:N shared: the protection route is dark until the working one fails, so it loads nothing and its slot may be shared with other channels\' protection routes; its margin is predicted by simulating the failure.';
     protSel.addEventListener('change', () => { c.prot = protSel.value; commit(); });
     const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, 'aria-label': `Power offset for slot ${c.slot + 1}` }); off.addEventListener('change', () => { if (isFinite(+off.value)) { c.off = Math.max(-10, Math.min(10, +off.value)); commit(); } });
-    const del = el('button', { class: 'btn', text: '×', title: 'Remove channel', disabled: c.svc, onclick: () => { plan.splice(plan.indexOf(c), 1); commit(); } });
-    tb.append(el('tr', { class: (c.svc ? 'selrow' : '') + (hiChan === c ? ' hirow' : ''), onclick: ev => { if (ev.target.closest('select,input,button')) return; hiChan = hiChan === c ? null : c; renderCanvas(); renderTabBody(); }, title: o && o.route && o.route.length ? 'Route: ' + o.route.join(' → ') + (o.protection ? '\n' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).predicted ? 'Shared protection, predicted by failing the working route (' : 'Standby (') + (o.protection.active === 'work' ? 'protection' : 'working') + ' copy): ' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).route.join(' → ') || (o.protection.active === 'work' ? o.protection.protect : o.protection.work).notes[0]) : '') + (o.converted ? '\nConverted at ' + (o.segments[0].toName || '') + ': slot ' + (o.slot + 1) + ' then slot ' + (o.slot2 + 1) : '') : '' }, [radio, slotIn, ...(anySingle ? [revIn] : []), (PHY.CBAND.f0 / 1e12 + (c.slot + 0.5) * +S.g.df / 1000).toFixed(2), ms, nodeSel('from', 'A end', 'Add at'), nodeSel('to', 'Z end', 'Drop at'), nodeSel('via', 'Shortest', 'Route via'), convCell, protSel, off,
+    const del = el('button', { class: 'btn', text: '×', title: 'Remove channel', 'aria-label': `Remove the channel in slot ${c.slot + 1}`, disabled: c.svc, onclick: () => { plan.splice(plan.indexOf(c), 1); if (planEdit === c) planEdit = null; commit(); } });
+    // the routing of a channel is a sentence, and its controls open only when asked for: most rows keep the defaults (shortest route, no converter, no protection)
+    const nm = id => (node(id) || {}).name || '(missing device)', editing = planEdit === c;
+    const extras = [c.via && !c.conv ? `via ${nm(c.via)}` : '', c.conv && !c.svc ? `converts at ${nm(c.conv)}, slot ${c.slot + 1} → ${(Number.isFinite(c.slot2) ? c.slot2 : c.slot) + 1}` : '', c.prot === '1+1' ? '1+1 dedicated' : c.prot === 'shared' ? '1:N shared' : ''].filter(Boolean).join(' · ');
+    const routeCell = el('span', {}, [c.svc ? 'A end → Z end (the service)' : `${c.from ? nm(c.from) : 'A end'} → ${c.to ? nm(c.to) : 'Z end'}`, extras ? el('span', { class: 'muted', text: ' · ' + extras }) : null]);
+    const modeText = PHY.MODES[svcNode && c.svc ? svcMode : c.mode].short, offText = c.off ? (c.off > 0 ? '+' : '') + c.off : '0';
+    const editBtn = el('button', { class: 'btn', text: editing ? 'Done' : 'Edit', 'aria-expanded': editing ? 'true' : 'false', title: 'Mode, route, converter, protection and power offset for this channel', 'aria-label': `${editing ? 'Close the editor for' : 'Edit'} the channel in slot ${c.slot + 1}`, onclick: () => { planEdit = editing ? null : c; renderTabBody(); if (!editing) { const f = document.querySelector('.editrow select'); if (f) f.focus(); } } }); // opening the editor moves focus into it
+    const row = el('tr', { class: (c.svc ? 'selrow' : '') + (hiChan === c ? ' hirow' : ''), onclick: ev => { if (ev.target.closest('select,input,button')) return; hiChan = hiChan === c ? null : c; renderCanvas(); renderTabBody(); }, title: o && o.route && o.route.length ? 'Route: ' + o.route.join(' → ') + (o.protection ? '\n' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).predicted ? 'Shared protection, predicted by failing the working route (' : 'Standby (') + (o.protection.active === 'work' ? 'protection' : 'working') + ' copy): ' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).route.join(' → ') || (o.protection.active === 'work' ? o.protection.protect : o.protection.work).notes[0]) : '') + (o.converted ? '\nConverted at ' + (o.segments[0].toName || '') + ': slot ' + (o.slot + 1) + ' then slot ' + (o.slot2 + 1) : '') : '' }, [radio, slotIn, ...(anySingle ? [revIn] : []), (PHY.CBAND.f0 / 1e12 + (c.slot + 0.5) * +S.g.df / 1000).toFixed(2), modeText, routeCell, offText,
       o && o.prx != null ? f1(o.prx) : '', o && o.gosnr != null ? f1(o.gosnr) : '', o && o.qMargin != null ? (o.qMargin > 0 ? '+' : '') + f1(o.qMargin) : '', o && m.coh === false ? f1(o.xpmPen) : '',
-      o ? el('span', { class: 'st-' + o.status, text: STATUS[o.status] + (o.notes.length ? ': ' + o.notes[0] : '') }) : '', del].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x })))));
+      o ? el('span', { class: 'st-' + o.status, text: STATUS[o.status] + (o.notes.length ? ': ' + o.notes[0] : '') }) : '', editBtn, del].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x }))));
+    tb.append(row);
+    if (editing) { // the controls, with labels, directly under the channel
+      const fld = (label, ...ctl) => el('label', { class: 'fld' }, [el('span', { text: label }), ...ctl]);
+      tb.append(el('tr', { class: 'editrow' }, [el('td', { colspan: 15 + (anySingle ? 1 : 0) }, [el('div', { class: 'editgrid' }, [
+        fld('Mode', ms), fld('Add at', nodeSel('from', 'A end', 'Add at')), fld('Drop at', nodeSel('to', 'Z end', 'Drop at')), fld('Route via', nodeSel('via', 'Shortest', 'Route via')),
+        fld('Convert at', convCell), fld('Protection', protSel), fld('Power offset (dB)', off)])])]));
+    }
   }
   tbl.append(tb);
   wrap.append(el('div', { style: 'overflow:auto;max-height:420px' }, [tbl]));

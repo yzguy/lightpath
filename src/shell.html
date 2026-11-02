@@ -124,6 +124,11 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .node.chnode .body, .node.chnode circle:first-child { stroke: var(--mpi); stroke-width: 3 }
 .plantbl tr.hirow td { background: color-mix(in srgb, var(--mpi) 16%, transparent) }
 .plantbl tbody tr { cursor: pointer }
+.plantbl tr.editrow { cursor: auto } .plantbl tr.editrow > td { background: var(--raised); white-space: normal }
+.editgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 14px; padding: 6px 2px }
+.editgrid .fld select, .editgrid .fld input { width: 100% }
+.editgrid .pair input { width: 100% }
+.editgrid .fld:nth-child(5) { grid-column: span 2 }
 .transbar { display: inline-block; height: 10px; background: var(--nli); border-radius: 2px; min-width: 2px }
 .barcell { width: 140px }
 .transsum { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 12px 0; font-size: 13px }
@@ -200,6 +205,10 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .nowline { stroke: var(--accent); stroke-dasharray: 3 3 }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; padding-top: 6px }
 .tablewrap { overflow-x: auto }
+/* result tables (channels, OTDR events, reachability, 1310 nm links) share the hop table's grammar */
+.tbl { border-collapse: collapse; width: 100%; font-size: 13px }
+.tbl th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--line); padding: 5px 8px; white-space: nowrap }
+.tbl td { padding: 5px 8px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; vertical-align: top }
 table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-width: 760px }
 .hops th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--line); padding: 6px 8px }
 .hops td { padding: 5px 8px; border-bottom: 1px solid var(--grid); font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap }
