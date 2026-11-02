@@ -2012,3 +2012,9 @@ test('headlines and alarms say what is wrong and what to do', () => {
   const d = M.sanitize(build('lh')); d.nodes.find(n => n.type === 'edfa' && n.name !== 'BST-A' && n.name !== 'PRE-B').p.fail = 'dead'; const rd = M.simulate(d);
   assert.equal(rd.status, 'los'); assert.match(rd.headline, /has failed\. Replace it, or give the service a route around it/); assert.ok(rd.alarms.some(a => a.sev === 'bad' && /Set it back to Working/.test(a.text)));
 });
+
+test('results panel reads in order: status, diagnosis, evidence', () => {
+  const fs = require('node:fs'), shell = fs.readFileSync(require('node:path').join(__dirname, '../src/shell.html'), 'utf8');
+  const at = id => shell.indexOf(`id="${id}"`);
+  assert.ok(at('headline') < at('alarms') && at('alarms') < at('kpis') && at('kpis') < at('diag') && at('diag') < at('tabs'), 'alarms come before the KPI cards');
+});

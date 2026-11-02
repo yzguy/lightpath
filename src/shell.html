@@ -147,6 +147,9 @@ select, input[type=number], input:not([type]) { background: var(--raised); borde
 .kpi .kv small { font-size: 11px; color: var(--muted); font-weight: 400 }
 .kpi.good { border-left-color: var(--good) } .kpi.warn { border-left-color: var(--warn) } .kpi.bad { border-left-color: var(--bad) }
 .kpi.bad .kv { color: var(--bad) }
+#alarms:empty, #diag:empty { display: none }
+#diag > div { padding: 8px 10px; border-radius: 5px; font-size: 13px; background: var(--raised); border: 1px solid var(--line) }
+.kpi.lead { grid-column: span 2 } .kpi.lead .kv { font-size: 22px }
 #alarms { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px }
 #alarms li { padding: 7px 10px; border-radius: 5px; font-size: 13px; background: var(--raised); border: 1px solid var(--line); border-left: 3px solid var(--muted) }
 #alarms .al-bad { border-left-color: var(--bad) } #alarms .al-warn { border-left-color: var(--warn) } #alarms .al-info { border-left-color: var(--sig) }
@@ -287,8 +290,9 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <span id="status" class="status"></span>
     <span id="headline"></span>
   </div>
-  <div class="kpis" id="kpis"></div>
   <ul id="alarms"></ul>
+  <div class="kpis" id="kpis"></div>
+  <div id="diag"></div>
   <div class="tabs" id="tabs" role="tablist">
     <button class="tab" data-tab="power" role="tab">Power map</button>
     <button class="tab" data-tab="hops" role="tab">Hop-by-hop PM</button>

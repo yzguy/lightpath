@@ -689,15 +689,17 @@ function renderResults() {
   }
   $('#status').className = 'status s-' + lastRes.status; $('#status').textContent = STATUS[lastRes.status];
   $('#headline').textContent = lastRes.headline;
-  const k = $('#kpis'); k.innerHTML = '';
+  const k = $('#kpis'); k.innerHTML = ''; $('#diag').innerHTML = '';
   if (!r.mode) { $('#tabbody').innerHTML = ''; $('#alarms').innerHTML = ''; renderTabBody(); return; }
   const m = r.mode;
   const prxCls = !isFinite(r.prx) ? 'bad' : r.prx < m.rxMin || r.prx > m.rxMax ? 'warn' : '';
+  // the margin decides the result, so it leads and is wider than the rest; the rest are the evidence for it
+  if (r.ber != null) k.append(tile('Q margin', (r.qMargin > 0 ? '+' : '') + f1(r.qMargin), ' dB', 'margin', (r.qMargin < 0 ? 'bad' : r.qMargin < 1 ? 'warn' : 'good') + ' lead'));
   k.append(tile('Rx power', isFinite(r.prx) ? f1(r.prx) : 'LOS', ' dBm', 'rx', prxCls));
   if (r.ber != null) {
     k.append(tile('OSNR', f1(r.osnr), ' dB', 'osnr'), tile('GSNR (w/ NLI)', f1(r.gosnr), ' dB', 'gsnr'),
       tile('Pre-FEC BER', r.ber < 1e-15 ? '<1e-15' : r.ber.toExponential(1), '', 'ber', r.ber > m.berThr ? 'bad' : ''),
-      tile('Q-factor', f1(r.q), ' dB', 'q'), tile('Q margin', (r.qMargin > 0 ? '+' : '') + f1(r.qMargin), ' dB', 'margin', r.qMargin < 0 ? 'bad' : r.qMargin < 1 ? 'warn' : 'good'),
+      tile('Q-factor', f1(r.q), ' dB', 'q'),
       tile('OSNR margin', (r.osnrMargin > 0 ? '+' : '') + f1(r.osnrMargin), ' dB', 'margin', r.osnrMargin < 0 ? 'bad' : r.osnrMargin < 2 ? 'warn' : ''),
       tile('Q margin, end of life', (r.eol.qMargin > 0 ? '+' : '') + f1(r.eol.qMargin), ' dB', 'aging', r.eol.qMargin < 0 ? 'bad' : r.eol.qMargin < 1 ? 'warn' : ''),
       tile('Q margin, worst channel', (r.worstQMargin > 0 ? '+' : '') + f1(r.worstQMargin), ' dB', 'srs', r.worstQMargin < 0 ? 'bad' : r.worstQMargin < 1 ? 'warn' : ''),
@@ -706,8 +708,9 @@ function renderResults() {
       tile('CD', Math.round(r.cd).toLocaleString(), ' ps/nm', 'cd', Math.abs(r.cd) > m.cdTol ? 'bad' : ''), tile('Mean DGD', f1(r.dgd), ' ps', 'pmd'), tile('Distance', Math.round(r.km), ' km', 'span'));
   }
   const al = $('#alarms'); al.innerHTML = '';
-  r.alarms.slice(0, 6).forEach(a => al.append(el('li', { class: 'al-' + a.sev, text: a.text })));
-  if (r.ber != null) al.append(el('li', { class: 'al-info' }, [diagnose(r)]));
+  // the headline already says the first problem in full: do not repeat it in the list
+  r.alarms.filter(a => !(lastRes.headline && lastRes.headline.includes(a.text))).slice(0, 6).forEach(a => al.append(el('li', { class: 'al-' + a.sev, text: a.text })));
+  if (r.ber != null) $('#diag').append(el('div', {}, [diagnose(r)]));
   renderTabBody();
 }
 function diagnose(r) {
