@@ -1886,3 +1886,38 @@ test('patch panel: cables get paired sides by default, and ports and dirty conne
   assert.deepEqual(sides, ['f1', 'r1'], 'the two cables on ODF-A end up on the two sides of port 1');
   const cb = c.nodes.find(n => n.name === 'ODF-B').p; assert.equal(cb.ports, 48); assert.deepEqual(cb.dirty, { 1: 1.8, 4: 10 });
 });
+
+test('cabling-defined channels: protection and converters set on the transponders', () => {
+  const nm = (S, n) => S.nodes.find(x => x.name === n);
+  let S = rp(); nm(S, 'TRX-A2').p.prot = '1+1';
+  let d = M.derive(S); const e = d.plan.find(c => !c.filler && !c.svc && c.prot);
+  assert.equal(e.prot, '1+1'); assert.equal(d.plan.filter(c => c.prot).length, 1);
+  let r = M.simulate(S); const ch = r.channels[r.derived.plan.indexOf(r.derived.plan.find(c => c.prot))];
+  assert.ok(ch.protection, 'the derived channel has a protection copy'); assert.equal(ch.protection.active, 'work');
+  // a cut on the working route switches it
+  const direct = S.links.find(l => l.kind === 'fiber' && Math.round(l.p.len) === 80 && [l.a, l.b].includes(nm(S, 'ROADM-A').id) && [l.a, l.b].includes(nm(S, 'ROADM-B').id));
+  direct.p.cut = true; r = M.simulate(S); const ch2 = r.channels[r.derived.plan.indexOf(r.derived.plan.find(c => c.prot))];
+  assert.equal(ch2.protection.active, 'protect');
+  // a converter: the partners are in different slots and the plan says so
+  S = rp(); nm(S, 'TRX-B2').p.slot = 32; nm(S, 'TRX-C2').p.slot = 31; // ROADM ports are colorless, so tuning decides the slot
+  const cs = M.sanitize(clone(S)); const C2 = nm(cs, 'TRX-C2'), B2 = nm(cs, 'TRX-B2'); C2.p.conv = nm(cs, 'ROADM-A').id; C2.p.peer = B2.p.peer = '';
+  assert.match(M.derive(cs).dark.find(x => x.name === 'TRX-C2').why, /Connect to/, 'a converter without a named partner is explained');
+  C2.p.peer = B2.id; B2.p.peer = C2.id; d = M.derive(cs);
+  const cv = d.plan.find(c => c.conv); assert.ok(cv, 'paired across slots'); assert.equal(cv.slot !== cv.slot2, true); assert.equal(cv.conv, nm(cs, 'ROADM-A').id);
+  r = M.simulate(cs); const rc = r.channels[r.derived.plan.indexOf(r.derived.plan.find(c => c.conv))];
+  assert.ok(rc.converted, 'simulated as two halves'); assert.equal(rc.segments.length, 2);
+  // the service cannot be converted
+  const s2 = rp(); nm(s2, 'TRX-A1').p.conv = nm(s2, 'ROADM-B').id; nm(s2, 'TRX-A1').p.peer = nm(s2, 'TRX-C1').id; nm(s2, 'TRX-C1').p.peer = nm(s2, 'TRX-A1').id; const d2 = M.derive(s2);
+  assert.ok(d2.notes.length && d2.plan.find(c => c.svc).conv === '');
+  // untrusted values are cleaned
+  const bad = rp(); nm(bad, 'TRX-A2').p.prot = 'x'; nm(bad, 'TRX-A2').p.conv = nm(bad, 'TRX-B1').id;
+  const sc = M.sanitize(clone(bad)); assert.equal(nm(sc, 'TRX-A2').p.prot, ''); assert.equal(nm(sc, 'TRX-A2').p.conv, '');
+});
+
+test('Protection and a converter on cabled channels scenario is clean and has both features', () => {
+  const S = M.sanitize(build('cabprot')), r = M.simulate(S);
+  assert.equal(r.status, 'up'); assert.equal(M.derive(S).dark.length, 0);
+  const d = r.derived.plan, real = d.filter(c => !c.filler);
+  assert.ok(real.some(c => c.prot === '1+1') && real.some(c => c.conv));
+  assert.ok(r.channels.every((c, i) => d[i].filler || c.status === 'up'));
+});

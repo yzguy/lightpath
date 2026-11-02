@@ -7,8 +7,8 @@ const MODEL = (() => {
   const uid = p => p + Math.random().toString(36).slice(2, 7);
 
   const TYPES = {
-    trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '' }) },
-    mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '', clients: defaultClients() }) },
+    trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '', prot: '', conv: '' }) },
+    mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '', prot: '', conv: '', clients: defaultClients() }) },
     host: { label: 'Host / router', hint: 'Traffic endpoint with Ethernet ports', maxLinks: 8, def: () => ({ ip: '', ports: 1, speed: 100 }) },
     splitter: { label: 'Splitter / tap', hint: 'Passive power splitter, 50/50 up to a 99/1 monitor tap', maxLinks: 3, def: () => ({ ratio: '50/50', excess: 0.3 }) },
     switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, switchMs: 20 }) },
@@ -182,6 +182,15 @@ const MODEL = (() => {
         const port = (t, r, k) => L(t, r, 'patch', { mport: k });
         return { nodes: [ra, rb, rc, a1, a2, b1, b2, c1, c2], links: [L(ra, rb, 'fiber', { len: 80 }), L(rb, rc, 'fiber', { len: 80 }), L(ra, rc, 'fiber', { len: 70 }), port(a1, ra, 0), port(a2, ra, 1), port(b1, rb, 0), port(b2, rb, 1), port(c1, rc, 0), port(c2, rc, 1)],
           g: { nch: 12, df: 75, launch: 0 }, svc: { a: a1.id, z: c1.id } };
+      }
+    },
+    cabprot: {
+      name: 'Protection and a converter on cabled channels', build() {
+        // The ROADM ring with transponders on add/drop ports (as in the ROADM ports scenario). TRX-A2 to TRX-B1 is 1+1 protected: the copy runs A-C-B.
+        // TRX-C2 is tuned to slot 32 and TRX-B2 to slot 33; converting at ROADM-A (set on C2, with Connect to naming B2) joins them across the slots.
+        const p = PRESETS.roadmports.build(), nm = n => p.nodes.find(x => x.name === n);
+        nm('TRX-A2').p.prot = '1+1'; nm('TRX-C2').p.slot = 31; nm('TRX-B2').p.slot = 32; nm('TRX-C2').p.conv = nm('ROADM-A').id;
+        return p;
       }
     },
     reach: {
@@ -430,6 +439,7 @@ const MODEL = (() => {
       nodes.push({ id: n.id, type: n.type, name: String(n.name ?? n.id), x: Number.isFinite(+n.x) ? +n.x : 0, y: Number.isFinite(+n.y) ? +n.y : 0, p });
     }
     { const ends = new Set(nodes.filter(isEnd).map(n => n.id)); for (const n of nodes) if (isEnd(n)) n.p.peer = typeof n.p.peer === 'string' && ends.has(n.p.peer) && n.p.peer !== n.id ? n.p.peer : ''; }
+    { const rd = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); for (const n of nodes) if (isEnd(n)) { n.p.prot = n.p.prot === '1+1' ? '1+1' : n.p.prot === 'shared' ? 'shared' : ''; n.p.conv = typeof n.p.conv === 'string' && rd.has(n.p.conv) ? n.p.conv : ''; } }
     const lseen = new Set(), links = [], usedDeg = new Map();
     for (const l of o.links) {
       if (!l || typeof l.id !== 'string' || lseen.has(l.id) || !seen.has(l.a) || !seen.has(l.b) || l.a === l.b) continue;
@@ -729,7 +739,9 @@ const MODEL = (() => {
       if (used.has(a.t.id)) continue;
       let best = null, bestKm = Infinity;
       for (const b of ok) {
-        if (b === a || used.has(b.t.id) || b.m === a.m || b.tx !== a.rx || b.rx !== a.tx || b.bidi !== a.bidi) continue; // each end transmits what the other receives
+        // each end transmits what the other receives; with a converter set on either end the two slots may differ, but the partner must then be named
+        const cv = a.t.p.conv || b.t.p.conv, named = a.t.p.peer === b.t.id || b.t.p.peer === a.t.id;
+        if (b === a || used.has(b.t.id) || b.m === a.m || b.bidi !== a.bidi || (cv ? !named || a.bidi : b.tx !== a.rx || b.rx !== a.tx)) continue;
         if (a.t.p.peer ? a.t.p.peer !== b.t.id : b.t.p.peer && b.t.p.peer !== a.t.id) continue; // a far end named by 'Connect to' is reserved for its partner
         const r = route(S, a.t.id, b.t.id, true, { ignoreCut: true, exclude: new Set([...wrongSide(a), ...wrongSide(b)]) }); if (!r) continue;
         const km = kmOf(r); if (km < bestKm) { best = b; bestKm = km; }
@@ -741,6 +753,7 @@ const MODEL = (() => {
           : `${a.t.name} has no partner: a single-fibre port transmits slot ${a.tx + 1} and listens on slot ${a.rx + 1}, so the far end has to be a single-fibre port that transmits slot ${a.rx + 1} and listens on slot ${a.tx + 1}`);
         continue;
       }
+      if (!best && a.t.p.conv && !a.t.p.peer) { mark(a.t.id, `${a.t.name} converts at ${(node(a.t.p.conv) || {}).name}, which puts its partner in a different slot: set \u2018Connect to\u2019 to name the far end`); continue; }
       if (!best) { mark(a.t.id, a.t.p.peer && !ok.some(b => b.t.id === a.t.p.peer && b.slot === a.slot) ? `${a.t.name} is set to connect to ${(node(a.t.p.peer) || {}).name}, which is not on a port for slot ${a.slot + 1}` : `${a.t.name} has no partner: nothing is plugged into a port for slot ${a.slot + 1} on a mux, OADM or ROADM it can reach${a.side ? ` from ${a.m.name}'s ${a.m.type === 'oadm' ? sideName(a.side) + ' side' : 'degree ' + a.side}` : ''}`); continue; }
       if (a.t.p.mode !== best.t.p.mode) { const why = `${a.t.name} is ${PHY_.MODES[a.t.p.mode].short} but ${best.t.name} is ${PHY_.MODES[best.t.p.mode].short}: the ends will never lock`; mark(a.t.id, why); mark(best.t.id, why); continue; }
       used.add(a.t.id); used.add(best.t.id); pairs.push([a, best]);
@@ -749,14 +762,16 @@ const MODEL = (() => {
     // amplifiers are set for the service direction, so every channel runs from the end nearer the service's A end to the one further away
     const dist = t => { const r = sa && sa !== t.id ? route(S, sa, t.id, true, { ignoreCut: true }) : null; return r ? kmOf(r) : sa === t.id ? 0 : Infinity; };
     pairs.forEach(pr => { if (dist(pr[1].t) < dist(pr[0].t)) pr.reverse(); });
-    const plan = pairs.sort((x, y) => x[0].tx - y[0].tx).map(([a, b]) => {
+    const notes = [], plan = pairs.sort((x, y) => x[0].tx - y[0].tx).map(([a, b]) => {
       const svc = (a.t.id === sa && b.t.id === sz) || (a.t.id === sz && b.t.id === sa), from = svc ? sa : a.t.id, to = svc ? sz : b.t.id, f = from === a.t.id ? a : b, o = f === a ? b : a;
-      return { slot: f.tx, slotRev: o.tx !== f.tx ? o.tx : null, mode: a.t.p.mode, off: f.t.p.off || 0, svc, from, to, via: '', conv: '', slot2: f.tx, prot: '', derived: true, tx: from, rx: to };
+      const cv = f.t.p.conv || o.t.p.conv, pt = f.t.p.prot || o.t.p.prot; // the transponders' settings: a converter on the way and the protection of the pair
+      if (svc && cv) notes.push(`${a.t.name} and ${b.t.name} are the service: the service channel cannot change wavelength, so its converter is ignored.`);
+      return { slot: f.tx, slotRev: !cv && o.tx !== f.tx ? o.tx : null, mode: a.t.p.mode, off: f.t.p.off || 0, svc, from, to, via: '', conv: svc ? '' : cv, slot2: cv && !svc ? o.tx : f.tx, prot: pt, derived: true, tx: from, rx: to };
     });
     let svcWhy = '';
     if (!plan.some(c => c.svc) && node(sa) && node(sz) && isEnd(node(sa)) && isEnd(node(sz))) svcWhy = dark.get(sa) || dark.get(sz) || 'The service transponders are not paired through the muxes: plug both into the port for the same slot.';
     // background channels fill the line up to the channel count, in the free slots nearest the lit ones
-    const want = Math.max(0, Math.round(+g.nch || 0) - plan.length), lit = new Set(plan.flatMap(c => [c.slot, c.slotRev]).filter(x => x != null)), fillers = [], single = S.links.some(l => l.kind === 'fiber' && l.p.single);
+    const want = Math.max(0, Math.round(+g.nch || 0) - plan.length), lit = new Set(plan.flatMap(c => [c.slot, c.slotRev, c.conv ? c.slot2 : null]).filter(x => x != null)), fillers = [], single = S.links.some(l => l.kind === 'fiber' && l.p.single);
     if (want && plan.length) {
       const centre = plan.reduce((t, c) => t + c.slot, 0) / plan.length, mode = (plan.find(c => c.svc) || plan[0]).mode;
       // a filler runs the service's route, so it has to obey the filters on it: not in a slot an OADM there serves in passing, and in one it serves at the ends
@@ -765,7 +780,7 @@ const MODEL = (() => {
       for (let k = 0; k < want && free.length >= (single ? 2 : 1); k++) { const sl = free.shift(), back = single ? free.shift() : null; fillers.push({ slot: sl, slotRev: back, mode, off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: sl, prot: '', derived: true, filler: true }); } // on a single fibre a background channel takes a slot each way
     }
     const all = [...plan, ...fillers].sort((x, y) => x.slot - y.slot);
-    return { plan: all, dark: [...dark].map(([id, why]) => ({ id, name: (node(id) || {}).name, why })), svcWhy, paired: pairs.length, fillers: fillers.length };
+    return { plan: all, notes, dark: [...dark].map(([id, why]) => ({ id, name: (node(id) || {}).name, why })), svcWhy, paired: pairs.length, fillers: fillers.length };
   }
   // the topology with the channel plan the cabling defines (or S itself when it does not use mux ports)
   function effective(S) {
