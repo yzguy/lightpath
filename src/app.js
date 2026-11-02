@@ -798,6 +798,7 @@ $('#svc-swap').addEventListener('click', () => { [S.svc.a, S.svc.z] = [S.svc.z, 
 function renderTabBody() {
   document.querySelectorAll('.tab').forEach(t => { const on = t.dataset.tab === tab; t.setAttribute('aria-selected', on); t.id = 'tab-' + t.dataset.tab; t.setAttribute('aria-controls', 'tabbody'); t.tabIndex = on ? 0 : -1; });
   const b = $('#tabbody'); b.innerHTML = ''; b.setAttribute('role', 'tabpanel'); b.setAttribute('aria-labelledby', 'tab-' + tab);
+  { const cur = document.querySelector('.tab[aria-selected=true]'); if (cur && narrow.matches) cur.scrollIntoView({ block: 'nearest', inline: 'center' }); }
   const r = view();
   if (tab === 'learn') return b.append(learnView());
   if (tab === 'plan') return b.append(planView(r));
@@ -1416,7 +1417,9 @@ function learn(t) { learnTopic = t; tab = 'learn'; renderTabBody(); $('#tabs').s
 function learnView() {
   const nav = el('nav', { class: 'lnav' });
   for (const k in LEARN) nav.append(el('button', { class: 'chip', 'aria-pressed': k === learnTopic, text: LEARN[k][0], onclick: () => { learnTopic = k; renderTabBody(); } }));
-  return el('div', { class: 'learn' }, [nav, el('article', {}, [el('h4', { text: LEARN[learnTopic][0] }), el('div', { html: LEARN[learnTopic][1] })])]);
+  const pick = el('select', { class: 'lpick', 'aria-label': 'Learn topic' }); for (const k in LEARN) pick.append(el('option', { value: k, text: LEARN[k][0] })); pick.value = learnTopic;
+  pick.addEventListener('change', () => { learnTopic = pick.value; renderTabBody(); }); // a phone gets a picker instead of a list of 30 chips
+  return el('div', { class: 'learn' }, [pick, nav, el('article', {}, [el('h4', { text: LEARN[learnTopic][0] }), el('div', { html: LEARN[learnTopic][1] })])]);
 }
 
 // ---------- misc ----------
