@@ -202,7 +202,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .tab { background: none; border: 0; padding: 8px 12px; cursor: pointer; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px }
 .tab[aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent) }
 .chartwrap { overflow-x: auto }
-.chart { width: 100%; min-width: 560px; height: auto; display: block }
+.chart { width: 100%; min-width: 560px; max-width: 960px; height: auto; display: block } /* drawn on a 900-unit canvas: stretched wider, the text and the height grow with it */
 .chart .grid { stroke: var(--grid); stroke-width: 1 }
 .chart .tick { stroke: var(--line); stroke-dasharray: 2 3 }
 .chart .ax { font-family: var(--f-mono); font-size: 11px; fill: var(--muted) }
