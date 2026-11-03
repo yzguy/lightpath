@@ -50,7 +50,7 @@ const undo = () => { if (stepHistory(-1)) toast('Undone', { label: 'Redo', fn: r
 const redo = () => { if (stepHistory(1)) toast('Redone', { label: 'Undo', fn: undo }); else toast('Nothing to redo'); };
 function applyPreset(k, quiet) {
   const p = MODEL.sanitize(PRESETS[k].build());
-  S = { nodes: p.nodes, links: p.links, g: p.g, svc: p.svc, view: { x: -40, y: -60, k: 1 } };
+  S = { ...p, view: { x: -40, y: -60, k: 1 } }; // everything the scenario defines, its traffic flows included
   sel = null; if (!quiet) { fitView(true); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
 }
 const node = id => S.nodes.find(n => n.id === id);
@@ -75,8 +75,16 @@ function fitView(readable) {
 function applyView() { gRoot.setAttribute('transform', `scale(${S.view.k}) translate(${-S.view.x},${-S.view.y})`); }
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
 
+// a host whose traffic cannot get through is outlined on the canvas, like any other faulty device (computed once per change, not per drag)
+let hostFaults = new Set();
+function refreshHostFaults() {
+  hostFaults = new Set(); if (!(S.flows || []).length) return;
+  const R = MODEL.reach(S, lastRes);
+  for (const f of S.flows) { const r = R.find(x => (x.a === f.a && x.z === f.z) || (x.a === f.z && x.z === f.a)); if (r && !r.ok) { hostFaults.add(f.a); hostFaults.add(f.z); } }
+}
+const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 function nodeShape(n) {
-  const g = sv('g', { class: 'node t-' + n.type + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === n.id ? 'true' : 'false',
+  const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === n.id ? 'true' : 'false',
     'aria-label': `${n.name}, ${(TYPES[n.type] || {}).label || n.type}${n.p && n.p.fail === 'dead' ? ', failed' : n.p && n.p.fail === 'degraded' ? ', degraded' : ''}` });
   if (n.type === 'trx') {
     g.append(sv('rect', { x: -46, y: -22, width: 92, height: 44, rx: 4, class: 'body' }));
@@ -98,6 +106,7 @@ function nodeShape(n) {
     g.append(sv('rect', { x: -40, y: -16, width: 80, height: 32, rx: 3, class: 'body' }));
     const t = sv('text', { x: -34, y: -4, class: 'glyph small' }); t.textContent = `ODF ${n.p.ports}`; g.append(t);
     const k = Math.min(12, n.p.ports); for (let i = 0; i < k; i++) g.append(sv('rect', { x: -34 + i * (68 / k), y: 3, width: Math.max(3, 68 / k - 2), height: 8, rx: 1, class: 'pport' + (n.p.dirty && n.p.dirty[i + 1] ? ' dirty' : '') }));
+    if (panelDirty(n)) { g.append(sv('circle', { cx: 40, cy: -16, r: 8, class: 'faultbadge' })); const b = sv('text', { x: 40, y: -12.5, class: 'faultmark', 'text-anchor': 'middle' }); b.textContent = '!'; g.append(b); } // a dirty connector you can see at any zoom
   } else if (n.type === 'splitter') {
     g.append(sv('rect', { x: -34, y: -20, width: 68, height: 40, rx: 4, class: 'body' }));
     g.append(sv('path', { d: 'M-28,0 L-6,0 M-6,0 L26,-10 M-6,0 L26,10', class: 'thin' }));
@@ -755,7 +764,7 @@ function renderResults() {
   const m = r.mode;
   const prxCls = !isFinite(r.prx) ? 'bad' : r.prx < m.rxMin || r.prx > m.rxMax ? 'warn' : '';
   // the margin decides the result, so it leads and is wider than the rest; the rest are the evidence for it
-  if (r.ber != null) k.append(tile('Q margin', (r.qMargin > 0 ? '+' : '') + f1(r.qMargin), ' dB', 'margin', (r.qMargin < 0 ? 'bad' : r.qMargin < 1 ? 'warn' : 'good') + ' lead'));
+  if (r.ber != null) k.append(tile('Q margin', (r.qMargin > 0 ? '+' : '') + f1(r.qMargin), ' dB', 'margin', (r.qMargin < 0 || lastRes.status === 'down' || lastRes.status === 'los' ? 'bad' : r.qMargin < 1 || lastRes.status === 'degraded' ? 'warn' : 'good') + ' lead'));
   k.append(tile('Rx power', isFinite(r.prx) ? f1(r.prx) : 'LOS', ' dBm', 'rx', prxCls));
   if (r.ber != null) {
     k.append(tile('OSNR', f1(r.osnr), ' dB', 'osnr'), tile('GSNR (w/ NLI)', f1(r.gosnr), ' dB', 'gsnr'),
@@ -1039,8 +1048,8 @@ function hopTable(r) {
   const tb = el('tbody');
   r.hops.forEach(h => {
     const tot = h.out.sig > -90 ? f1(h.out.sig + db(h.nch)) : '—';
-    tb.append(el('tr', { class: h.kind === 'cut' || h.over ? 'cutrow' : '' }, [h.name, h.kind, Math.round(h.km), h.kind === 'tx' ? '' : f1(h.in.sig), h.out.sig > -90 ? f1(h.out.sig) : 'LOS', h.gain != null ? (h.gain > 0 ? '+' : '') + f1(h.gain) : '', tot + (h.nch > 1 ? ` (${h.nch}ch)` : ''), h.osnr != null ? f1(h.osnr) : '', h.gosnr != null ? f1(h.gosnr) : '',
-      [h.nf ? `NF ${f1(h.nf)}` : '', h.launch != null ? `launch ${f1(h.launch)}` : '', (h.over ? '⚠ ' : '') + (h.note || '')].filter(Boolean).join(' · ')].map(c => el('td', { text: String(c) }))));
+    tb.append(el('tr', { class: h.kind === 'cut' || h.over ? 'cutrow' : h.warn ? 'warnrow' : '' }, [h.name, h.kind, Math.round(h.km), h.kind === 'tx' ? '' : f1(h.in.sig), h.out.sig > -90 ? f1(h.out.sig) : 'LOS', h.gain != null ? (h.gain > 0 ? '+' : '') + f1(h.gain) : '', tot + (h.nch > 1 ? ` (${h.nch}ch)` : ''), h.osnr != null ? f1(h.osnr) : '', h.gosnr != null ? f1(h.gosnr) : '',
+      [h.nf ? `NF ${f1(h.nf)}` : '', h.launch != null ? `launch ${f1(h.launch)}` : '', (h.over || h.warn ? '⚠ ' : '') + (h.note || '')].filter(Boolean).join(' · ')].map(c => el('td', { text: String(c) }))));
   });
   t.append(tb);
   return el('div', { class: 'tablewrap' }, [el('p', { class: 'muted small', text: 'What the PM counters would read along the path, per channel. OSNR / GSNR in 0.1 nm measured after each element.' }), t]);
@@ -1451,8 +1460,8 @@ function toast(t, action) { // an action ({label, fn}) stays longer so there is 
   if (action) e.append(el('button', { class: 'toast-act', text: action.label, onclick: () => { e.hidden = true; action.fn(); } }));
   clearTimeout(toastT); toastT = setTimeout(() => (e.hidden = true), action ? 7000 : 2600);
 }
-function recompute() { MODEL.assignSides(S); lastRes = simulate(); renderCanvas(); renderResults(); save(); }
-function renderAll() { MODEL.assignSides(S); lastRes = simulate(); bindGlobals(); renderCanvas(); renderInspector(); renderResults(); save(); }
+function recompute() { MODEL.assignSides(S); lastRes = simulate(); refreshHostFaults(); renderCanvas(); renderResults(); save(); }
+function renderAll() { MODEL.assignSides(S); lastRes = simulate(); refreshHostFaults(); bindGlobals(); renderCanvas(); renderInspector(); renderResults(); save(); }
 window.addEventListener('resize', applyView);
 
 load();

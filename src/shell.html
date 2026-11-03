@@ -95,7 +95,10 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .t-roadm .body, .t-oadm .body { fill: var(--raised) }
 .t-host .body, .t-panel .body { fill: var(--raised); stroke-dasharray: 0 }
 .node .pport { fill: var(--muted); opacity: .7 }
-.node .pport.dirty { fill: var(--bad, #c0392b); opacity: 1 }
+.node .pport.dirty { fill: var(--warn); opacity: 1 }
+.node.faulty .body { stroke: var(--warn); stroke-width: 2.5 }
+.node .faultbadge { fill: var(--warn); stroke: var(--panel); stroke-width: 1.5 }
+.node .faultmark { fill: var(--panel); font: 800 11px var(--f-ui); pointer-events: none }
 .reachtbl tr { cursor: pointer }
 .steps { margin: 6px 0 0; padding-left: 0; list-style: none; font-size: 13px }
 .steps li { padding: 3px 0 3px 22px; position: relative }
@@ -217,6 +220,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 .hops td { padding: 5px 8px; border-bottom: 1px solid var(--grid); font-family: var(--f-mono); font-variant-numeric: tabular-nums; white-space: nowrap }
 .hops td:last-child { font-family: var(--f-ui); white-space: normal; color: var(--muted) }
 .hops .cutrow td { color: var(--bad) }
+.hops .warnrow td { color: var(--warn) } .hops .warnrow td:last-child { color: var(--warn) }
 .constwrap { display: grid; grid-template-columns: minmax(0, 340px) minmax(0, 1fr); gap: 20px; align-items: start; padding-top: 8px }
 .const { width: 100%; max-width: 340px; aspect-ratio: 1; background: var(--raised); border: 1px solid var(--line); border-radius: 6px }
 .constinfo { display: grid; gap: 4px; max-width: 46ch } .constinfo div { display: flex; justify-content: space-between } .constinfo span { color: var(--muted) } .constinfo b { font-family: var(--f-mono); font-weight: 500 }

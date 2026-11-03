@@ -1565,7 +1565,7 @@ const MODEL = (() => {
         const pn = +(/\d+/.exec(oadmSide(link(path.links[i]), nxt.id)) || [0])[0], dirty = +(nxt.p.dirty && nxt.p.dirty[pn]) || 0, b = snap(), lo = +nxt.p.il + dirty + degOf(nxt); loss(lo);
         if (planOn) { nch = litCount(i + 1); curAct = maskAt(i + 1); }
         if (dirty > 0.3 && !eol && !rv && !W) alarms.push({ sev: 'warn', text: `${nxt.name} port ${pn}: a dirty or damaged connector costs ${f1(dirty)} dB extra. Clean it.` });
-        rec(nxt.name, 'panel', b, { port: pn, inSide: oadmSide(link(path.links[i]), nxt.id), gain: -lo, note: `port ${pn}: ${f1(+nxt.p.il)} dB` + (dirty ? ` + ${f1(dirty)} dB dirty connector` : '') });
+        rec(nxt.name, 'panel', b, { warn: dirty > 0.3 ? true : undefined, port: pn, inSide: oadmSide(link(path.links[i]), nxt.id), gain: -lo, note: `port ${pn}: ${f1(+nxt.p.il)} dB` + (dirty ? ` + ${f1(dirty)} dB dirty connector` : '') });
       } else if (t === 'splitter' || t === 'switch') {
         // A splitter sends the light to both branches: the branch the route takes gets its share of the power (a 99/1 tap costs 0.05 dB on the main
         // branch and 20 dB on the tap). A switch passes one branch for about 1 dB. Which branch is the route's cable on that side of the device.
