@@ -410,17 +410,22 @@ function selIn(obj, key, opts) {
   const s = el('select', { id: 'f-' + key }); for (const [v, t] of opts) s.append(el('option', { value: v, text: t }));
   s.value = String(obj[key]); s.addEventListener('change', () => { obj[key] = s.value === 'true' ? true : s.value === 'false' ? false : s.value; renderAll(); }); return s;
 }
-let assumeOpen;
+let assumeOpen, inspKey;
 const narrow = window.matchMedia('(max-width: 900px)');
+// a new selection opens at the top (type, name, actions); an edit to the same selection keeps the scroll position
 function renderInspector() {
+  const box = $('#insp'), top = box.scrollTop, key = sel ? sel.kind + ':' + sel.id : '';
+  renderInspectorBody(); box.scrollTop = key === inspKey ? top : 0; inspKey = key;
+}
+function renderInspectorBody() {
   const box = $('#insp'); box.innerHTML = '';
   if (!sel) {
-    box.append(el('h2', { text: 'Inspector' }), el('p', { class: 'muted', html: 'Select a device or a cable to edit it. <b>Double-click</b> a transponder to make it an end of the service under test.' }));
+    box.append(el('h2', { text: 'Inspector' }), el('p', { class: 'muted', html: 'Select a device or a cable to edit it. Try cutting a fiber: select a span, then choose <b>Cut this fiber</b>. <b>Double-click</b> a transponder to make it an end of the service under test.' }));
     S.g.eolSpan ??= PHY.EOL.spanLoss; S.g.eolTrx ??= PHY.EOL.trxPen;
     S.g.neighbors ??= 'same';
     S.g.reopt = S.g.reopt === true;
     // the model-wide settings are there to look up, not to read first: collapsed on a phone, where they would push everything else a screen down
-    const det = el('details', { class: 'assume' }, [el('summary', { text: 'Model assumptions' })]); det.open = assumeOpen ?? !narrow.matches; det.addEventListener('toggle', () => { assumeOpen = det.open; });
+    const det = el('details', { class: 'assume' }, [el('summary', { text: 'Model assumptions' })]); det.open = assumeOpen ?? false; det.addEventListener('toggle', () => { assumeOpen = det.open; });
     det.append(el('h3', { text: 'Line loading' }), field('Launch power', selIn(S.g, 'reopt', [['false', 'Fixed: amplifier targets and the global launch'], ['true', 'Re-optimised for the load on each span']]), 'Re-optimised: every amplifier whose output target is blank sets the GN-optimal power for the span after it, given the channels actually lit there, so the setting follows channels as they are added and dropped. Amplifiers with an explicit target keep it.'), field('Neighbouring channels', selIn(S.g, 'neighbors', [['same', 'Same type as the service'], ['coh', '60 GBd coherent channels']]), 'Only matters for direct-detection optics (10G DWDM): cross-phase modulation from neighbours is stronger when they are wide coherent channels.'));
     det.append(el('h3', { text: 'End-of-life allowances' }), field('Extra loss per fiber span (dB)', numIn(S.g, 'eolSpan', 0.1, 0, 5)), field('Transceiver ageing (dB)', numIn(S.g, 'eolTrx', 0.1, 0, 3)),
       el('p', { class: 'muted small', text: 'Used for the end-of-life margin: repairs, connector wear and laser ageing. Typical planning values are 0.5 to 1.5 dB per span.' }));
@@ -437,9 +442,10 @@ function renderInspector() {
   if (sel.kind === 'node') {
     const n = node(sel.id); if (!n) return;
     const nm = el('input', { value: n.name, id: 'f-name' }); nm.addEventListener('input', () => { n.name = nm.value; renderCanvas(); renderResults(); });
-    box.append(el('h2', { text: TYPES[n.type].label }), field('Name', nm));
     const p = n.p; p.fail ??= ''; p.degDb ??= 3;
-    box.append(field('Condition', selIn(p, 'fail', [['', 'Working'], ['degraded', 'Degraded'], ['dead', 'Failed (no light passes)']]), 'Failed: the device passes no light, so routes avoid it (restoration or protection) and a service through it is LOS. Degraded: an amplifier loses output (pump ageing) and gets noisier, a laser gets weaker, a receiver loses SNR, a ROADM, mux, VOA or DCM adds loss.'));
+    const head = el('div', { class: 'insp-head' }, [el('h2', { text: TYPES[n.type].label }), field('Name', nm)]); box.append(head); // type, name, condition and delete stay at the top while the fields scroll
+    head.append(field('Condition', selIn(p, 'fail', [['', 'Working'], ['degraded', 'Degraded'], ['dead', 'Failed (no light passes)']])), el('button', { class: 'btn danger', text: 'Delete device', onclick: del }));
+    box.append(el('p', { class: 'muted small', text: 'Failed: the device passes no light, so routes avoid it (restoration or protection) and a service through it is LOS. Degraded: an amplifier loses output (pump ageing) and gets noisier, a laser gets weaker, a receiver loses SNR, a ROADM, mux, VOA or DCM adds loss.' }));
     if (p.fail === 'degraded') box.append(field('Degradation (dB)', numIn(p, 'degDb', 0.5, 0, 30)));
     if (n.type === 'roadm' || n.type === 'mux' || n.type === 'oadm') {
       const list = (key, max, hint, label) => {
@@ -571,10 +577,13 @@ function renderInspector() {
     } else if (n.type === 'voa') {
       box.append(field('Attenuation (dB)', numIn(p, 'att', 0.5, 0, 30)));
     }
-    box.append(el('button', { class: 'btn danger', text: 'Delete device', onclick: del }));
   } else {
     const l = link(sel.id); if (!l) return;
-    box.append(el('h2', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('p', { class: 'muted', text: linkName(l) }));
+    const seenHints = new Set(), once = (k, t) => (seenHints.has(k) ? undefined : (seenHints.add(k), t)); // the same help text for the cable's two ends is shown once
+    // the type, the name and the main actions stay at the top of the panel while its fields scroll
+    const head = el('div', { class: 'insp-head' }, [el('h2', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('p', { class: 'muted', text: linkName(l) }),
+      el('div', { class: 'row' }, [el('button', { class: 'btn ' + (l.p.cut ? '' : 'danger'), text: l.p.cut ? 'Splice it back' : l.kind === 'fiber' ? 'Cut this fiber' : 'Cut this cable', onclick: () => { l.p.cut = !l.p.cut; renderAll(); } }), el('button', { class: 'btn', text: 'Delete cable', onclick: del })])]);
+    box.append(head);
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
     if (l.p.dir == null) l.p.dir = 'both';
     { const na = node(l.a), nb = node(l.b); box.append(field('Carries light', selIn(l.p, 'dir', [['both', 'Both ways (a fiber pair)'], ['ab', `${na ? na.name : 'a'} → ${nb ? nb.name : 'b'} only`], ['ba', `${nb ? nb.name : 'b'} → ${na ? na.name : 'a'} only`]]), 'A one-way fiber lets each direction take a different route.')); }
@@ -602,19 +611,19 @@ function renderInspector() {
       const ps = el('select', { id: 'f-odf-' + n.id, 'aria-label': `Port on ${n.name}` }), used = new Set(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => sideOf2(x, n)));
       for (let k = 1; k <= n.p.ports; k++) for (const sd of ['r', 'f']) ps.append(el('option', { value: sd + k, text: `${sd === 'r' ? 'Rear' : 'Front'} of port ${k}` + (used.has(sd + k) ? ' · in use' : '') + (n.p.dirty && n.p.dirty[k] ? ' · dirty' : '') }));
       ps.value = sideOf2(l, n) || 'r1'; ps.addEventListener('change', () => { setSide(l, n, ps.value); renderAll(); });
-      box.append(field(`Port on ${n.name}`, ps, 'Light enters one side of a port and leaves the other side of the same port: the rear is usually the outside plant, the front the patch cords to equipment. Each mated connector pair costs the panel\'s connector loss.'));
+      box.append(field(`Port on ${n.name}`, ps, once('panel', 'Light enters one side of a port and leaves the other side of the same port: the rear is usually the outside plant, the front the patch cords to equipment. Each mated connector pair costs the panel\'s connector loss.')));
     }
     for (const n of [node(l.a), node(l.b)]) if (isTri(n)) {
       const ps = el('select', { id: 'f-tri-' + n.id, 'aria-label': `Port on ${n.name}` }), used = new Map(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => [sideOf2(x, n), 1]));
       for (const k of ['c', 'a', 'b']) ps.append(el('option', { value: k, text: TRI_NAME[k] + (n.type === 'splitter' && k === 'b' ? ' (tap / second branch)' : '') + (used.has(k) ? ' · in use' : '') }));
       ps.value = sideOf2(l, n) || 'c'; ps.addEventListener('change', () => { setSide(l, n, ps.value); renderAll(); });
-      box.append(field(`Port on ${n.name}`, ps, n.type === 'splitter' ? 'Light goes between the common port and either branch, never between the two branches. A 99/1 tap sends 1% to port B.' : 'The common port is the one the receiver side hangs off; the switch passes port A or port B to it.'));
+      box.append(field(`Port on ${n.name}`, ps, once('tri', n.type === 'splitter' ? 'Light goes between the common port and either branch, never between the two branches. A 99/1 tap sends 1% to port B.' : 'The common port is the one the receiver side hangs off; the switch passes port A or port B to it.')));
     }
     for (const n of [node(l.a), node(l.b)]) if (n && (n.type === 'oadm' || n.type === 'roadm') && !(portLink(l) && portLink(l).m === n) && !isEnd(n === node(l.a) ? node(l.b) : node(l.a))) { // a line cable on an OADM or ROADM: which side or degree of it
       const ss = el('select', { id: 'f-side-' + n.id, 'aria-label': `Side of ${n.name}` }), other = n === node(l.a) ? node(l.b) : node(l.a);
       for (const sd of lineSides(n)) ss.append(el('option', { value: sd, text: sideLabel(n, sd) }));
       ss.value = sideOf(l, n) || (n.type === 'roadm' ? lineSides(n)[0] : defSide(n, other)); ss.addEventListener('change', () => { setSide(l, n, ss.value); renderAll(); });
-      box.append(field(n.type === 'roadm' ? `Degree on ${n.name}` : `Line side on ${n.name}`, ss, n.type === 'roadm' ? 'Each line cable is one degree of the ROADM. If the add/drop is not directionless, a transponder port belongs to one degree and its light only leaves by that one.' : 'West is where the line comes from on the left, East the right. A transponder on a West port talks to the West line only.'));
+      box.append(field(n.type === 'roadm' ? `Degree on ${n.name}` : `Line side on ${n.name}`, ss, once('side', n.type === 'roadm' ? 'Each line cable is one degree of the ROADM. If the add/drop is not directionless, a transponder port belongs to one degree and its light only leaves by that one.' : 'West is where the line comes from on the left, East the right. A transponder on a West port talks to the West line only.')));
     }
     if (l.kind === 'fiber') {
       for (const k in linkDefaults('fiber')) if (l.p[k] == null) l.p[k] = linkDefaults('fiber')[k];
@@ -645,9 +654,6 @@ function renderInspector() {
       box.append(field('Shared risk group', gi, 'Fibers with the same name share a duct or a trench: cutting one cuts all of them, and protection routes are planned to avoid the whole group.'));
     }
     if (l.kind === 'fiber' && l.p.cut) box.append(field('Cut position (km from the A end)', numIn(l.p, 'cutAt', 0.5, 0, 300, true, String(+(l.p.len / 2).toFixed(1))), 'Where the break is. An OTDR sees it as a reflective break at this distance. Blank = halfway.'));
-    box.append(el('div', { class: 'row' }, [
-      el('button', { class: 'btn ' + (l.p.cut ? '' : 'danger'), text: l.p.cut ? 'Splice it back' : 'Cut this fiber', onclick: () => { l.p.cut = !l.p.cut; renderAll(); } }),
-      el('button', { class: 'btn', text: 'Delete cable', onclick: del })]));
   }
 }
 // Client ports of a muxponder: optic type, distance to the host, connector loss, with a live budget line per port.

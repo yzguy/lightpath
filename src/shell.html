@@ -140,6 +140,8 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 
 .insp { padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 10px }
 .insp h2, .insp h3 { margin: 0 }
+.insp-head { position: sticky; top: -12px; z-index: 2; display: grid; gap: 6px; background: var(--panel); margin: -12px -12px 0; padding: 12px 12px 8px; border-bottom: 1px solid var(--line) }
+.insp-head .row { gap: 8px } .insp-head .btn { align-self: start }
 .fld { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500 }
 .fld input, .fld select { color: var(--ink); font-size: 13px; width: 100% }
 .fld small { font-size: 12px }
