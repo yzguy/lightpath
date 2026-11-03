@@ -14,7 +14,7 @@ const MODEL = (() => {
     host: { label: 'Host / router', hint: 'Traffic endpoint with Ethernet ports', maxLinks: 8, def: () => ({ ip: '', ports: 1, speed: 100 }) },
     splitter: { label: 'Splitter / tap', hint: 'Passive power splitter, 50/50 up to a 99/1 monitor tap', maxLinks: 3, def: () => ({ ratio: '50/50', excess: 0.3 }) },
     switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, revertive: true, wtrMin: 5, switchMs: 20 }) },
-    panel: { label: 'Patch panel / ODF', hint: 'Fiber panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, dirty: {} }) },
+    panel: { label: 'Patch panel / ODF', hint: 'Fiber panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, rl: 50, dirty: {} }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24, bidi: false, role: 'low' }) },
     oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, osc: false, p1310: false, o1310: '10g-lr', bidi: false, eRole: 'low', wRole: 'high' }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pinMax: 10, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
@@ -450,6 +450,7 @@ const MODEL = (() => {
       }
       if (n.type === 'panel') {
         p.ports = Math.min(48, Math.max(1, Math.round(+p.ports) || 12)); p.il = Math.min(3, Math.max(0, Number.isFinite(+p.il) && p.il !== '' && p.il !== null && typeof p.il !== 'boolean' ? +p.il : 0.5));
+        p.rl = Math.min(70, Math.max(20, Number.isFinite(+p.rl) && p.rl !== '' && p.rl !== null && typeof p.rl !== 'boolean' ? +p.rl : 50));
         const raw = n.p && n.p.dirty && typeof n.p.dirty === 'object' && !Array.isArray(n.p.dirty) ? n.p.dirty : {}; p.dirty = {};
         for (const k of Object.keys(raw).slice(0, 96)) { const i = +k, v = raw[k]; if (Number.isInteger(i) && i >= 1 && i <= p.ports && Number.isFinite(+v) && v !== '' && v !== null && typeof v !== 'boolean' && +v > 0) p.dirty[i] = Math.min(10, +v); } // extra loss of a dirty or damaged connector, by port number
       }
@@ -543,6 +544,8 @@ const MODEL = (() => {
   const portDown = (n, slot) => !!n && !!n.p && ((Array.isArray(n.p.badPorts) && n.p.badPorts.includes(slot)) || (Array.isArray(n.p.badCards) && n.p.badCards.includes(Math.floor(slot / PORTS_PER_CARD))));
   // A degraded port (p.degPorts: slot -> extra dB) costs only the channel that joins or leaves through it. A degraded port on the add side (the first half of the route)
   // weakens the signal before the amplifiers, so the OSNR falls by the same amount; one on the drop side only lowers the power at the receiver.
+  // A mated connector pair reflects a little of the light back: 50 dB return loss for a UPC polish, 65 for APC, about 30 once it is dirty or damaged.
+  const connRL = (n, dirty) => Math.min(+n.p.rl || 50, dirty > 0.3 ? 30 : 99);
   const degDb = (n, slot) => (n && n.p && n.p.degPorts && +n.p.degPorts[slot] > 0 ? +n.p.degPorts[slot] : 0);
   function portDeg(ns, slot, lks) {
     let add = 0, drop = 0; const hits = [];
@@ -600,7 +603,7 @@ const MODEL = (() => {
       if (isDead(n)) { ev('end', n.name, 0, -30, 'has failed'); return finish(`${n.name} has failed`), out; }
       if (n.type === 'panel') {
         const m = /^([rf])(\d+)$/.exec(arr || ''); if (!m) { ev('end', n.name, 0, -14, 'the cable does not name a port'); return finish(`${n.name}: the cable does not name a port`), out; }
-        const dirty = (n.p.dirty && +n.p.dirty[+m[2]]) || 0; ev('connector', `${n.name} port ${m[2]}`, +n.p.il + dirty, dirty > 0.3 ? -30 : -50, dirty > 0.3 ? `dirty or damaged connector (${f1(dirty)} dB extra)` : 'connector pair');
+        const dirty = (n.p.dirty && +n.p.dirty[+m[2]]) || 0; ev('connector', `${n.name} port ${m[2]}`, +n.p.il + dirty, -connRL(n, dirty), dirty > 0.3 ? `dirty or damaged connector (${f1(dirty)} dB extra)` : 'connector pair');
         outSide = (m[1] === 'r' ? 'f' : 'r') + m[2];
       } else if (n.type === 'splitter') {
         const to = arr === 'c' ? 'a' : 'c'; ev('splitter', n.name, splitLossDb(n, arr === 'c' ? 'a' : arr), -60, arr === 'c' ? 'the trace follows branch A; branch B is lit too' : 'combiner direction'); outSide = to;
@@ -1472,7 +1475,7 @@ const MODEL = (() => {
     const ev = []; // event log replayed per channel after the loop (plan mode only)
     let curAct = planOn ? maskAt(0) : null; // channels lit at the current point of the path (plan mode)
     const txDbm = W && A.type === 'oadm' ? +A.p.tx - +A.p.ad : W && A.type === 'roadm' ? +g.launch : (A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx) - (isEnd(A) ? degOf(A) + spareLoss(A) : 0); // a channel added at a ROADM starts at the launch level; a degraded laser is weaker
-    let mpi = 0, xpmPen = 0, P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
+    let mpi = 0, refl = [], xpmPen = 0, P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
     const tiltSeen = []; // tilt (dB, low- minus high-frequency channel) at every amplifier input and at the receiver
     const hops = [], alarms = [], failovers = []; // a protection switch that is passing its other port because the selected one cannot carry the light
     const snap = () => ({ sig: db(P * 1000), ase: db(Pase * 1000), nli: Pnli > 0 ? db(Pnli * 1000 * PHY_.BREF / Rs) : -99 });
@@ -1630,7 +1633,7 @@ const MODEL = (() => {
         rec(nxt.name, 'oadm', b, { gain: -lo, note: (joinsX ? 'add port' : dropsX ? 'drop port' : 'passive filter') + (leaving.length ? `, ${leaving.length} channel${leaving.length > 1 ? 's' : ''} dropped (${+p.ad} dB)` : '') + (joining.length ? `, ${joining.length} added (${+p.ad} dB)` : '') });
       } else if (t === 'panel') {
         // A patch panel passes the light from one side of a port to the other: the loss of the connector pair, plus whatever a dirty or damaged connector adds on that port.
-        const pn = +(/\d+/.exec(oadmSide(link(path.links[i]), nxt.id)) || [0])[0], dirty = +(nxt.p.dirty && nxt.p.dirty[pn]) || 0, b = snap(), lo = +nxt.p.il + dirty + degOf(nxt); loss(lo);
+        const pn = +(/\d+/.exec(oadmSide(link(path.links[i]), nxt.id)) || [0])[0], dirty = +(nxt.p.dirty && nxt.p.dirty[pn]) || 0, b = snap(), lo = +nxt.p.il + dirty + degOf(nxt); refl.push({ name: `${nxt.name} port ${pn}`, rl: connRL(nxt, dirty), lvl: db(P * 1000) }); loss(lo);
         if (planOn) { nch = litCount(i + 1); curAct = maskAt(i + 1); }
         if (dirty > 0.3 && !eol && !rv && !W) alarms.push({ sev: 'warn', text: `${nxt.name} port ${pn}: a dirty or damaged connector costs ${f1(dirty)} dB extra. Clean it.`, fix: fixClean(nxt, pn) });
         rec(nxt.name, 'panel', b, { warn: dirty > 0.3 ? true : undefined, port: pn, inSide: oadmSide(link(path.links[i]), nxt.id), gain: -lo, note: `port ${pn}: ${f1(+nxt.p.il)} dB` + (dirty ? ` + ${f1(dirty)} dB dirty connector` : '') });
@@ -1730,6 +1733,15 @@ const MODEL = (() => {
         alarms.unshift({ sev: 'bad', text: `Rx power ${f1(prx)} dBm is far below the ${f1(mode.rxMin)} dBm sensitivity. Add gain before the receiver or remove loss: the hop table shows where the power goes.`, fix: fx }); }
       return switchIfBetter(res);
     }
+    // Two reflectors with gain between them make a double-reflected copy: its power relative to the signal is -RL1 - RL2 + 2 x (net gain between them).
+    // Fiber loss between them shrinks it; an amplifier between them grows it, and at 0 dB or more the pair is a laser cavity.
+    let worstRefl = null;
+    for (let a = 0; a < refl.length; a++) for (let b = a + 1; b < refl.length; b++) {
+      const x = -refl[a].rl - refl[b].rl + 2 * (refl[b].lvl - refl[a].lvl); mpi += lin(x);
+      if (!worstRefl || x > worstRefl.x) worstRefl = { x, a: refl[a].name, b: refl[b].name };
+    }
+    res.reflection = worstRefl;
+    if (worstRefl && worstRefl.x > -30 && !eol && !rv && !W) alarms.push({ sev: worstRefl.x > -15 ? 'bad' : 'warn', text: `Reflections between ${worstRefl.a} and ${worstRefl.b}: the double-reflected copy is ${f1(worstRefl.x)} dB below the signal${worstRefl.x > -15 ? ', close enough to an amplifier lasing or a service-killing ripple' : ', which adds multipath noise'}. Clean the dirty connector, use an APC polish (65 dB return loss) or cut the gain between them.` });
     const snrAse = (P / Pase) * PHY_.BREF / Rs, snrNli = Pnli > 0 ? P / Pnli : Infinity;
     const snrRx = lin(prx - mode.rxMin + 25), snrTrx = lin(mode.snrTrx);
     const line = 1 / (1 / snrAse + 1 / snrNli + 1 / snrRx + mpi);

@@ -2150,3 +2150,23 @@ test('degPorts is sanitised: junk and non-positive values are dropped, loss is c
   mb.p.degPorts = { 3: 2, '-1': 5, 200: 1, x: 2, 4: 0, 5: true, 6: 99 };
   assert.deepEqual(M.sanitize(clone(S)).nodes.find(n => n.name === 'MUX-B').p.degPorts, { 3: 2, 6: 30 });
 });
+
+test('connector reflections: two reflectors with an amplifier between them make multipath noise, an APC polish cures it', () => {
+  const S = M.sanitize(build('odf')), A = S.nodes.find(n => n.name === 'ODF-A'), B = S.nodes.find(n => n.name === 'ODF-B');
+  const fiber = S.links.find(l => l.kind === 'fiber' && ((l.a === A.id && l.b === B.id) || (l.a === B.id && l.b === A.id)));
+  const r0 = M.simulate(S);
+  assert.ok(r0.reflection && r0.reflection.x < -60, 'clean UPC connectors across a lossy span: negligible');
+  assert.ok(!r0.alarms.some(a => /Reflections between/.test(a.text)));
+  assert.equal(M.sanitize({ ...clone(S), nodes: S.nodes.map(n => n === A ? { ...n, p: { ...n.p, rl: 'x' } } : n) }).nodes.find(n => n.name === 'ODF-A').p.rl, 50);
+  A.p.rl = 25; B.p.rl = 25; A.p.dirty = { 1: 1 }; B.p.dirty = { 1: 1 };
+  fiber.p.len = 1;
+  M.applyFix(S, { type: 'insertAmp', id: fiber.id });
+  const amp = S.nodes[S.nodes.length - 1]; amp.p.ctl = 'gain'; amp.p.gain = 15; amp.p.gmax = 30;
+  const bad = M.simulate(S), x = bad.reflection.x;
+  assert.ok(x > -30, 'an amplifier with gain between two poor connectors lifts the double reflection: ' + x);
+  assert.ok(bad.alarms.some(a => /Reflections between/.test(a.text)));
+  A.p.rl = 65; B.p.rl = 65; A.p.dirty = {}; B.p.dirty = {};
+  const good = M.simulate(S);
+  assert.ok(good.gosnr > bad.gosnr, 'the multipath noise costs OSNR');
+  assert.ok(good.reflection.x < x - 40 && !good.alarms.some(a => /Reflections between/.test(a.text)));
+});
