@@ -10,11 +10,11 @@ const MODEL = (() => {
     trx: { label: 'Transponder', hint: 'Coherent pluggable, or a 10G DWDM SFP+', maxLinks: 2, def: () => ({ mode: 'zr400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '', prot: '', conv: '' }) },
     mxp: { label: 'Muxponder', hint: 'Client ports into one coherent line port', maxLinks: 2, def: () => ({ mode: 'zrp400', tx: null, spare: '', slot: null, rxSlot: null, off: 0, peer: '', prot: '', conv: '', clients: defaultClients() }) },
     meter: { label: 'Power meter', hint: 'Reads the light at a test point', maxLinks: 1, def: () => ({}) },
-    otdr: { label: 'OTDR', hint: 'Traces a fibre: loss, events, breaks', maxLinks: 1, def: () => ({ pulse: 100 }) },
+    otdr: { label: 'OTDR', hint: 'Traces a fiber: loss, events, breaks', maxLinks: 1, def: () => ({ pulse: 100 }) },
     host: { label: 'Host / router', hint: 'Traffic endpoint with Ethernet ports', maxLinks: 8, def: () => ({ ip: '', ports: 1, speed: 100 }) },
     splitter: { label: 'Splitter / tap', hint: 'Passive power splitter, 50/50 up to a 99/1 monitor tap', maxLinks: 3, def: () => ({ ratio: '50/50', excess: 0.3 }) },
     switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, switchMs: 20 }) },
-    panel: { label: 'Patch panel / ODF', hint: 'Fibre panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, dirty: {} }) },
+    panel: { label: 'Patch panel / ODF', hint: 'Fiber panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, dirty: {} }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24, bidi: false, role: 'low' }) },
     oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, osc: false, p1310: false, o1310: '10g-lr', bidi: false, eRole: 'low', wRole: 'high' }) },
     edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pinMax: 10, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
@@ -206,7 +206,7 @@ const MODEL = (() => {
         const o2 = N('oadm', 'OADM-2', 770, 300, { ...sd, p1310: true }), ac = N('edfa', 'AMP-C', 910, 300, { gmin: 5 });
         const o3 = N('oadm', 'OADM-3', 1050, 300, { ...sd, p1310: true });
         // TRX-A to TRX-Z is the service in slot 32, passing all three OADMs. Each OADM has the supervisory channel (1510 nm) on, so the amplifiers and the OADMs form one
-        // management domain, each span with its own budget. OADM-1 and OADM-2 also have a 1310 nm port with a 10GBASE-LR client over 15 km of fibre and a patch panel
+        // management domain, each span with its own budget. OADM-1 and OADM-2 also have a 1310 nm port with a 10GBASE-LR client over 15 km of fiber and a patch panel
         // port with a dirty connector (little margin left). The amplifier between OADM-2 and OADM-3 regenerates the OSC but blocks the 1310 nm client.
         return { nodes: [ta, tz, ma, mz, ba, o1, od, o2, ac, o3], links: [L(ta, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, o1, 'fiber', { len: 20 }), L(o1, od, 'fiber', { len: 8 }), L(od, o2, 'fiber', { len: 7 }),
           L(o2, ac, 'fiber', { len: 40 }), L(ac, o3, 'fiber', { len: 40 }), L(o3, mz, 'patch'), L(mz, tz, 'patch', { mport: 7 })], g: { nch: 8, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
@@ -234,10 +234,10 @@ const MODEL = (() => {
       }
     },
     bidi: {
-      name: 'Single-fibre (BiDi) bus: OADM between two muxes', build() {
+      name: 'Single-fiber (BiDi) bus: OADM between two muxes', build() {
         const T = (nm, x, y) => N('trx', nm, x, y, { mode: 'dwdm10f' });
         const a = [1, 2].map(k => T('TRX-A' + k, 60, 110 + k * 110)), b = [T('TRX-B1', 520, 470), T('TRX-B2', 640, 470), T('TRX-B3', 820, 470)], z = T('TRX-Z1', 1260, 330);
-        // One fibre carries both directions, so the two ends of every channel use different slots: the A end the low band, the far end the high band.
+        // One fiber carries both directions, so the two ends of every channel use different slots: the A end the low band, the far end the high band.
         const ma = N('mux', 'MUX-A', 260, 300, { bidi: true, role: 'low', ports: 2, first: 24 }), mz = N('mux', 'MUX-Z', 1120, 300, { bidi: true, role: 'high', ports: 1, first: 30 });
         const ob = N('oadm', 'OADM-B', 690, 300, { bidi: true, sides: 'ew', wFirst: 24, wPorts: 2, wRole: 'high', eFirst: 30, ePorts: 1, eRole: 'low' });
         const links = [...a.map((t, k) => L(t, ma, 'patch', { mport: k })), L(ma, ob, 'fiber', { len: 25, single: true, sb: 'w' }), L(b[0], ob, 'patch', { mport: 0, sb: 'w' }), L(b[1], ob, 'patch', { mport: 1, sb: 'w' }), L(b[2], ob, 'patch', { mport: 0, sb: 'e' }),
@@ -250,8 +250,8 @@ const MODEL = (() => {
         const ta = N('trx', 'TRX-A', 50, 200, { mode: 'zrp400' }), tz = N('trx', 'TRX-Z', 1370, 200, { mode: 'zrp400' });
         const ma = N('mux', 'MUX-A', 180, 280), ba = N('edfa', 'BST-A', 310, 280, { gmin: 5 }), tap = N('splitter', 'TAP-A', 440, 280, { ratio: '99/1' }), spl = N('splitter', 'SPL-A', 570, 280, { ratio: '50/50' });
         const sw = N('switch', 'SW-Z', 900, 280), pz = N('edfa', 'PRE-Z', 1030, 280, { gmin: 5 }), mz = N('mux', 'MUX-Z', 1190, 280);
-        // The booster feeds a 99/1 tap (its monitor port is left free to read the power) and a 50/50 splitter that lights both fibres. The switch at the far end
-        // passes port A (60 km) and, being set to auto, goes to port B (80 km) if the light on A is lost. Cut the 60 km fibre, then set the switch to manual.
+        // The booster feeds a 99/1 tap (its monitor port is left free to read the power) and a 50/50 splitter that lights both fibers. The switch at the far end
+        // passes port A (60 km) and, being set to auto, goes to port B (80 km) if the light on A is lost. Cut the 60 km fiber, then set the switch to manual.
         const links = [L(ta, ma, 'patch'), L(ma, ba, 'patch'), L(ba, tap, 'patch', { sb: 'c' }), L(tap, spl, 'patch', { sa: 'a', sb: 'c' }), L(spl, sw, 'fiber', { len: 60, sa: 'a', sb: 'a' }), L(spl, sw, 'fiber', { len: 80, sa: 'b', sb: 'b' }), L(sw, pz, 'patch', { sa: 'c' }), L(pz, mz, 'patch'), L(mz, tz, 'patch')];
         return { nodes: [ta, tz, ma, ba, tap, spl, sw, pz, mz], links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
       }
@@ -261,7 +261,7 @@ const MODEL = (() => {
         const ta = N('trx', 'TRX-A', 50, 200, { mode: 'zrp400' }), tz = N('trx', 'TRX-Z', 1230, 200, { mode: 'zrp400' });
         const ma = N('mux', 'MUX-A', 180, 280), ba = N('edfa', 'BST-A', 310, 280, { gmin: 5 }), oa = N('panel', 'ODF-A', 460, 280, { ports: 12 });
         const ob = N('panel', 'ODF-B', 820, 280, { ports: 12, dirty: { 1: 1.8 } }), pb = N('edfa', 'PRE-B', 960, 280, { gmin: 5 }), mb = N('mux', 'MUX-B', 1090, 280);
-        // The booster is patched to the front of ODF-A port 1; the fibre runs from the rear of that port to the rear of ODF-B port 1; the pre-amp hangs off its front.
+        // The booster is patched to the front of ODF-A port 1; the fiber runs from the rear of that port to the rear of ODF-B port 1; the pre-amp hangs off its front.
         // Every mated connector pair costs 0.5 dB, and the connector on ODF-B port 1 is dirty: 1.8 dB more. Clean it in the inspector (Dirty connectors).
         const links = [L(ta, ma, 'patch'), L(ma, ba, 'patch'), L(ba, oa, 'patch', { sb: 'f1' }), L(oa, ob, 'fiber', { len: 60, sa: 'r1', sb: 'r1' }), L(ob, pb, 'patch', { sa: 'f1' }), L(pb, mb, 'patch'), L(mb, tz, 'patch')];
         return { nodes: [ta, tz, ma, ba, oa, ob, pb, mb], links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
@@ -480,7 +480,7 @@ const MODEL = (() => {
         if ((inst(A0) || inst(B0)) && !((inst(A0) && test(B0)) || (inst(B0) && test(A0)))) continue; // an instrument plugs into a patch panel, splitter or switch port and nothing else
         if ((inst(A0) || inst(B0)) && links.some(q => [q.a, q.b].some(id => id === (inst(A0) ? A0 : B0).id))) continue; }
       if (!['both', 'ab', 'ba'].includes(p.dir)) p.dir = 'both';
-      p.ramanFull = p.ramanFull === true; p.single = kind === 'fiber' && p.single === true; // one fibre carrying both directions
+      p.ramanFull = p.ramanFull === true; p.single = kind === 'fiber' && p.single === true; // one fiber carrying both directions
       p.srlg = typeof p.srlg === 'string' && /^[\w-]{0,24}$/.test(p.srlg) ? p.srlg : '';
       if (kind === 'fiber') for (const k of ['extraRev', 'ramanRev']) if (!(p[k] === '' || (Number.isFinite(+p[k]) && p[k] !== null && +p[k] >= 0))) p[k] = '';
       if (kind === 'fiber') { if (!['back', 'fwd', 'both'].includes(p.ramanDir)) p.ramanDir = 'back'; p.ramanPumps = Math.min(3, Math.max(1, Math.round(+p.ramanPumps || 1))); }
@@ -545,8 +545,8 @@ const MODEL = (() => {
   // ---------- instruments: power meter and OTDR ----------
   // Both plug into a test point: a port of a patch panel (the rear or front of a numbered port), a port of a splitter (the tap) or of a switch.
   // The power meter reads the C-band service light at that port against a range of -50 to +10 dBm: below the floor it reads LOW, above the top OVER,
-  // which is what happens when you plug a meter into a booster's output. The OTDR launches a pulse at 1625 nm through the test point and traces the fibre:
-  // it sees fibre loss, connector and splitter events, breaks and the end of the fibre, until its dynamic range runs out.
+  // which is what happens when you plug a meter into a booster's output. The OTDR launches a pulse at 1625 nm through the test point and traces the fiber:
+  // it sees fiber loss, connector and splitter events, breaks and the end of the fiber, until its dynamic range runs out.
   const OTDR_PULSES = [10, 30, 100, 300, 1000, 3000];
   const OTDR_DR = { 10: 12, 30: 16, 100: 22, 300: 27, 1000: 32, 3000: 36 }; // dynamic range in dB of one-way loss, by pulse width (ns): representative
   const METER = { min: -50, max: 10 };
@@ -599,13 +599,13 @@ const MODEL = (() => {
       } else { ev('end', n.name, 0, -30, `${(TYPES[n.type] || {}).label || n.type} does not pass 1625 nm light`); return finish(`the pulse is reflected at ${n.name}, which does not pass 1625 nm light`), out; }
       if (far()) { ev('noise', 'noise floor', 0, -90, `the trace sinks into the noise (dynamic range ${DR} dB): use a longer pulse`); return finish('the trace sinks into the noise: use a longer pulse'), out; }
       const nx = S.links.find(x => x !== prev && (x.a === cur || x.b === cur) && sideOf(x, cur) === outSide && !['meter', 'otdr'].includes((node(x.a === cur ? x.b : x.a) || {}).type));
-      if (!nx) { ev('end', 'end of fibre', 0, -14, `nothing is cabled to ${n.name} ${outSide.toUpperCase()}: an open connector reflects`); return finish(`nothing is cabled to ${n.name} ${outSide.toUpperCase()}`), out; }
+      if (!nx) { ev('end', 'end of fiber', 0, -14, `nothing is cabled to ${n.name} ${outSide.toUpperCase()}: an open connector reflects`); return finish(`nothing is cabled to ${n.name} ${outSide.toUpperCase()}`), out; }
       const nid = nx.a === cur ? nx.b : nx.a;
       if (nx.kind === 'fiber') {
         const len = +nx.p.len || 0, a = (PHY_.FIBERS[nx.p.fiber] || PHY_.FIBERS.smf).att * att1625;
         if (isCut(S, nx)) {
           const at = nx.p.cutAt !== '' && Number.isFinite(+nx.p.cutAt) ? Math.min(len, +nx.p.cutAt) : len / 2, d = nx.a === cur ? at : len - at;
-          km += d; loss += a * d; out.points.push({ km, db: -loss }); ev('break', `fibre ${node(nx.a).name}–${node(nx.b).name}`, 0, -14, `a break ${f1(d)} km into the span`); return finish(`the fibre is cut ${f1(d)} km into ${node(nx.a).name}–${node(nx.b).name}`), out;
+          km += d; loss += a * d; out.points.push({ km, db: -loss }); ev('break', `fiber ${node(nx.a).name}–${node(nx.b).name}`, 0, -14, `a break ${f1(d)} km into the span`); return finish(`the fiber is cut ${f1(d)} km into ${node(nx.a).name}–${node(nx.b).name}`), out;
         }
         const room = DR - 1.5 - loss; // loss the trace can still take before it sinks into the noise
         if (a * len > room) { const d = Math.max(0, room / a); km += d; loss += a * d; out.points.push({ km, db: -loss }); ev('noise', 'noise floor', 0, -90, `the trace sinks into the noise (dynamic range ${DR} dB): use a longer pulse`); return finish('the trace sinks into the noise: use a longer pulse'), out; }
@@ -623,7 +623,7 @@ const MODEL = (() => {
   }
 
   // ---------- 1310 nm ports and the 1510 nm supervisory channel ----------
-  // An OADM's 1310 nm port carries a legacy grey client optic. That light bypasses the C-band filters, so it only sees fibre (about 0.35 dB/km), patch
+  // An OADM's 1310 nm port carries a legacy grey client optic. That light bypasses the C-band filters, so it only sees fiber (about 0.35 dB/km), patch
   // panel ports and the couplers of the OADMs at both ends; amplifiers, ROADMs, muxes and every other active or filtered device block it.
   // The optical supervisory channel (OSC) is different: it sits at 1510 nm, outside the C band, and every amplifier and ROADM on the line has a filter that
   // drops it, regenerates it and adds it again, so it is judged span by span and the chain of sites carries management traffic end to end. Passive muxes,
@@ -639,7 +639,7 @@ const MODEL = (() => {
         if (l0.kind !== 'fiber' || (l0.a !== a.id && l0.b !== a.id)) continue;
         let l = l0, cur = a.id, km = 0, extra = P1310_LOSS, why = '', hops = [a.name], b = null;
         for (let guard = 0; guard < 40; guard++) {
-          if (isCut(S, l)) { why = `the fibre ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; break; }
+          if (isCut(S, l)) { why = `the fiber ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; break; }
           km += l.kind === 'fiber' ? +l.p.len : 0;
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid); hops.push(n.name);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
@@ -672,7 +672,7 @@ const MODEL = (() => {
     return { links: out };
   }
   // The supervisory channel: sites are the OADMs with the OSC enabled plus every amplifier and ROADM on the line (they all regenerate it). A span runs between two
-  // neighbouring sites over fibre and patch panel ports; anything else on the way blocks it. Each span has its own budget; spans that are up join the sites into a domain.
+  // neighbouring sites over fiber and patch panel ports; anything else on the way blocks it. Each span has its own budget; spans that are up join the sites into a domain.
   function oscSpans(S) {
     const { node, link } = mkGraph(S), enabled = S.nodes.filter(n => n.type === 'oadm' && n.p.osc);
     if (!enabled.length) return null;
@@ -683,7 +683,7 @@ const MODEL = (() => {
         if (l0.kind !== 'fiber' && l0.kind !== 'patch' || (l0.a !== a.id && l0.b !== a.id)) continue;
         let l = l0, cur = a.id, km = 0, extra = 2 * OSC.filter, why = '', b = null;
         for (let guard = 0; guard < 40; guard++) {
-          if (isCut(S, l)) { why = `the fibre ${node(l.a).name}–${node(l.b).name} is cut`; break; }
+          if (isCut(S, l)) { why = `the fiber ${node(l.a).name}–${node(l.b).name} is cut`; break; }
           km += l.kind === 'fiber' ? +l.p.len : 0;
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
@@ -812,7 +812,7 @@ const MODEL = (() => {
     else if (res && res.mode) out.push({ i: -1, slot: null, a, z, ch: { status: res.status, notes: res.status === 'up' ? [] : [res.headline], routeLinks: res.path ? res.path.links : [], routeNodes: res.path ? res.path.nodes : [], qMargin: res.qMargin, rate: res.mode.rate }, mode: res.mode });
     return out;
   }
-  // One-way latency in microseconds along a channel: fibre, any dispersion-compensating fibre, and the two transceivers
+  // One-way latency in microseconds along a channel: fiber, any dispersion-compensating fiber, and the two transceivers
   function latencyUs(S, entry) {
     const { link, node } = mkGraph(S); let us = 0, km = 0;
     for (const id of entry.ch.routeLinks || []) { const l = link(id); if (l && l.kind === 'fiber') { km += +l.p.len; us += +l.p.len * LAT.fiberUsPerKm; } }
@@ -927,7 +927,7 @@ const MODEL = (() => {
       const key = a.m.id + '|' + a.side + '|' + a.port, other = byPort.get(key);
       if (other) { mark(a.t.id, `${a.t.name} is plugged into ${portName(a)}, which ${other.t.name} already uses`); continue; }
       byPort.set(key, a); const pslot = firstOf(a) + a.port;
-      // a BiDi (single-fibre) port passes a pair of slots: the low band and the high band, one for each direction; the role says which is transmit
+      // a BiDi (single-fiber) port passes a pair of slots: the low band and the high band, one for each direction; the role says which is transmit
       a.bidi = isBidi(a);
       if (a.bidi) { const n = capOf(a), role = a.m.type === 'oadm' ? a.m.p[a.side + 'Role'] : a.m.p.role, low = firstOf(a) + a.port, high = firstOf(a) + n + a.port; a.ptx = role === 'low' ? low : high; a.prx = role === 'low' ? high : low; } else a.ptx = a.prx = pslot;
       if (a.port >= capOf(a) || (colored(a) && Math.max(a.ptx, a.prx) >= slotsN)) { mark(a.t.id, `${a.m.name} has no ${dirText(a)}port ${a.port + 1} on this grid (it has ${capOf(a)}${colored(a) ? ` from slot ${firstOf(a) + 1}${a.bidi ? ' in each of its two bands' : ''}, the grid has ${slotsN} slots` : ''})`); continue; }
@@ -956,9 +956,9 @@ const MODEL = (() => {
       }
       if (!best && a.bidi) {
         const twin = ok.find(b => b !== a && b.m !== a.m && b.bidi && b.tx === a.tx), half = ok.find(b => b !== a && b.m !== a.m && b.bidi && b.rx === a.tx);
-        mark(a.t.id, twin ? `${a.t.name} and ${twin.t.name} both transmit on slot ${a.tx + 1}: on a single fibre each end needs its own wavelength (one end on the low band, the other on the high band)`
+        mark(a.t.id, twin ? `${a.t.name} and ${twin.t.name} both transmit on slot ${a.tx + 1}: on a single fiber each end needs its own wavelength (one end on the low band, the other on the high band)`
           : half ? `${a.t.name} transmits slot ${a.tx + 1} and listens on slot ${a.rx + 1}, but ${half.t.name} transmits slot ${half.tx + 1}: each end must transmit the slot the other listens on`
-          : `${a.t.name} has no partner: a single-fibre port transmits slot ${a.tx + 1} and listens on slot ${a.rx + 1}, so the far end has to be a single-fibre port that transmits slot ${a.rx + 1} and listens on slot ${a.tx + 1}`);
+          : `${a.t.name} has no partner: a single-fiber port transmits slot ${a.tx + 1} and listens on slot ${a.rx + 1}, so the far end has to be a single-fiber port that transmits slot ${a.rx + 1} and listens on slot ${a.tx + 1}`);
         continue;
       }
       if (!best && a.t.p.conv && !a.t.p.peer) { mark(a.t.id, `${a.t.name} converts at ${(node(a.t.p.conv) || {}).name}, which puts its partner in a different slot: set \u2018Connect to\u2019 to name the far end`); continue; }
@@ -985,7 +985,7 @@ const MODEL = (() => {
       // a filler runs the service's route, so it has to obey the filters on it: not in a slot an OADM there serves in passing, and in one it serves at the ends
       const rs = route(S, sa, sz, true, { ignoreCut: true }), okFor = (sl, back) => !rs || !oadmWhy(rs.nodes.map(id => node(id)), sl, rs.links.map(id => link(id)), back);
       const free = [...Array(slotsN).keys()].filter(k => !lit.has(k) && okFor(k, null)).sort((x, y) => Math.abs(x - centre) - Math.abs(y - centre) || x - y);
-      for (let k = 0; k < want && free.length >= (single ? 2 : 1); k++) { const sl = free.shift(), back = single ? free.shift() : null; fillers.push({ slot: sl, slotRev: back, mode, off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: sl, prot: '', derived: true, filler: true }); } // on a single fibre a background channel takes a slot each way
+      for (let k = 0; k < want && free.length >= (single ? 2 : 1); k++) { const sl = free.shift(), back = single ? free.shift() : null; fillers.push({ slot: sl, slotRev: back, mode, off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: sl, prot: '', derived: true, filler: true }); } // on a single fiber a background channel takes a slot each way
     }
     const all = [...plan, ...fillers].sort((x, y) => x.slot - y.slot);
     return { plan: all, notes, dark: [...dark].map(([id, why]) => ({ id, name: (node(id) || {}).name, why })), svcWhy, paired: pairs.length, fillers: fillers.length };
@@ -1047,7 +1047,7 @@ const MODEL = (() => {
       const n = Math.max(1, Math.round(+g.nch)), start = Math.floor(Math.max(0, slotsN - n) / 2), mid = Math.floor(n / 2);
       list = Array.from({ length: n }, (_, i) => ({ slot: start + i, mode: svcKey, off: 0, svc: i === mid, from: '', to: '', via: '', lg: i, sec: 0, pc: '', shared: false, hasConv: false, role: 'only' }));
     }
-    return list.map((c, i) => { const sw = rv && c.slotRev != null, slot = sw ? c.slotRev : c.slot, m = PHY_.MODES[c.mode] || PHY_.MODES[svcKey], fTHz = PHY_.slotFreqTHz(slot, df); return { ...c, slot, slotRev: c.slotRev == null ? null : sw ? c.slot : c.slotRev, idx: i, m, mode: PHY_.MODES[c.mode] ? c.mode : svcKey, Rs: m.Rs, fTHz, f: fTHz * 1e12 }; }); // a channel on a single fibre has another slot on the way back
+    return list.map((c, i) => { const sw = rv && c.slotRev != null, slot = sw ? c.slotRev : c.slot, m = PHY_.MODES[c.mode] || PHY_.MODES[svcKey], fTHz = PHY_.slotFreqTHz(slot, df); return { ...c, slot, slotRev: c.slotRev == null ? null : sw ? c.slot : c.slotRev, idx: i, m, mode: PHY_.MODES[c.mode] ? c.mode : svcKey, Rs: m.Rs, fTHz, f: fTHz * 1e12 }; }); // a channel on a single fiber has another slot on the way back
   }
   // Tilt costs the channel that loses power: those in the upper half of the lit band, up to half the (mean) tilt at the top edge.
   function tiltPenaltyFor(chans, i, edgeTilt) {
@@ -1098,7 +1098,7 @@ const MODEL = (() => {
     // A passive OADM: the filter terminates the slots it serves, so those cannot pass, and only they can be added or dropped there.
     chans.forEach((c, k) => { const r = routes0[k]; if (!r || c.svc) return; const w = oadmWhy(r.nodes.map(id => node(id)), c.slot, r.links.map(id => link(id)), c.slotRev); if (w) { routes[k] = null; blocked[k] = true; why[k] = w; } });
     // Wavelength continuity: a slot can carry one channel per fiber. The service has priority, then plan order; a channel that meets a lit slot is blocked.
-    // On a single fibre (both directions in one glass) the two directions of a channel need different slots, and no other channel may use either slot there.
+    // On a single fiber (both directions in one glass) the two directions of a channel need different slots, and no other channel may use either slot there.
     const singles = new Set(S.links.filter(l => l.kind === 'fiber' && l.p.single).map(l => l.id));
     let svcClash = '';
     if (!noBlock) {
@@ -1107,12 +1107,12 @@ const MODEL = (() => {
         const r = routes0[k]; if (!r || dark[k] || blocked[k]) return;
         const c = chans[k], one = r.links.find(id => singles.has(id));
         if (one && both(c)[0] === both(c)[1]) {
-          const w = `slot ${c.slot + 1} is used in both directions on ${linkName(link(one))}, a single fibre: each direction needs its own wavelength`;
+          const w = `slot ${c.slot + 1} is used in both directions on ${linkName(link(one))}, a single fiber: each direction needs its own wavelength`;
           if (c.svc) svcClash = w; else { routes[k] = null; blocked[k] = true; why[k] = w; return; }
         }
         let clash = null;
         const hit = r.links.find(id => slotsOn(c, id).some(x => { const o = used.get(x + '|' + id); if (o != null && chans[o].lg !== c.lg) { clash = x; return true; } return false; })); // the two copies of a 1+1 channel are one signal
-        if (hit) { routes[k] = null; blocked[k] = true; why[k] = `slot ${clash + 1} is already lit on ${linkName(link(hit))} by another channel${singles.has(hit) ? ' (in the other direction too: it is a single fibre)' : ''}`; }
+        if (hit) { routes[k] = null; blocked[k] = true; why[k] = `slot ${clash + 1} is already lit on ${linkName(link(hit))} by another channel${singles.has(hit) ? ' (in the other direction too: it is a single fiber)' : ''}`; }
         else r.links.forEach(id => slotsOn(c, id).forEach(x => used.set(x + '|' + id, k)));
       });
     }

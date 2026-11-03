@@ -1721,7 +1721,7 @@ test('ROADM add/drop ports: peers, degrees and port failures', () => {
 });
 
 const hostPair = (S, a, b) => { const id = n => S.nodes.find(x => x.name === n).id, ia = id(a), ib = id(b); return M.reach(S, M.simulate(S)).find(r => (r.a === ia && r.z === ib) || (r.a === ib && r.z === ia)); };
-test('reachability: hosts on matching muxponder client ports reach each other, with a latency from the fibre', () => {
+test('reachability: hosts on matching muxponder client ports reach each other, with a latency from the fiber', () => {
   const S = M.sanitize(build('reach')), r = hostPair(S, 'HOST-A1', 'HOST-B1');
   assert.equal(r.ok, true); assert.ok(r.steps.every(s => s.ok));
   assert.ok(Math.abs(r.latencyUs - (80 * 4.9 + 20)) < 1e-6, `latency ${r.latencyUs}`); assert.equal(r.rate, 100);
@@ -1777,7 +1777,7 @@ test('reachability: transponders on mux ports carry hosts, and a mistuned transp
 });
 
 const bd = () => M.sanitize(build('bidi'));
-test('single fibre: BiDi ports pair transmit and receive slots, and each direction runs at its own frequency', () => {
+test('single fiber: BiDi ports pair transmit and receive slots, and each direction runs at its own frequency', () => {
   const S = bd(), d = M.derive(S), r = M.simulate(S), nm = id => S.nodes.find(n => n.id === id).name;
   assert.equal(d.paired, 3); assert.equal(d.dark.length, 0);
   assert.deepEqual(d.plan.filter(c => !c.filler).map(c => `${nm(c.from)}>${nm(c.to)} ${c.slot + 1}/${c.slotRev + 1}`).sort(), ['TRX-A1>TRX-B1 25/27', 'TRX-A2>TRX-B2 26/28', 'TRX-B3>TRX-Z1 31/32']);
@@ -1787,9 +1787,9 @@ test('single fibre: BiDi ports pair transmit and receive slots, and each directi
   const ob = S.nodes.find(n => n.name === 'OADM-B'); assert.deepEqual([M.oadmRange(ob, 'w'), M.oadmRange(ob, 'e')], [[24, 28], [30, 32]]);
 });
 
-test('single fibre: both ends on the same band, or a wrong receive slot, is dark and says why', () => {
+test('single fiber: both ends on the same band, or a wrong receive slot, is dark and says why', () => {
   let S = bd(); S.nodes.find(n => n.name === 'MUX-Z').p.role = 'low'; // Z now transmits the same slot as OADM-B's east port
-  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-Z1').why, /both transmit on slot 31.*single fibre.*own wavelength/);
+  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-Z1').why, /both transmit on slot 31.*single fiber.*own wavelength/);
   S = bd(); S.nodes.find(n => n.name === 'TRX-A1').p.rxSlot = 24;
   assert.match(M.derive(S).dark.find(x => x.name === 'TRX-A1').why, /listens on slot 25 but MUX-A port 1 delivers slot 27/);
   S = bd(); S.nodes.find(n => n.name === 'TRX-A2').p.slot = 3;
@@ -1798,23 +1798,23 @@ test('single fibre: both ends on the same band, or a wrong receive slot, is dark
   assert.ok(M.derive(S).dark.some(x => x.name === 'TRX-A1'));
 });
 
-test('single fibre: a channel needs a different slot each way, and no other channel may use either', () => {
+test('single fiber: a channel needs a different slot each way, and no other channel may use either', () => {
   const S = M.sanitize(build('dci')), fib = S.links.find(l => l.kind === 'fiber'); fib.p.single = true;
   S.g.plan = M.planFromUniform(S.g, 'zrp400'); S.g.nch = S.g.plan.length;
-  let r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /single fibre: each direction needs its own wavelength/);
+  let r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /single fiber: each direction needs its own wavelength/);
   const plan = S.g.plan.map((c, i) => ({ ...c, slotRev: c.slot + 20 })); S.g.plan = plan; // another slot each way
   r = M.simulate(S); assert.equal(r.status, 'up', r.headline); assert.ok(r.channels.every(c => c.status === 'up'));
   S.g.plan = [{ ...plan[0], slot: 30, slotRev: 31, svc: true }, { ...plan[1], slot: 31, slotRev: 32, svc: false }]; // 31 is also the first channel's way back
-  r = M.simulate(S); const b = r.channels.find(c => !c.svc); assert.equal(b.status, 'blocked'); assert.match(b.notes[0], /already lit.*single fibre/);
-  fib.p.single = false; r = M.simulate(S); assert.ok(r.channels.every(c => c.status === 'up'), 'on two fibres the directions do not collide');
+  r = M.simulate(S); const b = r.channels.find(c => !c.svc); assert.equal(b.status, 'blocked'); assert.match(b.notes[0], /already lit.*single fiber/);
+  fib.p.single = false; r = M.simulate(S); assert.ok(r.channels.every(c => c.status === 'up'), 'on two fibers the directions do not collide');
 });
 
-test('single fibre: the flags survive sanitize and bad values are dropped', () => {
+test('single fiber: the flags survive sanitize and bad values are dropped', () => {
   const S = build('bidi'); S.nodes.find(n => n.name === 'MUX-A').p.role = 'sideways'; S.nodes.find(n => n.name === 'OADM-B').p.wRole = 5; S.nodes.find(n => n.name === 'TRX-A1').p.rxSlot = 'x';
   S.links.find(l => l.kind === 'patch').p.single = true; S.links.filter(l => l.kind === 'fiber').forEach(l => { l.p.single = 'yes'; });
   const c = M.sanitize(clone(S));
   assert.equal(c.nodes.find(n => n.name === 'MUX-A').p.role, 'low'); assert.equal(c.nodes.find(n => n.name === 'OADM-B').p.wRole, 'high'); assert.equal(c.nodes.find(n => n.name === 'TRX-A1').p.rxSlot, null);
-  assert.ok(c.links.every(l => l.p.single === false), 'only a fibre span can be single, and only if true');
+  assert.ok(c.links.every(l => l.p.single === false), 'only a fiber span can be single, and only if true');
   assert.deepEqual(M.sanitizePlan([{ slot: 3, slotRev: 3 }, { slot: 5, slotRev: 9 }, { slot: 7, slotRev: 'x' }], 75).map(x => x.slotRev), [null, 9, null]);
 });
 
@@ -1830,7 +1830,7 @@ test('splitter and switch: the service takes the selected branch, losing the spl
 
 test('optical switch: auto-switching moves to the other branch on a cut, manual leaves it dark', () => {
   const S = olp(); fib(S, 60).p.cut = true;
-  let r = M.simulate(S); assert.equal(r.status, 'up'); assert.equal(Math.round(r.km), 80, 'the 80 km fibre now carries it');
+  let r = M.simulate(S); assert.equal(r.status, 'up'); assert.equal(Math.round(r.km), 80, 'the 80 km fiber now carries it');
   assert.ok(r.hops.find(h => h.name === 'SW-Z').note.includes('switched away'));
   S.nodes.find(n => n.name === 'SW-Z').p.auto = false; r = M.simulate(S); assert.equal(r.status, 'los', 'a manual switch stays on its port');
   S.nodes.find(n => n.name === 'SW-Z').p.pos = 'b'; r = M.simulate(S); assert.equal(r.status, 'up'); assert.equal(Math.round(r.km), 80);
@@ -1934,7 +1934,7 @@ test('1310 nm client ports and the 1510 nm supervisory channel', () => {
   assert.deepEqual(O.domains.map(d => d.sort()), [['AMP-C', 'BST-A', 'OADM-1', 'OADM-2', 'OADM-3']]);
   assert.ok(O.links.some(l => l.aName === 'BST-A' && l.status === 'blocked' && /MUX-A/.test(l.why)));
   assert.ok(!r.alarms.some(a => /supervisory/.test(a.text)), 'a healthy OSC raises no alarm');
-  // a dead amplifier breaks the chain; a long span goes down; a cut fibre does too
+  // a dead amplifier breaks the chain; a long span goes down; a cut fiber does too
   const d = clone(S); nm(d, 'AMP-C').p.fail = 'dead'; const rd = M.simulate(d);
   assert.equal(rd.osc.domains.length, 2); assert.ok(rd.alarms.some(a => /2 management domains/.test(a.text)));
   const lg = clone(S); lg.links.find(l => l.kind === 'fiber' && l.p.len === 40).p.len = 120; const rl = M.simulate(lg);
@@ -1974,7 +1974,7 @@ test('OTDR and power meter at a patch panel', () => {
   const S = M.sanitize(build('otdr')), nm = (X, n) => X.nodes.find(x => x.name === n), ot = nm(S, 'OTDR-1');
   let t = M.otdrTrace(S, ot.id), att = PHY.FIBERS.smf.att * 1.1;
   assert.match(t.endWhy, /PRE-B/); assert.ok(Math.abs(t.endKm - 60.003) < 1e-6);
-  // 0.5 dB at ODF-A, 60 km of fibre at 1625 nm, 1 dB joint, ODF-B 0.5 + 1.8 dirty, the patch cord 0.5
+  // 0.5 dB at ODF-A, 60 km of fiber at 1625 nm, 1 dB joint, ODF-B 0.5 + 1.8 dirty, the patch cord 0.5
   assert.ok(Math.abs(t.loss - (0.5 + 60 * att + 1 + 0.5 + 1.8 + 0.5)) < 1e-6, 'the trace adds up the events and the slope');
   assert.ok(t.events.some(e => /ODF-B port 1/.test(e.name) && e.refl === -30), 'the dirty connector reflects more');
   assert.ok(t.events.filter(e => /merged/.test(e.note || '')).length >= 1, 'close events merge inside the dead zone at 300 ns');
