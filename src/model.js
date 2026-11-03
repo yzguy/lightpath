@@ -1781,6 +1781,7 @@ const MODEL = (() => {
       res.segments = res.segments.map((c, i) => c || { idx: i, lg: chans[i].lg, role: chans[i].role, slot: chans[i].slot, fTHz: chans[i].fTHz, modeKey: chans[i].mode, short: chans[i].m.short, rate: chans[i].m.rate, svc: chans[i].svc, off: chans[i].off, prx: null, osnr: null, gosnr: null, ber: null, q: null, qMargin: null, xpmPen: 0,
         status: mesh.blocked[i] ? 'blocked' : mesh.dark[i] ? 'standby' : mesh.routes[i] || mesh.cutOff[i] ? 'los' : 'nopath', notes: [mesh.blocked[i] ? mesh.why[i] : mesh.dark[i] ? 'shared protection: dark until the working route fails' : mesh.routes[i] || mesh.cutOff[i] ? 'the route crosses a cut fiber or a failed device' : mesh.why[i] || 'no route between its add and drop nodes'], from: chans[i].from, to: chans[i].to, via: chans[i].via, route: [], routeLinks: [], routeNodes: [], partial: true });
       res.channels = logicalChannels(g.plan, chans, res.segments);
+      { const qs = res.channels.filter(c => (c.status === 'up' || c.status === 'degraded') && Number.isFinite(c.qMargin)).map(c => c.qMargin); if (qs.length) res.worstChannelQ = Math.min(...qs); } // the worst lit channel in the plan, as the Channels table shows it
       // Shared protection is dark, so its margin is predicted by failing the first fiber of the working route and reading the protection copy.
       if (!opts.predict && !opts.single && mesh.dark.some(Boolean)) {
         const isFiber = id => (link(id) || {}).kind === 'fiber', groups = new Map();

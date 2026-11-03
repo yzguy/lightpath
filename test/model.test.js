@@ -2055,3 +2055,11 @@ test('alarms offer a one-tap remedy as plain data: splice, set back to Working, 
   const ring = M.sanitize(build('ring')), r0 = M.simulate(ring), cutL = ring.links.filter(l => l.kind === 'fiber').find(l => r0.path.links.includes(l.id)); cutL.p.cut = true;
   r = M.simulate(ring); assert.equal(r.headlineFix.type, 'splice'); assert.equal(r.headlineFix.id, cutL.id); assert.match(r.headlineFix.label, /restore the original route/);
 });
+
+test('worst channel margin is the worst lit channel in the plan, as the Channels table shows it', () => {
+  const S = M.sanitize(build('mix')), r = M.simulate(S);
+  const table = Math.min(...r.channels.filter(c => (c.status === 'up' || c.status === 'degraded') && Number.isFinite(c.qMargin)).map(c => c.qMargin));
+  assert.ok(Math.abs(r.worstChannelQ - table) < 1e-9);
+  assert.ok(r.worstQMargin > r.worstChannelQ + 3, 'the SRS-tilt edge slot of the service mode is a different (higher) number in a mixed line');
+  const u = M.sanitize(build('dci')); assert.equal(M.simulate(u).worstChannelQ, undefined, 'a uniform line has no plan; the tilt-edge slot is the worst channel');
+});

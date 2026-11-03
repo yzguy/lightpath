@@ -48,6 +48,7 @@ const snapshot = () => { const { view, ...rest } = S; return JSON.stringify(rest
 function checkpoint() { hist.last = 0; hist.seal = true; }
 function remember() {
   const j = snapshot(); if (hist.stack[hist.i] === j) return;
+  { const t = $('#toast'); if (!restoring && t && !t.hidden && t.querySelector('.toast-act')) t.hidden = true; } // an Undo offered for an earlier action must not outlive a later change: it would revert the wrong step
   const now = Date.now(), burst = hist.i >= 1 && hist.i === hist.stack.length - 1 && now - hist.last < 500;
   hist.stack.length = hist.i + 1; // a new change ends the redo branch
   if (burst) hist.stack[hist.i] = j; else { hist.stack.push(j); hist.i++; }
@@ -630,7 +631,7 @@ function renderInspectorBody() {
     const seenHints = new Set(), once = (k, t) => (seenHints.has(k) ? undefined : (seenHints.add(k), t)); // the same help text for the cable's two ends is shown once
     // the type, the name and the main actions stay at the top of the panel while its fields scroll
     const head = el('div', { class: 'insp-head' }, [el('h2', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('p', { class: 'muted', text: linkName(l) }),
-      el('div', { class: 'row' }, [el('button', { class: 'btn ' + (l.p.cut ? '' : 'danger'), text: l.p.cut ? 'Splice it back' : l.kind === 'fiber' ? 'Cut this fiber' : 'Cut this cable', onclick: () => { l.p.cut = !l.p.cut; renderAll(); } }), el('button', { class: 'btn quiet', text: 'Delete cable', onclick: del })])]);
+      el('div', { class: 'row' }, [el('button', { class: 'btn ' + (l.p.cut ? '' : 'danger'), text: l.p.cut ? 'Splice it back' : l.kind === 'fiber' ? 'Cut this fiber' : 'Cut this cable', onclick: () => { l.p.cut = !l.p.cut; checkpoint(); renderAll(); toast(`${l.p.cut ? 'Cut' : 'Spliced'} ${linkName(l)}`, { label: 'Undo', fn: undo }); } }), el('button', { class: 'btn quiet', text: 'Delete cable', onclick: del })])]);
     box.append(head);
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
     if (l.p.dir == null) l.p.dir = 'both';
@@ -831,7 +832,7 @@ function renderResults() {
   if (r.ber != null) {
     k.append(kg('Margins'), tile('Q margin', sg(r.qMargin), ' dB', 'margin', (r.qMargin < 0 || lastRes.status === 'down' || lastRes.status === 'los' ? 'bad' : r.qMargin < 1 || lastRes.status === 'degraded' ? 'warn' : 'good') + ' lead core'),
       tile('OSNR margin', sg(r.osnrMargin), ' dB', 'margin', lvl(r.osnrMargin, 2)), tile('Q margin, end of life', sg(r.eol.qMargin), ' dB', 'aging', lvl(r.eol.qMargin, 1)),
-      tile('Q margin, worst channel', sg(r.worstQMargin), ' dB', 'srs', lvl(r.worstQMargin, 1)));
+      tile(r.worstChannelQ != null ? 'Q margin, worst channel' : 'Q margin, worst slot', sg(r.worstChannelQ ?? r.worstQMargin), ' dB', 'srs', lvl(r.worstChannelQ ?? r.worstQMargin, 1)));
   }
   k.append(kg('Signal'), tile('Rx power', isFinite(r.prx) ? f1(r.prx) : 'LOS', isFinite(r.prx) ? ' dBm' : '', 'rx', prxCls + ' core'));
   if (r.ber != null) {
