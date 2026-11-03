@@ -172,6 +172,8 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .kpi.bad .kv { color: var(--bad) }
 #alarms:empty, #diag:empty { display: none }
 #diag > div { padding: 8px 10px; border-radius: 5px; font-size: 13px; background: var(--raised); border: 1px solid var(--line) }
+.kgroup { grid-column: 1 / -1; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin-top: 4px } .kgroup:first-child { margin-top: 0 }
+.tabsep { align-self: stretch; width: 1px; margin: 8px 6px; background: var(--line); flex: none }
 .kpi.lead { grid-column: span 2 } .kpi.lead .kv { font-size: 22px }
 #alarms { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px }
 #alarms li { padding: 7px 10px; border-radius: 5px; font-size: 13px; background: var(--raised); border: 1px solid var(--line); border-left: 3px solid var(--muted) }
@@ -344,14 +346,17 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <button class="tab" data-tab="clients" role="tab">Clients</button>
     <button class="tab" data-tab="plan" role="tab">Channels</button>
     <button class="tab" data-tab="reach" role="tab">Reachability</button>
+    <span class="tabsep" role="presentation"></span>
     <button class="tab" data-tab="otdr" role="tab">OTDR</button>
     <button class="tab" data-tab="spectrum" role="tab">Spectrum</button>
     <button class="tab" data-tab="const" role="tab">Constellation</button>
+    <span class="tabsep" role="presentation"></span>
     <button class="tab" data-tab="planner" role="tab">Planner</button>
     <button class="tab" data-tab="sweep" role="tab">Launch sweep</button>
     <button class="tab" data-tab="raman" role="tab">Raman</button>
     <button class="tab" data-tab="resil" role="tab">Resilience</button>
     <button class="tab" data-tab="trans" role="tab">Transients</button>
+    <span class="tabsep" role="presentation"></span>
     <button class="tab" data-tab="learn" role="tab">Learn</button>
   </div>
   <div id="tabbody"></div>

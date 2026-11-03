@@ -763,19 +763,19 @@ function renderResults() {
   if (!r.mode) { $('#tabbody').innerHTML = ''; $('#alarms').innerHTML = ''; renderTabBody(); return; }
   const m = r.mode;
   const prxCls = !isFinite(r.prx) ? 'bad' : r.prx < m.rxMin || r.prx > m.rxMax ? 'warn' : '';
-  // the margin decides the result, so it leads and is wider than the rest; the rest are the evidence for it
-  if (r.ber != null) k.append(tile('Q margin', (r.qMargin > 0 ? '+' : '') + f1(r.qMargin), ' dB', 'margin', (r.qMargin < 0 || lastRes.status === 'down' || lastRes.status === 'los' ? 'bad' : r.qMargin < 1 || lastRes.status === 'degraded' ? 'warn' : 'good') + ' lead'));
-  k.append(tile('Rx power', isFinite(r.prx) ? f1(r.prx) : 'LOS', ' dBm', 'rx', prxCls));
+  // The numbers come in three short groups: the margins (the verdict, led by Q margin), the signal that reaches the receiver, and the line it crossed
+  const kg = t => el('span', { class: 'kgroup', text: t }), sg = v => (v > 0 ? '+' : '') + f1(v), lvl = (v, warnBelow) => (v < 0 ? 'bad' : v < warnBelow ? 'warn' : '');
   if (r.ber != null) {
-    k.append(tile('OSNR', f1(r.osnr), ' dB', 'osnr'), tile('GSNR (w/ NLI)', f1(r.gosnr), ' dB', 'gsnr'),
+    k.append(kg('Margins'), tile('Q margin', sg(r.qMargin), ' dB', 'margin', (r.qMargin < 0 || lastRes.status === 'down' || lastRes.status === 'los' ? 'bad' : r.qMargin < 1 || lastRes.status === 'degraded' ? 'warn' : 'good') + ' lead'),
+      tile('OSNR margin', sg(r.osnrMargin), ' dB', 'margin', lvl(r.osnrMargin, 2)), tile('Q margin, end of life', sg(r.eol.qMargin), ' dB', 'aging', lvl(r.eol.qMargin, 1)),
+      tile('Q margin, worst channel', sg(r.worstQMargin), ' dB', 'srs', lvl(r.worstQMargin, 1)));
+  }
+  k.append(kg('Signal'), tile('Rx power', isFinite(r.prx) ? f1(r.prx) : 'LOS', ' dBm', 'rx', prxCls));
+  if (r.ber != null) {
+    k.append(tile('OSNR', f1(r.osnr), ' dB', 'osnr'), tile('GSNR (w/ NLI)', f1(r.gosnr), ' dB', 'gsnr'), tile('Q-factor', f1(r.q), ' dB', 'q'),
       tile('Pre-FEC BER', r.ber < 1e-15 ? '<1e-15' : r.ber.toExponential(1), '', 'ber', r.ber > m.berThr ? 'bad' : ''),
-      tile('Q-factor', f1(r.q), ' dB', 'q'),
-      tile('OSNR margin', (r.osnrMargin > 0 ? '+' : '') + f1(r.osnrMargin), ' dB', 'margin', r.osnrMargin < 0 ? 'bad' : r.osnrMargin < 2 ? 'warn' : ''),
-      tile('Q margin, end of life', (r.eol.qMargin > 0 ? '+' : '') + f1(r.eol.qMargin), ' dB', 'aging', r.eol.qMargin < 0 ? 'bad' : r.eol.qMargin < 1 ? 'warn' : ''),
-      tile('Q margin, worst channel', (r.worstQMargin > 0 ? '+' : '') + f1(r.worstQMargin), ' dB', 'srs', r.worstQMargin < 0 ? 'bad' : r.worstQMargin < 1 ? 'warn' : ''),
-      tile('SRS tilt (peak)', f1(r.tilt), ' dB', 'srs'),
-      ...(m.coh === false ? [tile('XPM penalty', f1(r.xpmPen), ' dB', 'xpm', r.xpmPen > 1.5 ? 'warn' : '')] : []),
-      tile('CD', Math.round(r.cd).toLocaleString(), ' ps/nm', 'cd', Math.abs(r.cd) > m.cdTol ? 'bad' : ''), tile('Mean DGD', f1(r.dgd), ' ps', 'pmd'), tile('Distance', Math.round(r.km), ' km', 'span'));
+      kg('Line'), tile('Distance', Math.round(r.km), ' km', 'span'), tile('CD', Math.round(r.cd).toLocaleString(), ' ps/nm', 'cd', Math.abs(r.cd) > m.cdTol ? 'bad' : ''), tile('Mean DGD', f1(r.dgd), ' ps', 'pmd'),
+      tile('SRS tilt (peak)', f1(r.tilt), ' dB', 'srs'), ...(m.coh === false ? [tile('XPM penalty', f1(r.xpmPen), ' dB', 'xpm', r.xpmPen > 1.5 ? 'warn' : '')] : []));
   }
   const al = $('#alarms'); al.innerHTML = '';
   // the headline already says the first problem in full: do not repeat it in the list
