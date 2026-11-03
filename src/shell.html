@@ -102,8 +102,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .node .pport { fill: var(--muted); opacity: .7 }
 .node .pport.dirty { fill: var(--warn); opacity: 1 }
 .node.faulty .body { stroke: var(--warn); stroke-width: 2.5 }
-.node .faultbadge { fill: var(--warn); stroke: var(--panel); stroke-width: 1.5 }
-.node .faultmark { fill: var(--panel); font: 800 11px var(--f-ui); pointer-events: none }
+.faultg .faultbadge { fill: var(--warn); stroke: var(--panel); stroke-width: 1.5 } .faultg.bad .faultbadge { fill: var(--bad) } .faultg .faultx { fill: none; stroke: var(--panel); stroke-width: 2; stroke-linecap: round }
+.faultg .faultmark { fill: var(--panel); font: 800 11px var(--f-ui); pointer-events: none }
 .reachtbl tr { cursor: pointer }
 .steps { margin: 6px 0 0; padding-left: 0; list-style: none; font-size: 13px }
 .steps li { padding: 3px 0 3px 22px; position: relative }

@@ -2063,3 +2063,24 @@ test('worst channel margin is the worst lit channel in the plan, as the Channels
   assert.ok(r.worstQMargin > r.worstChannelQ + 3, 'the SRS-tilt edge slot of the service mode is a different (higher) number in a mixed line');
   const u = M.sanitize(build('dci')); assert.equal(M.simulate(u).worstChannelQ, undefined, 'a uniform line has no plan; the tilt-edge slot is the worst channel');
 });
+
+test('a remedy can be carried out on the lab: splice, work, clean and an amplifier in a too-long span', () => {
+  const nm = (X, n) => X.nodes.find(x => x.name === n);
+  // the first link a student builds: two transponders on an 80 km fiber is LOS, and the remedy is an amplifier halfway
+  const a = { id: 'na', type: 'trx', name: 'TRX-1', x: 100, y: 200, p: M.TYPES.trx.def() }, z = { id: 'nz', type: 'trx', name: 'TRX-2', x: 500, y: 200, p: M.TYPES.trx.def() };
+  const S = M.sanitize({ nodes: [a, z], links: [{ id: 'l1', a: 'na', b: 'nz', kind: 'fiber', p: M.linkDefaults('fiber') }], g: { nch: 1, df: 75, launch: 0 }, svc: { a: 'na', z: 'nz' } });
+  let r = M.simulate(S); assert.equal(r.status, 'los'); assert.deepEqual(r.headlineFix, { type: 'insertAmp', id: 'l1', label: 'Add an amplifier halfway along TRX-1–TRX-2' });
+  assert.ok(r.alarms.find(x => x.fix && x.fix.type === 'insertAmp'));
+  assert.match(M.applyFix(S, r.headlineFix), /^Added AMP-1 halfway along TRX-1–TRX-2$/);
+  assert.equal(S.nodes.length, 3); assert.deepEqual(S.links.map(l => +l.p.len), [40, 40], 'the span is split in two halves'); assert.equal(nm(S, 'AMP-1').x, 300);
+  r = M.simulate(S); assert.equal(r.status, 'up'); assert.ok(!r.headlineFix, 'nothing more to offer once it works');
+  // the other remedies change the lab and say what they did, and do nothing once they no longer apply
+  const lh = M.sanitize(build('lh')), fib = lh.links.filter(l => l.kind === 'fiber')[2]; fib.p.cut = true;
+  assert.equal(M.applyFix(lh, { type: 'splice', id: fib.id }), 'Spliced the fiber back'); assert.equal(fib.p.cut, false); assert.equal(M.applyFix(lh, { type: 'splice', id: fib.id }), '');
+  const ila = nm(lh, 'ILA-2'); ila.p.fail = 'dead'; assert.match(M.applyFix(lh, { type: 'work', id: ila.id }), /ILA-2 is working again/); assert.equal(ila.p.fail, '');
+  const odf = M.sanitize(build('odf')), pn = nm(odf, 'ODF-B'); assert.match(M.applyFix(odf, { type: 'clean', id: pn.id, port: 1 }), /Cleaned ODF-B port 1/); assert.equal(pn.p.dirty[1], undefined);
+  assert.equal(M.applyFix(lh, null), ''); assert.equal(M.applyFix(lh, { type: 'insertAmp', id: 'nope' }), '');
+  // a receiver below its sensitivity spec but not lost also offers the amplifier
+  const long = M.sanitize({ nodes: [a, z], links: [{ id: 'l1', a: 'na', b: 'nz', kind: 'fiber', p: { ...M.linkDefaults('fiber'), len: 52 } }], g: { nch: 1, df: 75, launch: 0 }, svc: { a: 'na', z: 'nz' } });
+  const rl = M.simulate(long); if (rl.status !== 'los') assert.ok(rl.alarms.some(x => /Rx LOW/.test(x.text) && x.fix && x.fix.type === 'insertAmp'));
+});

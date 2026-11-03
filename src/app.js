@@ -96,7 +96,7 @@ function applyView() {
   const k = S.view.k;
   gRoot.setAttribute('transform', `scale(${k}) translate(${-S.view.x},${-S.view.y})`);
   gRoot.style.setProperty('--lf1', floorScale(11, k * 11.5)); gRoot.style.setProperty('--lf2', floorScale(9, k * 11)); gRoot.style.setProperty('--lf3', floorScale(9, k * 10));
-  gRoot.querySelectorAll('.faultg').forEach(g => g.setAttribute('transform', `translate(40,-16) scale(${floorScale(9, k * 8)})`));
+  gRoot.querySelectorAll('.faultg').forEach(g => g.setAttribute('transform', `translate(${g.dataset.x},${g.dataset.y}) scale(${floorScale(9, k * 8)})`));
 }
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
 
@@ -109,6 +109,17 @@ function refreshHostFaults() {
 }
 const slotLbl = k => 'slot ' + (k + 1) + ' (CH' + PHY.slotChannel(k, +S.g.df * 1e9).ch + ')'; // a slot in a label or message: its number and its ITU channel
 const chText = (slot, short) => { const c = PHY.slotChannel(slot, +S.g.df * 1e9); return short ? `CH${c.ch} · ${c.fTHz.toFixed(2)}` : c.text; }; // a slot as its ITU channel, with the frequency and wavelength beside it
+// A fault badge at the top right of a device, drawn beside it (not inside) so the device's own styling cannot fade it: a red cross for a failed device, an amber
+// exclamation mark for a degraded one, a dirty connector or a host whose traffic is stuck. It keeps its size on screen when zoomed out.
+function faultBadge(n, body) {
+  const kind = n.p && n.p.fail === 'dead' ? 'bad' : (n.p && n.p.fail === 'degraded') || panelDirty(n) || hostFaults.has(n.id) ? 'warn' : null; if (!kind) return null;
+  const bb = body.getBBox(), g = sv('g', { class: 'faultg ' + kind, 'data-x': n.x + bb.x + bb.width, 'data-y': n.y + bb.y, 'pointer-events': 'none' });
+  g.setAttribute('transform', `translate(${g.dataset.x},${g.dataset.y}) scale(${floorScale(9, S.view.k * 8)})`);
+  g.append(sv('circle', { cx: 0, cy: 0, r: 8, class: 'faultbadge' }));
+  if (kind === 'bad') g.append(sv('path', { d: 'M-3.2,-3.2 L3.2,3.2 M3.2,-3.2 L-3.2,3.2', class: 'faultx' }));
+  else { const t = sv('text', { x: 0, y: 3.8, class: 'faultmark', 'text-anchor': 'middle' }); t.textContent = '!'; g.append(t); }
+  return g;
+}
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 function nodeShape(n) {
   const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === n.id ? 'true' : 'false',
@@ -133,7 +144,6 @@ function nodeShape(n) {
     g.append(sv('rect', { x: -40, y: -16, width: 80, height: 32, rx: 3, class: 'body' }));
     const t = sv('text', { x: -34, y: -4, class: 'glyph small' }); t.textContent = `ODF ${n.p.ports}`; g.append(t);
     const k = Math.min(12, n.p.ports); for (let i = 0; i < k; i++) g.append(sv('rect', { x: -34 + i * (68 / k), y: 3, width: Math.max(3, 68 / k - 2), height: 8, rx: 1, class: 'pport' + (n.p.dirty && n.p.dirty[i + 1] ? ' dirty' : '') }));
-    if (panelDirty(n)) { const fg = sv('g', { class: 'faultg', transform: `translate(40,-16) scale(${floorScale(9, S.view.k * 8)})` }); fg.append(sv('circle', { cx: 0, cy: 0, r: 8, class: 'faultbadge' })); const b = sv('text', { x: 0, y: 3.5, class: 'faultmark', 'text-anchor': 'middle' }); b.textContent = '!'; fg.append(b); g.append(fg); } // a dirty connector you can see at any zoom
   } else if (n.type === 'splitter') {
     g.append(sv('rect', { x: -34, y: -20, width: 68, height: 40, rx: 4, class: 'body' }));
     g.append(sv('path', { d: 'M-28,0 L-6,0 M-6,0 L26,-10 M-6,0 L26,10', class: 'thin' }));
@@ -236,8 +246,10 @@ function renderCanvas() {
       for (const n of [a, b]) if ((n.type === 'oadm' || n.type === 'roadm') && !(pl && pl.m.id === n.id) && sideOf(l, n)) labelAt(n, n === a ? b : a, n.type === 'roadm' ? 'D' + sideOf(l, n) : SIDE[sideOf(l, n)]); }
     lg.append(g);
   }
-  for (const n of S.nodes) { const sh = nodeShape(n); if (hiNodes.has(n.id)) sh.classList.add('chnode'); ng.append(sh); }
+  const badged = []; // fault badges need the devices in the document to be measured, so they are added after
+  for (const n of S.nodes) { const sh = nodeShape(n); if (hiNodes.has(n.id)) sh.classList.add('chnode'); ng.append(sh); badged.push([n, sh]); }
   gRoot.append(lg, og, ng);
+  for (const [n, sh] of badged) { const fb = faultBadge(n, sh.querySelector('.body') || sh.querySelector('path, circle, rect') || sh); if (fb) ng.append(fb); }
   const rb = sv('line', { id: 'rubber', class: 'rubber', x1: 0, y1: 0, x2: 0, y2: 0, visibility: 'hidden' });
   gRoot.append(rb);
   applyView();
@@ -798,11 +810,7 @@ function tile(label, val, unit, topic, cls = '') {
 // A remedy offered by an alarm: plain data from the model (splice a cable, set a device back to Working, clean a patch panel port)
 function applyFix(f) {
   if (!f) return;
-  let what = '';
-  if (f.type === 'splice') { const l = link(f.id); if (l) { l.p.cut = false; what = 'Spliced the fiber back'; } }
-  else if (f.type === 'work') { const n = node(f.id); if (n) { n.p.fail = ''; what = `${n.name} is working again`; } }
-  else if (f.type === 'clean') { const n = node(f.id); if (n && n.p.dirty) { delete n.p.dirty[f.port]; what = `Cleaned ${n.name} port ${f.port}`; } }
-  if (!what) return;
+  const what = MODEL.applyFix(S, f); if (!what) return;
   checkpoint(); renderAll(); toast(what, { label: 'Undo', fn: undo });
 }
 const sameFix = (a, b) => !!a && !!b && a.type === b.type && a.id === b.id && a.port === b.port;

@@ -1008,7 +1008,28 @@ const MODEL = (() => {
   // An alarm can carry a `fix` the UI offers as a button: plain data (what to change), applied by the app, so the model stays DOM-free.
   const fixSplice = (l, label = 'Splice it back') => ({ type: 'splice', id: l.id, label });
   const fixWork = n => ({ type: 'work', id: n.id, label: `Set ${n.name} back to Working` });
+  // where an amplifier helps most: the longest fiber span on the route
+  const ampSpot = (S, path) => (path ? path.links.map(id => S.links.find(l => l.id === id)).filter(l => l && l.kind === 'fiber').sort((a, b) => +b.p.len - +a.p.len)[0] : null);
+  const fixAmp = (S, l) => ({ type: 'insertAmp', id: l.id, label: `Add an amplifier halfway along ${S.nodes.find(n => n.id === l.a).name}–${S.nodes.find(n => n.id === l.b).name}` });
   const fixClean = (n, port) => ({ type: 'clean', id: n.id, port, label: `Clean ${n.name} port ${port}` });
+
+  // Carry out a remedy on S (in place); returns a sentence saying what was done, or '' if it no longer applies.
+  function applyFix(S, f) {
+    if (!f) return '';
+    const link = id => S.links.find(l => l.id === id), node = id => S.nodes.find(n => n.id === id);
+    if (f.type === 'splice') { const l = link(f.id); if (l && l.p.cut) { l.p.cut = false; return 'Spliced the fiber back'; } }
+    else if (f.type === 'work') { const n = node(f.id); if (n && n.p.fail) { n.p.fail = ''; return `${n.name} is working again`; } }
+    else if (f.type === 'clean') { const n = node(f.id); if (n && n.p.dirty && n.p.dirty[f.port] != null) { delete n.p.dirty[f.port]; return `Cleaned ${n.name} port ${f.port}`; } }
+    else if (f.type === 'insertAmp') { // split a fiber span in two with an amplifier in the middle
+      const l = link(f.id), a = l && node(l.a), b = l && node(l.b); if (!l || l.kind !== 'fiber' || !a || !b) return '';
+      let name = `${PREFIX.edfa}-${S.nodes.filter(n => n.type === 'edfa').length + 1}`; while (S.nodes.some(n => n.name === name)) name += "'";
+      const amp = { id: uid('n'), type: 'edfa', name, x: Math.round((a.x + b.x) / 20) * 10, y: Math.round((a.y + b.y) / 20) * 10, p: TYPES.edfa.def() }, half = +(+l.p.len / 2).toFixed(2);
+      const tail = { id: uid('l'), a: amp.id, b: b.id, kind: 'fiber', p: { ...l.p, len: half, sa: '', sb: l.p.sb ?? '', cut: false } };
+      l.b = amp.id; l.p = { ...l.p, len: half, sb: '' }; S.nodes.push(amp); S.links.push(tail);
+      return `Added ${name} halfway along ${a.name}–${b.name}`;
+    }
+    return '';
+  }
 
   // ---------- simulation ----------
   const reqCache = {};
@@ -1673,7 +1694,8 @@ const MODEL = (() => {
     const prx = db(P * 1000); res.prx = prx;
     if (prx < mode.rxMin - 12 && !W) {
       res.status = 'los'; res.headline = `LOS at ${Z.name}: ${f1(prx)} dBm is below what the receiver can detect.`;
-      alarms.unshift({ sev: 'bad', text: `Rx power ${f1(prx)} dBm is far below the ${f1(mode.rxMin)} dBm sensitivity. Add gain before the receiver or remove loss: the hop table shows where the power goes.` });
+      { const sp = ampSpot(S, path), fx = sp && !W ? fixAmp(S, sp) : null; if (fx) res.headlineFix = fx;
+        alarms.unshift({ sev: 'bad', text: `Rx power ${f1(prx)} dBm is far below the ${f1(mode.rxMin)} dBm sensitivity. Add gain before the receiver or remove loss: the hop table shows where the power goes.`, fix: fx }); }
       return switchIfBetter(res);
     }
     const snrAse = (P / Pase) * PHY_.BREF / Rs, snrNli = Pnli > 0 ? P / Pnli : Infinity;
@@ -1832,7 +1854,7 @@ const MODEL = (() => {
     if (ber > mode.berThr) bad.push(`Pre-FEC BER ${ber.toExponential(2)} is above the ${mode.fec} limit ${mode.berThr.toExponential(2)}: uncorrectable errors, link down.`);
     bad.push(...clientFatal);
     bad.forEach(t => alarms.unshift({ sev: 'bad', text: t }));
-    if (prx < mode.rxMin) alarms.push({ sev: 'warn', text: `Rx power ${f1(prx)} dBm is below the ${mode.rxMin} dBm sensitivity spec (Rx LOW alarm). Receiver noise is now eating SNR.` });
+    if (prx < mode.rxMin) { const sp = ampSpot(S, path); alarms.push({ sev: 'warn', text: `Rx power ${f1(prx)} dBm is below the ${mode.rxMin} dBm sensitivity spec (Rx LOW alarm). Receiver noise is now eating SNR.`, fix: sp && !W ? fixAmp(S, sp) : null }); }
     if (prx > mode.rxMax) alarms.push({ sev: prx > mode.rxMax + 5 ? 'bad' : 'warn', text: `Rx power ${f1(prx)} dBm is above the ${mode.rxMax} dBm overload point (Rx HIGH alarm). Add a pad.` });
     if (res.dgd > mode.dgdTol * 0.7) alarms.push({ sev: 'warn', text: `Mean DGD ${f1(res.dgd)} ps is close to or over the ${mode.dgdTol} ps PMD tolerance.` });
     const slots = PHY_.cBandSlots(df);
@@ -1883,6 +1905,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, applyFix, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;
