@@ -174,6 +174,11 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .kpi.bad .kv { color: var(--bad) }
 #alarms:empty, #diag:empty { display: none }
 #diag > div { padding: 8px 10px; border-radius: 5px; font-size: 13px; background: var(--raised); border: 1px solid var(--line) }
+.labset { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center }
+.labset > summary { display: none; cursor: pointer; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); align-items: center; min-height: 44px; list-style: none }
+.labset > summary::-webkit-details-marker { display: none }
+.labset > summary::before { content: '+'; display: inline-block; width: 18px; font-family: var(--f-mono); font-weight: 700 }
+.labset[open] > summary::before { content: '\2212' }
 .kgroup { grid-column: 1 / -1; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin-top: 4px } .kgroup:first-child { margin-top: 0 }
 .tabsep { align-self: stretch; width: 1px; margin: 8px 6px; background: var(--line); flex: none }
 .kpi.lead { grid-column: span 2 } .kpi.lead .kv { font-size: 22px }
@@ -240,6 +245,19 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 
 #toast .toast-act { background: none; border: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; padding: 4px 2px; cursor: pointer }
 #toast .toast-act:focus-visible { outline: 2px solid currentColor; outline-offset: 2px }
+#statusbar { display: none }
+@media (max-width: 900px) {
+  /* a status strip stays at the bottom of the screen, so the result of what you just did is in view wherever you are on the page */
+  #statusbar { display: flex; align-items: center; gap: 10px; position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; min-height: 52px; padding: 6px max(12px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px)); background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -4px 12px rgba(0,0,0,.08); font: inherit; color: inherit; text-align: left; width: 100%; cursor: pointer }
+  #statusbar .status { flex: none }
+  #statusbar .sbtext { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }
+  #statusbar .sbgo { flex: none; font-size: 12px; color: var(--muted) }
+  body { padding-bottom: 70px }
+  body #toast { bottom: calc(66px + env(safe-area-inset-bottom, 0px)) } /* above the status strip */
+  .kpis:not(.all) > .kgroup:nth-of-type(n+2), .kpis:not(.all) > .kgroup:nth-of-type(n+2) ~ .kpi { display: none } /* the margins are the verdict; the rest is one tap away */
+  .morekpi { display: inline-flex !important }
+}
+.morekpi { display: none; justify-self: start }
 #toast { display: flex; align-items: center; gap: 12px; width: max-content; position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 20; max-width: calc(100% - 32px) }
 #io { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 30; padding: 16px }
 #io .panel { width: min(640px, 100%); padding: 14px; display: grid; gap: 10px }
@@ -262,10 +280,12 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   .paldet h2 { width: 100% }
   .pal-item { flex: 1 1 140px }
   .tools { grid-template-columns: repeat(3, 1fr); width: 100% }
-  .canvaswrap { height: 56vh; min-height: 360px }
+  .canvaswrap { height: 46vh; min-height: 300px }
   .canvaswrap { order: -2 } .insp { order: -1 } /* canvas first, then the inspector, then the palette */
   .globals { margin-left: 0; width: 100%; gap: 4px 14px }
-  .globals .g:nth-child(-n+2), .globals .g:last-child { flex: 1 1 100% } /* the lab, channels and launch take a row each; the grid sits alone, never wider than the screen */
+  .globals > .g { flex: 1 1 100% }
+  .labset { width: 100%; flex-direction: column; align-items: stretch; gap: 4px } .labset > summary { display: flex } /* the three line settings are one row until opened */
+  .labset .g { width: 100% }
   .g { min-width: 0; max-width: 100% }
   .g select { flex: 1 1 auto; min-width: 0 }
   .g input[type=range] { flex: 1 1 60px; width: auto; min-width: 60px }
@@ -288,9 +308,11 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div class="globals">
     <label class="g" for="preset">Lab
       <select id="preset"><option value="">Load a scenario…</option><optgroup label="Point-to-point links"><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="dark">Dark fiber: unamplified ZR</option><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="mix">Mixed line: 10G beside 400G</option></optgroup><optgroup label="Clients and traffic"><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="mxp2">Two muxponders per side on passive muxes</option><option value="reach">Hosts reaching each other over a muxponder link</option></optgroup><optgroup label="ROADMs and mesh"><option value="mesh">Mesh: channels on different routes</option><option value="adddrop">ROADM line with add/drop at the middle node</option><option value="roadmports">ROADM ring with transponders on add/drop ports</option></optgroup><optgroup label="Restoration and protection"><option value="ring">ROADM triangle with restoration</option><option value="srlg">Shared duct: two fibers that fail together</option><option value="protect">Protection and converters on a triangle</option><option value="client">Dual-homed transponders with spare modules</option><option value="olp">Optical line protection: splitter, tap and switch</option><option value="cabprot">Protection and a converter on cabled channels</option></optgroup><optgroup label="Passive optics and cabling"><option value="oadm">Passive OADM bus: transponders on add/drop ports</option><option value="ports">Transponders on mux ports: the cabling sets the channels</option><option value="bidi">Single-fiber (BiDi) bus: OADM between two muxes</option><option value="osc">Supervisory channel (1510 nm) and 1310 nm client ports</option><option value="odf">Patch panels: connector loss and a dirty port</option><option value="otdr">OTDR and power meter at a patch panel</option></optgroup></select></label>
+    <details class="labset" id="labset" open><summary id="labsum">Line settings</summary>
     <label class="g" for="g-nch" title="How many channels are lit in each fiber. Affects amplifier power sharing and nonlinearity.">Channels <input type="range" id="g-nch" min="1" max="96" step="1"><output id="g-nch-v"></output></label>
     <label class="g" for="g-df">Grid <select id="g-df"><option value="50">50 GHz</option><option value="75">75 GHz</option><option value="100">100 GHz</option><option value="150">150 GHz</option></select></label>
     <label class="g" for="g-launch" title="Per-channel output target for every amplifier in Auto mode">Launch <input type="range" id="g-launch" min="-6" max="6" step="0.5"><output id="g-launch-v"></output><span style="text-transform:none">dBm/ch</span></label>
+    </details>
   </div>
 </header>
 
@@ -364,6 +386,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div id="tabbody"></div>
 </section>
 
+<button id="statusbar" type="button" aria-label="Service status. Jump to the results"><span class="status" id="sb-status"></span><span class="sbtext" id="sb-text"></span><span class="sbgo" aria-hidden="true">Details ↓</span></button>
 <div id="toast" role="status" aria-live="polite" hidden></div>
 <div id="sr-live" class="sr-only" role="status" aria-live="polite"></div>
 <div id="io" hidden><div class="panel"><h2>Export / import topology</h2><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" aria-label="Topology JSON" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div>

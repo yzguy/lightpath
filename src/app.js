@@ -435,7 +435,7 @@ function selIn(obj, key, opts) {
   const s = el('select', { id: 'f-' + key }); for (const [v, t] of opts) s.append(el('option', { value: v, text: t }));
   s.value = String(obj[key]); s.addEventListener('change', () => { obj[key] = s.value === 'true' ? true : s.value === 'false' ? false : s.value; renderAll(); }); return s;
 }
-let assumeOpen, inspKey;
+let assumeOpen, inspKey, kpiAll = false;
 const narrow = window.matchMedia('(max-width: 900px)');
 // a new selection opens at the top (type, name, actions); an edit to the same selection keeps the scroll position
 function renderInspector() {
@@ -719,6 +719,7 @@ function specRow(k, v) { return el('div', {}, [el('span', { text: k }), el('b', 
 function bindGlobals() {
   const nch = $('#g-nch'), df = $('#g-df'), la = $('#g-launch');
   nch.value = S.g.nch; df.value = S.g.df; la.value = S.g.launch;
+  $('#labsum').textContent = `Line settings · ${S.g.nch} ch · ${S.g.df} GHz · ${S.g.launch > 0 ? '+' : ''}${S.g.launch} dBm`;
   $('#g-nch-v').textContent = S.g.nch; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch;
 }
 $('#g-nch').addEventListener('input', e => { if (S.g.plan) { S.g.plan = null; toast('Channel plan reset to a uniform line'); } S.g.nch = +e.target.value; $('#g-nch-v').textContent = S.g.nch; renderAll(); });
@@ -726,7 +727,7 @@ $('#g-df').addEventListener('change', e => { const old = +S.g.df; S.g.df = +e.ta
 $('#g-launch').addEventListener('input', e => { S.g.launch = +e.target.value; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch; recompute(); });
 $('#preset').addEventListener('change', e => { if (e.target.value) applyPreset(e.target.value); else syncLab(); });
 $('#btn-fit').addEventListener('click', () => { fitView(); applyView(); });
-{ const pd = $('#paldet'), sync = () => { pd.open = !narrow.matches; }; sync(); narrow.addEventListener('change', sync); } // the palette is one tap away on a phone, open on a wide screen
+{ const pd = $('#paldet'), ls = $('#labset'), sync = () => { pd.open = !narrow.matches; ls.open = !narrow.matches; }; sync(); narrow.addEventListener('change', sync); $('#statusbar').addEventListener('click', () => $('#results').scrollIntoView({ block: 'start' })); } // the palette is one tap away on a phone, open on a wide screen
 $('#btn-undo').addEventListener('click', undo); $('#btn-redo').addEventListener('click', redo);
 $('#btn-clear').addEventListener('click', () => {
   const b = $('#btn-clear');
@@ -775,6 +776,7 @@ function renderResults() {
   }
   $('#status').className = 'status s-' + lastRes.status; $('#status').textContent = STATUS[lastRes.status];
   $('#headline').textContent = lastRes.headline;
+  $('#sb-status').className = 'status s-' + lastRes.status; $('#sb-status').textContent = STATUS[lastRes.status]; $('#sb-text').textContent = lastRes.headline;
   { const msg = `${STATUS[lastRes.status]}. ${lastRes.headline}`; if (msg !== srLast) { srLast = msg; $('#sr-live').textContent = msg; } } // announced only when it changes
   const k = $('#kpis'); k.innerHTML = ''; $('#diag').innerHTML = '';
   if (!r.mode) { $('#tabbody').innerHTML = ''; $('#alarms').innerHTML = ''; renderTabBody(); return; }
@@ -794,6 +796,8 @@ function renderResults() {
       kg('Line'), tile('Distance', Math.round(r.km), ' km', 'span'), tile('CD', Math.round(r.cd).toLocaleString(), ' ps/nm', 'cd', Math.abs(r.cd) > m.cdTol ? 'bad' : ''), tile('Mean DGD', f1(r.dgd), ' ps', 'pmd'),
       tile('SRS tilt (peak)', f1(r.tilt), ' dB', 'srs'), ...(m.coh === false ? [tile('XPM penalty', f1(r.xpmPen), ' dB', 'xpm', r.xpmPen > 1.5 ? 'warn' : '')] : []));
   }
+  if (r.ber != null) k.append(el('button', { class: 'btn morekpi', text: kpiAll ? 'Fewer readings' : 'More readings', 'aria-expanded': kpiAll ? 'true' : 'false', onclick: () => { kpiAll = !kpiAll; renderResults(); } })); // phone only (hidden by CSS on a wide screen)
+  k.classList.toggle('all', kpiAll);
   const al = $('#alarms'); al.innerHTML = '';
   // the headline already says the first problem in full: do not repeat it in the list
   r.alarms.filter(a => !(lastRes.headline && lastRes.headline.includes(a.text))).slice(0, 6).forEach(a => al.append(el('li', { class: 'al-' + a.sev, text: a.text })));
