@@ -519,7 +519,7 @@ const MODEL = (() => {
     const hostIds = new Set(nodes.filter(n => n.type === 'host').map(n => n.id));
     const flows = (Array.isArray(o.flows) ? o.flows : []).slice(0, 40).map(f => (f && typeof f === 'object' && hostIds.has(f.a) && hostIds.has(f.z) && f.a !== f.z && Number.isFinite(+f.gbps) && f.gbps !== '' && f.gbps !== null && typeof f.gbps !== 'boolean' ? { a: f.a, z: f.z, gbps: Math.min(1600, Math.max(0, +f.gbps)) } : null)).filter(Boolean);
     const demands = (Array.isArray(o.demands) ? o.demands : []).slice(0, 40).map(d => (d && typeof d === 'object' && seen.has(d.a) && seen.has(d.z) && d.a !== d.z && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.a) || {}).type) && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.z) || {}).type)
-      ? { a: d.a, z: d.z, mode: PHY_.MODES[d.mode] ? d.mode : 'zrp400', count: Math.min(96, Math.max(1, Math.round(num(d.count, 1)))), prot: d.prot === '1+1' ? '1+1' : '' } : null)).filter(Boolean);
+      ? { a: d.a, z: d.z, mode: PHY_.MODES[d.mode] ? d.mode : 'zrp400', count: Math.min(96, Math.max(1, Math.round(num(d.count, 1)))), prot: d.prot === '1+1' ? '1+1' : '', target: Number.isFinite(+d.target) && d.target !== '' && d.target !== null && typeof d.target !== 'boolean' && +d.target >= 90 && +d.target < 100 ? +d.target : '' } : null)).filter(Boolean);
     return { nodes, links, g, svc, demands, flows };
   }
 
@@ -1377,11 +1377,26 @@ const MODEL = (() => {
       }
       return null;
     }
+    // availability of one routed demand from the Resilience model (it depends on the route and its protection, not on slots)
+    const availCache = new Map();
+    const availOf = (d, prot, via, convAt) => {
+      const key = [d.a, d.z, prot, via || '', convAt || ''].join('|');
+      if (!availCache.has(key)) {
+        const ent = { slot: 0, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: via || '', conv: convAt || '', slot2: 1, prot: prot || '' };
+        let a = null; try { const r = resilience({ ...S, g: { ...S.g, plan: [ent] } })[0]; a = r && r.kind !== 'no route' ? r.availability : null; } catch (e) { a = null; }
+        availCache.set(key, a);
+      }
+      return availCache.get(key);
+    };
     const results = [], entries = [];
     for (const d of list) {
-      const mode = PHY_.MODES[d.mode] || PHY_.MODES.zrp400, cs = cands(d), out = { a: d.a, z: d.z, mode: d.mode, prot: d.prot === '1+1' };
+      const mode = PHY_.MODES[d.mode] || PHY_.MODES.zrp400, cs = cands(d), tgt = d.target ? +d.target / 100 : 0;
+      // a target availability decides the protection: unprotected if the route already meets it (restoration counts), 1+1 if not
+      let wantProt = d.prot === '1+1', auto = false;
+      if (!wantProt && tgt && cs.length) { const a0 = availOf(d, '', cs[0].via); if (a0 != null && a0 < tgt) { wantProt = true; auto = true; } }
+      const out = { a: d.a, z: d.z, mode: d.mode, prot: wantProt, target: tgt ? +d.target : undefined, autoProt: auto || undefined };
       if (!cs.length) { results.push({ ...out, status: 'no route' }); continue; }
-      const ok = e => Math.abs(e.cd) <= mode.cdTol && e.margin >= minM, wantProt = d.prot === '1+1', freeOn = links => used.findIndex(u => links.every(id => !u.has(id)));
+      const ok = e => Math.abs(e.cd) <= mode.cdTol && e.margin >= minM, freeOn = links => used.findIndex(u => links.every(id => !u.has(id)));
       const nm = id => (node(id) || {}).name;
       let reach = false, placed = null, fallback = null, why = '';
       for (const r of cs) {
@@ -1427,10 +1442,12 @@ const MODEL = (() => {
         entries.push({ slot: conv.s1, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: conv.r.via, conv: conv.at, slot2: conv.s2, prot: '' });
         results.push({ ...out, status: 'placed', converted: nm(conv.at), slot: conv.s1, slot2: conv.s2, km: conv.r.km, hops: conv.r.nodes.length - 1, margin: conv.margin, via: conv.r.via, detour: conv.r !== cs[0], route: route(conv.r) });
       } else results.push({ ...out, status: reach ? 'blocked' : 'unreachable', why: reach ? why : '' });
+      { const last = results[results.length - 1], ent = entries[entries.length - 1];
+        if (tgt && last && last.status === 'placed' && ent) { last.availability = availOf(d, ent.prot, ent.via, ent.conv); last.meetsTarget = last.availability != null && last.availability >= tgt - 1e-12; } }
     }
     const n = k => results.filter(r => r.status === k).length, placed = n('placed'), blocked = n('blocked'), protectedN = results.filter(r => r.status === 'placed' && r.protRoute).length, unprotectedN = results.filter(r => r.unprotected).length, convertedN = results.filter(r => r.converted).length;
     const fibers = [...loads].filter(([id]) => link(id).kind === 'fiber').map(([id, c]) => ({ id, name: `${node(link(id).a).name}–${node(link(id).b).name}`, n: c, util: c / slotsN }));
-    return { entries, results, stats: { demands: results.length, placed, blocked, protected: protectedN, unprotected: unprotectedN, converted: convertedN, unreachable: n('unreachable') + n('no route'), blocking: placed + blocked ? blocked / (placed + blocked) : 0,
+    return { entries, results, stats: { demands: results.length, placed, blocked, protected: protectedN, unprotected: unprotectedN, converted: convertedN, unreachable: n('unreachable') + n('no route'), missed: results.filter(r => r.status === 'placed' && r.target && r.meetsTarget === false).length, autoProt: results.filter(r => r.autoProt && r.protRoute).length, blocking: placed + blocked ? blocked / (placed + blocked) : 0,
       maxUtil: Math.max(0, ...fibers.map(f => f.util)), slotsUsed: used.filter(u => u.size).length, slots: slotsN, fibers, svcSlot } };
   }
   // Blocking probability against offered load: random demands between random pairs of ROADMs (or ends), a fixed seed so it is repeatable.

@@ -2236,3 +2236,18 @@ test('planner: a launch offset rescues a demand that misses the margin at the no
   const plan = M.sanitizePlan([{ ...S.g.plan.find(c => c.svc) }, ...withL.entries], +S.g.df);
   assert.ok(plan.filter(c => !c.svc).every(c => c.off > 0));
 });
+
+test('planner: a target availability decides the protection, and reports a target nothing can reach', () => {
+  const S = M.sanitize(build('mesh')), { ra, rb } = meshIds(S), plan = t => M.planDemands(S, [{ a: ra, z: rb, mode: 'zrp400', count: 1, target: t }]);
+  const none = plan(''), loose = plan(99.9), tight = plan(99.999);
+  assert.equal(none.results[0].availability, undefined, 'no target, no availability computed');
+  assert.ok(loose.results[0].meetsTarget && !loose.results[0].protRoute && loose.entries[0].prot === '', 'restoration already meets 99.9%');
+  assert.ok(loose.results[0].availability > 0.999);
+  assert.equal(tight.results[0].autoProt, true); assert.ok(tight.results[0].protRoute); assert.equal(tight.entries[0].prot, '1+1');
+  assert.equal(tight.stats.autoProt, 1);
+  assert.equal(tight.results[0].meetsTarget, false, 'with these repair times and rates even 1+1 cannot reach 99.999%');
+  assert.equal(tight.stats.missed, 1);
+  assert.ok(tight.results[0].availability >= loose.results[0].availability, 'protection never lowers availability');
+  assert.equal(M.sanitize({ ...clone(S), demands: [{ a: ra, z: rb, mode: 'zrp400', count: 1, target: 99.99 }] }).demands[0].target, 99.99);
+  for (const bad of [50, 100, 'x', true, -1, null]) assert.equal(M.sanitize({ ...clone(S), demands: [{ a: ra, z: rb, mode: 'zrp400', count: 1, target: bad }] }).demands[0].target, '', String(bad));
+});
