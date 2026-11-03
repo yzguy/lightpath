@@ -1567,7 +1567,7 @@ test('a failed port on a passive mux takes down only its own wave', () => {
   mb.p.badPorts = [sv]; // the service's own port: the headline reports it
   const r2 = M.simulate(S);
   assert.equal(r2.status, 'down');
-  assert.match(r2.headline, /port for slot \d+ on MUX-B/);
+  assert.match(r2.headline, /port for slot \d+ \(CH[\d.]+\) on MUX-B/);
 });
 
 test('a failed card takes down its eight ports and nothing else', () => {
@@ -1661,7 +1661,7 @@ test('cabling defines channels: a transponder tuned away from its port is dark, 
   a2.p.slot = 40;
   const d = M.derive(S);
   assert.equal(d.paired, 2);
-  assert.match(d.dark.find(x => x.id === a2.id).why, /tuned to slot 41 but plugged into MUX-A port 4, which passes slot 28/);
+  assert.match(d.dark.find(x => x.id === a2.id).why, /tuned to slot 41 \(CH[\d.]+\) but plugged into MUX-A port 4, which passes slot 28 \(CH[\d.]+\)/);
   assert.ok(d.dark.some(x => x.name === 'TRX-B2' && /no partner/.test(x.why)), 'its far end loses its partner');
   assert.ok(M.simulate(S).alarms.some(a => /tuned to slot 41/.test(a.text)));
   const sv = S.nodes.find(n => n.name === 'TRX-A1'); sv.p.slot = 3; // the service transponder itself
@@ -1717,7 +1717,7 @@ test('ROADM add/drop ports: peers, degrees and port failures', () => {
   const idA = c.nodes.find(n => n.name === 'ROADM-A').id;
   assert.deepEqual(c.links.filter(l => l.kind === 'fiber' && (l.a === idA || l.b === idA)).map(l => (l.a === idA ? l.p.sa : l.p.sb)).sort(), ['1', '2'], 'line cables get degrees 1 and 2');
   S = rp(); S.nodes.find(n => n.name === 'ROADM-C').p.badPorts = [29];
-  const r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /port for slot 30 on ROADM-C/);
+  const r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /port for slot 30 \(CH[\d.]+\) on ROADM-C/);
 });
 
 const hostPair = (S, a, b) => { const id = n => S.nodes.find(x => x.name === n).id, ia = id(a), ib = id(b); return M.reach(S, M.simulate(S)).find(r => (r.a === ia && r.z === ib) || (r.a === ib && r.z === ia)); };
@@ -1791,9 +1791,9 @@ test('single fiber: both ends on the same band, or a wrong receive slot, is dark
   let S = bd(); S.nodes.find(n => n.name === 'MUX-Z').p.role = 'low'; // Z now transmits the same slot as OADM-B's east port
   assert.match(M.derive(S).dark.find(x => x.name === 'TRX-Z1').why, /both transmit on slot 31.*single fiber.*own wavelength/);
   S = bd(); S.nodes.find(n => n.name === 'TRX-A1').p.rxSlot = 24;
-  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-A1').why, /listens on slot 25 but MUX-A port 1 delivers slot 27/);
+  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-A1').why, /listens on slot 25 \(CH[\d.]+\) but MUX-A port 1 delivers slot 27 \(CH[\d.]+\)/);
   S = bd(); S.nodes.find(n => n.name === 'TRX-A2').p.slot = 3;
-  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-A2').why, /tuned to slot 4 but plugged into MUX-A port 2, which transmits slot 26/);
+  assert.match(M.derive(S).dark.find(x => x.name === 'TRX-A2').why, /tuned to slot 4 \(CH[\d.]+\) but plugged into MUX-A port 2, which transmits slot 26 \(CH[\d.]+\)/);
   S = bd(); S.nodes.find(n => n.name === 'MUX-A').p.bidi = false; // one end not BiDi: it cannot pair with a BiDi far end
   assert.ok(M.derive(S).dark.some(x => x.name === 'TRX-A1'));
 });

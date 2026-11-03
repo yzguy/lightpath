@@ -107,6 +107,7 @@ function refreshHostFaults() {
   const R = MODEL.reach(S, lastRes);
   for (const f of S.flows) { const r = R.find(x => (x.a === f.a && x.z === f.z) || (x.a === f.z && x.z === f.a)); if (r && !r.ok) { hostFaults.add(f.a); hostFaults.add(f.z); } }
 }
+const slotLbl = k => 'slot ' + (k + 1) + ' (CH' + PHY.slotChannel(k, +S.g.df * 1e9).ch + ')'; // a slot in a label or message: its number and its ITU channel
 const chText = (slot, short) => { const c = PHY.slotChannel(slot, +S.g.df * 1e9); return short ? `CH${c.ch} · ${c.fTHz.toFixed(2)}` : c.text; }; // a slot as its ITU channel, with the frequency and wavelength beside it
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 function nodeShape(n) {
@@ -350,7 +351,7 @@ const portSlots = (m, k, side) => { // the transmit and receive slot of a BiDi (
   if (m.type === 'roadm' || !m.p.bidi) return null; const first = sideRange(m, side)[0], n = portCount(m, side), role = m.type === 'oadm' ? m.p[side + 'Role'] : m.p.role, lo = first + k, hi = first + n + k;
   return role === 'low' ? { tx: lo, rx: hi } : { tx: hi, rx: lo };
 };
-const portSlotText = (m, k, side) => { const b = portSlots(m, k, side), lab = side ? sideLabel(m, side) + ' port' : 'Port'; if (b) return `${lab} ${k + 1} · transmit slot ${b.tx + 1} · receive slot ${b.rx + 1}`; return `${lab} ${k + 1}` + (colorless(m) ? ' · any slot' : ` · slot ${sideRange(m, side)[0] + k + 1} · ${PHY.slotFreqTHz(sideRange(m, side)[0] + k, +S.g.df * 1e9).toFixed(2)} THz`); };
+const portSlotText = (m, k, side) => { const b = portSlots(m, k, side), lab = side ? sideLabel(m, side) + ' port' : 'Port'; if (b) return `${lab} ${k + 1} · transmit ${slotLbl(b.tx)} · receive ${slotLbl(b.rx)}`; return `${lab} ${k + 1}` + (colorless(m) ? ' · any slot' : ` · slot ${sideRange(m, side)[0] + k + 1} · ${chText(sideRange(m, side)[0] + k)}`); };
 // a slot number box that shows slots from 1 (the model counts from 0)
 function slotBox(obj, key, id) { const i = el('input', { type: 'number', step: 1, min: 1, max: 64, value: (Math.round(+obj[key]) || 0) + 1, id }); i.addEventListener('input', () => { if (i.value !== '' && isFinite(+i.value)) { obj[key] = Math.min(63, Math.max(0, Math.round(+i.value) - 1)); recompute(); } }); return i; }
 function connect(a, b, kind) {
@@ -1002,7 +1003,7 @@ function resilView() {
   tbl.append(el('thead', {}, [th]));
   const tb = el('tbody');
   rs.forEach((x, i) => {
-    const c = plan ? plan[i] : null, name = c ? `Slot ${c.slot + 1}${c.conv ? ' → ' + (c.slot2 + 1) : ''}${c.svc ? ' (service)' : ''}` : 'Service';
+    const c = plan ? plan[i] : null, name = c ? `Slot ${c.slot + 1} (CH${PHY.slotChannel(c.slot, +S.g.df * 1e9).ch})${c.conv ? ' → ' + (c.slot2 + 1) : ''}${c.svc ? ' (service)' : ''}` : 'Service';
     const nines = x.availability > 0 && x.availability < 1 ? -Math.log10(1 - x.availability) : x.availability >= 1 ? Infinity : 0;
     tb.append(el('tr', { class: x.svc ? 'selrow' : '', title: x.note || '' }, [name, x.kind, x.km ? Math.round(x.km) : '', x.protKm ? Math.round(x.protKm) : '', x.failures ? x.failures.toFixed(2) : '', x.kind === 'no route' ? '' : fmtDur(x.outageSec), fmtDur(x.downSec),
       `${(100 * x.availability).toFixed(x.availability > 0.99999 ? 6 : 4)} % (${isFinite(nines) ? nines.toFixed(1) : '∞'} nines)`].map(v => el('td', { text: String(v) }))));
@@ -1171,7 +1172,7 @@ function spectrumView(r) {
       const m = PHY.MODES[c.modeKey], fc = c.fTHz, half = Math.min(m.Rs, df * 0.98) / 2e12;
       const sk = lvl(c) + (hi > lo && h.tilt ? h.tilt * (0.5 - (c.slot - lo) / (hi - lo)) : 0);
       const rect = sv('rect', { x: X(fc - half), y: Y(sk), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sk)), class: c.svc ? 'sp-me' : m.coh === false ? 'sp-nrz' : 'sp-ch' });
-      const tt = sv('title', {}); tt.textContent = `Slot ${c.slot + 1}: ${m.short}, ${fc.toFixed(2)} THz`; rect.append(tt); s.append(rect);
+      const tt = sv('title', {}); tt.textContent = `Slot ${c.slot + 1} (CH${PHY.slotChannel(c.slot, +r.g.df * 1e9).ch}): ${m.short}, ${fc.toFixed(2)} THz`; rect.append(tt); s.append(rect);
     }
   } else {
     // lit block centred in the band; the service channel sits in its middle
@@ -1330,10 +1331,10 @@ function derivedPlanView(r, D) {
   const tb = el('tbody');
   D.plan.forEach((c, i) => {
     const o = res[i], m = PHY.MODES[c.mode], fromN = c.filler ? 'background' : (node(c.from) || {}).name || '', toN = c.filler ? '' : (node(c.to) || {}).name || '';
-    const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, class: 'slotin', 'aria-label': `Power offset for slot ${c.slot + 1}`, disabled: !!c.filler });
+    const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, class: 'slotin', 'aria-label': `Power offset for ${slotLbl(c.slot)}`, disabled: !!c.filler });
     off.addEventListener('change', () => { const t = node(c.tx); if (t && isFinite(+off.value)) { t.p.off = Math.max(-10, Math.min(10, +off.value)); renderAll(); } });
     tb.append(el('tr', { class: (c.svc ? 'selrow' : '') + (hiChan === c ? ' hirow' : ''), onclick: ev => { if (ev.target.closest('select,input,button')) return; hiChan = hiChan === c ? null : c; renderCanvas(); renderTabBody(); } },
-      [String(c.slot + 1) + (c.slotRev != null ? ` / ${c.slotRev + 1}` : ''), chText(c.slot, true), m.short, fromN, toN, c.filler ? '' : [c.prot === '1+1' ? '1+1' : c.prot === 'shared' ? '1:N' : '', c.conv ? `convert at ${(node(c.conv) || {}).name}, slot ${c.slot + 1} → ${c.slot2 + 1}` : ''].filter(Boolean).join(', '), c.filler ? '' : off,
+      [String(c.slot + 1) + (c.slotRev != null ? ` / ${c.slotRev + 1}` : ''), chText(c.slot, true), m.short, fromN, toN, c.filler ? '' : [c.prot === '1+1' ? '1+1' : c.prot === 'shared' ? '1:N' : '', c.conv ? `convert at ${(node(c.conv) || {}).name}, ${slotLbl(c.slot)} → ${c.slot2 + 1}` : ''].filter(Boolean).join(', '), c.filler ? '' : off,
         o && o.prx != null ? f1(o.prx) : '', o && o.gosnr != null ? f1(o.gosnr) : '', o && o.qMargin != null ? (o.qMargin > 0 ? '+' : '') + f1(o.qMargin) : '',
         o ? el('span', { class: 'st-' + o.status, text: STATUS[o.status] + (o.notes && o.notes.length ? ': ' + o.notes[0] : '') }) : ''].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x })))));
   });
@@ -1373,8 +1374,8 @@ function planView(r) {
   const strip = el('div', { class: 'planstrip', role: 'group', 'aria-label': 'C-band slots' });
   for (let k = 0; k < slots; k++) {
     const cs = bySlot.get(k) || [], c = cs.find(x => x.svc) || cs[0], m = c && PHY.MODES[c.mode];
-    strip.append(el('button', { class: 'pcell' + (c ? (m.coh === false ? ' nrz' : ' coh') + (c.svc ? ' me' : '') + (cs.length > 1 ? ' multi' : '') : ''), title: cs.length > 1 ? `Slot ${k + 1}: ${cs.length} channels reuse this slot on different routes. Change their slot numbers in the table` : c ? `Slot ${k + 1}: ${m.short}${c.svc ? ' (service)' : ''}. Click to remove` : `Slot ${k + 1}: empty. Click to add a ${PHY.MODES[brush].short} channel`, 'aria-label': `Slot ${k + 1}`, text: '',
-      onclick: () => { if (cs.length > 1) return toast(`${cs.length} channels share slot ${k + 1}. Change their slot numbers in the table or remove them there.`); if (c) { if (c.svc) return toast('The service channel cannot be removed. Make another channel the service first.'); plan.splice(plan.indexOf(c), 1); } else plan.push({ slot: k, mode: brush, off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: k, prot: '' }); commit(); } }));
+    strip.append(el('button', { class: 'pcell' + (c ? (m.coh === false ? ' nrz' : ' coh') + (c.svc ? ' me' : '') + (cs.length > 1 ? ' multi' : '') : ''), title: cs.length > 1 ? `Slot ${k + 1} (CH${PHY.slotChannel(k, +S.g.df * 1e9).ch}): ${cs.length} channels reuse this slot on different routes. Change their slot numbers in the table` : c ? `Slot ${k + 1} (CH${PHY.slotChannel(k, +S.g.df * 1e9).ch}): ${m.short}${c.svc ? ' (service)' : ''}. Click to remove` : `Slot ${k + 1} (CH${PHY.slotChannel(k, +S.g.df * 1e9).ch}): empty. Click to add a ${PHY.MODES[brush].short} channel`, 'aria-label': `Slot ${k + 1} (CH${PHY.slotChannel(k, +S.g.df * 1e9).ch})`, text: '',
+      onclick: () => { if (cs.length > 1) return toast(`${cs.length} channels share ${slotLbl(k)}. Change their slot numbers in the table or remove them there.`); if (c) { if (c.svc) return toast('The service channel cannot be removed. Make another channel the service first.'); plan.splice(plan.indexOf(c), 1); } else plan.push({ slot: k, mode: brush, off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: k, prot: '' }); commit(); } }));
   }
   wrap.append(strip, el('p', { class: 'muted small', text: 'Teal = coherent, amber = direct-detection (10G), outlined = the service channel. Click an empty slot to add a channel, an occupied one to remove it. A slot with a double edge is reused by several channels on routes that share no fiber.' }));
   // Any ROADM or transponder can be where a channel is added or dropped: the channel is routed between them over the cabled network
@@ -1385,15 +1386,15 @@ function planView(r) {
   const tb = el('tbody');
   for (const c of plan) {
     const o = r && r.channels ? r.channels[plan.indexOf(c)] : null, m = PHY.MODES[c.mode];
-    const radio = el('input', { type: 'radio', name: 'svcch', 'aria-label': `Make slot ${c.slot + 1} the service channel` }); radio.checked = c.svc; radio.addEventListener('change', () => { plan.forEach(x => (x.svc = x === c)); commit(); });
+    const radio = el('input', { type: 'radio', name: 'svcch', 'aria-label': `Make ${slotLbl(c.slot)} the service channel` }); radio.checked = c.svc; radio.addEventListener('change', () => { plan.forEach(x => (x.svc = x === c)); commit(); });
     const ms = el('select', {}); modes.forEach(([k, t]) => ms.append(el('option', { value: k, text: t }))); ms.value = svcNode && c.svc ? svcMode : c.mode; ms.disabled = !!c.svc; ms.title = c.svc ? 'The service channel always uses the transponder mode' : '';
     ms.addEventListener('change', () => { c.mode = ms.value; commit(); });
     const slotIn = el('input', { type: 'number', step: 1, min: 1, max: slots, value: c.slot + 1, 'aria-label': 'Slot number', class: 'slotin' });
     slotIn.addEventListener('change', () => { const v = Math.round(+slotIn.value); if (isFinite(v) && v >= 1 && v <= slots) { c.slot = v - 1; commit(); } else { slotIn.value = c.slot + 1; toast(`Slots run from 1 to ${slots}.`); } });
-    const revIn = el('input', { type: 'number', step: 1, min: 1, max: slots, value: c.slotRev != null ? c.slotRev + 1 : '', placeholder: 'same', 'aria-label': `Slot on the way back for slot ${c.slot + 1}`, class: 'slotin', title: 'On a single fiber the way back needs its own slot. Blank = the same slot, which a single fiber cannot carry.' });
+    const revIn = el('input', { type: 'number', step: 1, min: 1, max: slots, value: c.slotRev != null ? c.slotRev + 1 : '', placeholder: 'same', 'aria-label': `Slot on the way back for ${slotLbl(c.slot)}`, class: 'slotin', title: 'On a single fiber the way back needs its own slot. Blank = the same slot, which a single fiber cannot carry.' });
     revIn.addEventListener('change', () => { const v = Math.round(+revIn.value); if (revIn.value === '') { c.slotRev = null; commit(); } else if (isFinite(v) && v >= 1 && v <= slots && v - 1 !== c.slot) { c.slotRev = v - 1; commit(); } else { revIn.value = c.slotRev != null ? c.slotRev + 1 : ''; toast('The way back needs a different slot from the way there.'); } });
     const nodeSel = (key, ends, label) => {
-      const sel = el('select', { 'aria-label': `${label} for slot ${c.slot + 1}` }); sel.append(el('option', { value: '', text: ends }));
+      const sel = el('select', { 'aria-label': `${label} for ${slotLbl(c.slot)}` }); sel.append(el('option', { value: '', text: ends }));
       (key === 'via' || key === 'conv' ? pathRoadms.filter(n => n.type === 'roadm') : pathRoadms).forEach(n => sel.append(el('option', { value: n.id, text: n.name })));
       if (c[key] && !pathRoadms.some(n => n.id === c[key])) sel.append(el('option', { value: c[key], text: '(missing device)' }));
       sel.value = c[key] || ''; sel.disabled = !!c.svc || (key === 'via' && !!c.conv); sel.title = c.svc ? 'The service channel runs end to end' : '';
@@ -1402,22 +1403,22 @@ function planView(r) {
       if (key === 'conv') sel.title = c.svc ? 'The service channel is not converted' : 'Regenerate the channel at this ROADM into another slot: clears accumulated noise and lets the two sides use different slots';
       return sel;
     };
-    const slot2In = el('input', { type: 'number', step: 1, min: 1, max: slots, value: (Number.isFinite(c.slot2) ? c.slot2 : c.slot) + 1, 'aria-label': `Slot after the converter for slot ${c.slot + 1}`, class: 'slotin', title: 'Slot after the converter' });
+    const slot2In = el('input', { type: 'number', step: 1, min: 1, max: slots, value: (Number.isFinite(c.slot2) ? c.slot2 : c.slot) + 1, 'aria-label': `Slot after the converter for ${slotLbl(c.slot)}`, class: 'slotin', title: 'Slot after the converter' });
     slot2In.addEventListener('change', () => { const v = Math.round(+slot2In.value); if (isFinite(v) && v >= 1 && v <= slots) { c.slot2 = v - 1; commit(); } else { slot2In.value = (Number.isFinite(c.slot2) ? c.slot2 : c.slot) + 1; toast(`Slots run from 1 to ${slots}.`); } });
     slot2In.hidden = !c.conv;
     const convCell = el('div', { class: 'pair' }, [nodeSel('conv', 'None', 'Convert at'), slot2In]);
-    const protSel = el('select', { 'aria-label': `Protection for slot ${c.slot + 1}` }); [['', 'None'], ['1+1', '1+1 dedicated'], ['shared', '1:N shared']].forEach(([v, t]) => protSel.append(el('option', { value: v, text: t })));
+    const protSel = el('select', { 'aria-label': `Protection for ${slotLbl(c.slot)}` }); [['', 'None'], ['1+1', '1+1 dedicated'], ['shared', '1:N shared']].forEach(([v, t]) => protSel.append(el('option', { value: v, text: t })));
     protSel.value = c.prot === '1+1' || c.prot === 'shared' ? c.prot : ''; protSel.disabled = false;
     protSel.title = c.conv ? '1+1 on each side of the converter, separately (the converter ROADM itself is shared). ' + '1+1:' : '1+1: a second copy runs on the shortest route that shares no fiber with the working one. Both are lit; the receiver takes the working copy until it fails. 1:N shared: the protection route is dark until the working one fails, so it loads nothing and its slot may be shared with other channels\' protection routes; its margin is predicted by simulating the failure.';
     protSel.addEventListener('change', () => { c.prot = protSel.value; commit(); });
-    const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, 'aria-label': `Power offset for slot ${c.slot + 1}` }); off.addEventListener('change', () => { if (isFinite(+off.value)) { c.off = Math.max(-10, Math.min(10, +off.value)); commit(); } });
-    const del = el('button', { class: 'btn', text: '×', title: 'Remove channel', 'aria-label': `Remove the channel in slot ${c.slot + 1}`, disabled: c.svc, onclick: () => { plan.splice(plan.indexOf(c), 1); if (planEdit === c) planEdit = null; commit(); } });
+    const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, 'aria-label': `Power offset for ${slotLbl(c.slot)}` }); off.addEventListener('change', () => { if (isFinite(+off.value)) { c.off = Math.max(-10, Math.min(10, +off.value)); commit(); } });
+    const del = el('button', { class: 'btn', text: '×', title: 'Remove channel', 'aria-label': `Remove the channel in ${slotLbl(c.slot)}`, disabled: c.svc, onclick: () => { plan.splice(plan.indexOf(c), 1); if (planEdit === c) planEdit = null; commit(); } });
     // the routing of a channel is a sentence, and its controls open only when asked for: most rows keep the defaults (shortest route, no converter, no protection)
     const nm = id => (node(id) || {}).name || '(missing device)', editing = planEdit === c;
     const extras = [c.via && !c.conv ? `via ${nm(c.via)}` : '', c.conv && !c.svc ? `converts at ${nm(c.conv)}, slot ${c.slot + 1} → ${(Number.isFinite(c.slot2) ? c.slot2 : c.slot) + 1}` : '', c.prot === '1+1' ? '1+1 dedicated' : c.prot === 'shared' ? '1:N shared' : ''].filter(Boolean).join(' · ');
     const routeCell = el('span', {}, [c.svc ? 'A end → Z end (the service)' : `${c.from ? nm(c.from) : 'A end'} → ${c.to ? nm(c.to) : 'Z end'}`, extras ? el('span', { class: 'muted', text: ' · ' + extras }) : null]);
     const modeText = PHY.MODES[svcNode && c.svc ? svcMode : c.mode].short, offText = c.off ? (c.off > 0 ? '+' : '') + c.off : '0';
-    const editBtn = el('button', { class: 'btn', text: editing ? 'Done' : 'Edit', 'aria-expanded': editing ? 'true' : 'false', title: 'Mode, route, converter, protection and power offset for this channel', 'aria-label': `${editing ? 'Close the editor for' : 'Edit'} the channel in slot ${c.slot + 1}`, onclick: () => { planEdit = editing ? null : c; renderTabBody(); if (!editing) { const f = document.querySelector('.editrow select'); if (f) f.focus(); } } }); // opening the editor moves focus into it
+    const editBtn = el('button', { class: 'btn', text: editing ? 'Done' : 'Edit', 'aria-expanded': editing ? 'true' : 'false', title: 'Mode, route, converter, protection and power offset for this channel', 'aria-label': `${editing ? 'Close the editor for' : 'Edit'} the channel in ${slotLbl(c.slot)}`, onclick: () => { planEdit = editing ? null : c; renderTabBody(); if (!editing) { const f = document.querySelector('.editrow select'); if (f) f.focus(); } } }); // opening the editor moves focus into it
     const row = el('tr', { class: (c.svc ? 'selrow' : '') + (hiChan === c ? ' hirow' : ''), onclick: ev => { if (ev.target.closest('select,input,button')) return; hiChan = hiChan === c ? null : c; renderCanvas(); renderTabBody(); }, title: o && o.route && o.route.length ? 'Route: ' + o.route.join(' → ') + (o.protection ? '\n' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).predicted ? 'Shared protection, predicted by failing the working route (' : 'Standby (') + (o.protection.active === 'work' ? 'protection' : 'working') + ' copy): ' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).route.join(' → ') || (o.protection.active === 'work' ? o.protection.protect : o.protection.work).notes[0]) : '') + (o.converted ? '\nConverted at ' + (o.segments[0].toName || '') + ': slot ' + (o.slot + 1) + ' then slot ' + (o.slot2 + 1) : '') : '' }, [radio, slotIn, ...(anySingle ? [revIn] : []), chText(c.slot, true), modeText, routeCell, offText,
       o && o.prx != null ? f1(o.prx) : '', o && o.gosnr != null ? f1(o.gosnr) : '', o && o.qMargin != null ? (o.qMargin > 0 ? '+' : '') + f1(o.qMargin) : '', o && m.coh === false ? f1(o.xpmPen) : '',
       o ? el('span', { class: 'st-' + o.status, text: STATUS[o.status] + (o.notes.length ? ': ' + o.notes[0] : '') }) : '', editBtn, del].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x }))));

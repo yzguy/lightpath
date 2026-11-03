@@ -727,15 +727,15 @@ const MODEL = (() => {
     for (let k = 0; k <= last; k++) {
       const n = nodes[k]; if (!n || n.type !== 'oadm') continue;
       const sideAt = j => (links && links[j] ? oadmSide(links[j], n.id) : '');
-      if (k === 0 || k === last) { const s = k === 0 ? sideAt(0) : sideAt(last - 1); if (!oadmServes(n, s, slot)) return `${n.name} cannot add or drop slot ${slot + 1} on its ${sideName(s)} side (it serves ${oadmServed(n)})`; continue; }
+      if (k === 0 || k === last) { const s = k === 0 ? sideAt(0) : sideAt(last - 1); if (!oadmServes(n, s, slot)) return `${n.name} cannot add or drop ${slotLbl(slot)} on its ${sideName(s)} side (it serves ${oadmServed(n)})`; continue; }
       const joins = k === 1 && isEnd(nodes[0]), drops = k === last - 1 && isEnd(nodes[last]);
       if (joins || drops) { // a transponder plugged into a port: its port side must be the side the route uses
         const ps = joins ? sideAt(0) : sideAt(k), ls = joins ? sideAt(1) : sideAt(k - 1);
-        if (!oadmServes(n, ps, slot)) return `${n.name} has no ${sideName(ps)} port for slot ${slot + 1} (it serves ${oadmServed(n)})`;
+        if (!oadmServes(n, ps, slot)) return `${n.name} has no ${sideName(ps)} port for ${slotLbl(slot)} (it serves ${oadmServed(n)})`;
         if (ls && ls !== ps) return `the transponder is on ${n.name}'s ${sideName(ps)} port but the route uses its ${sideName(ls)} line`;
         continue;
       }
-      for (const sl of slotRev != null ? [slot, slotRev] : [slot]) if (oadmServes(n, 'e', sl) || oadmServes(n, 'w', sl)) return `slot ${sl + 1} is dropped by the filter at ${n.name} and cannot pass it`;
+      for (const sl of slotRev != null ? [slot, slotRev] : [slot]) if (oadmServes(n, 'e', sl) || oadmServes(n, 'w', sl)) return `${slotLbl(sl)} is dropped by the filter at ${n.name} and cannot pass it`;
     }
     return '';
   };
@@ -823,6 +823,7 @@ const MODEL = (() => {
   // Can host A reach host Z? Every step the packet needs is checked in order, so the first one that fails says what is wrong:
   // the client cable and optic at each end, the transponders, the channel between them, its optical status, and the addresses.
   function reach(S, res) {
+    useGrid(S);
     const { node } = mkGraph(S), hosts = S.nodes.filter(n => n.type === 'host'), tbl = channelTable(S, res), out = [];
     const dark = new Map(((res && res.derived && res.derived.dark) || []).map(d => [d.id, d.why]));
     const cables = h => S.links.filter(l => l.kind === 'patch' && (l.a === h.id || l.b === h.id)).map(l => ({ l, end: node(l.a === h.id ? l.b : l.a) })).filter(x => x.end && isEnd(x.end));
@@ -908,6 +909,7 @@ const MODEL = (() => {
   // mux passes slot first+k. The channels are then what the cabling makes: a transmitter whose tuning matches its port reaches the receiver plugged into
   // the port of the same slot on another mux; anything else is dark, with a reason. Returns null for a topology that does not use mux ports.
   function derive(S) {
+    useGrid(S);
     const { node, link } = mkGraph(S), g = S.g || {}, slotsN = PHY_.cBandSlots(+g.df * 1e9), atts = [], dev = x => x.type === 'mux' || x.type === 'oadm' || x.type === 'roadm';
     for (const l of S.links) {
       if (l.kind !== 'patch' || !Number.isInteger(l.p.mport)) continue;
@@ -930,14 +932,14 @@ const MODEL = (() => {
       // a BiDi (single-fiber) port passes a pair of slots: the low band and the high band, one for each direction; the role says which is transmit
       a.bidi = isBidi(a);
       if (a.bidi) { const n = capOf(a), role = a.m.type === 'oadm' ? a.m.p[a.side + 'Role'] : a.m.p.role, low = firstOf(a) + a.port, high = firstOf(a) + n + a.port; a.ptx = role === 'low' ? low : high; a.prx = role === 'low' ? high : low; } else a.ptx = a.prx = pslot;
-      if (a.port >= capOf(a) || (colored(a) && Math.max(a.ptx, a.prx) >= slotsN)) { mark(a.t.id, `${a.m.name} has no ${dirText(a)}port ${a.port + 1} on this grid (it has ${capOf(a)}${colored(a) ? ` from slot ${firstOf(a) + 1}${a.bidi ? ' in each of its two bands' : ''}, the grid has ${slotsN} slots` : ''})`); continue; }
+      if (a.port >= capOf(a) || (colored(a) && Math.max(a.ptx, a.prx) >= slotsN)) { mark(a.t.id, `${a.m.name} has no ${dirText(a)}port ${a.port + 1} on this grid (it has ${capOf(a)}${colored(a) ? ` from ${slotLbl(firstOf(a))}${a.bidi ? ' in each of its two bands' : ''}, the grid has ${slotsN} slots` : ''})`); continue; }
       a.tuned = Number.isInteger(a.t.p.slot) ? a.t.p.slot : a.ptx;
       a.slot = colored(a) ? a.ptx : a.tuned; // a colored port passes its own slot; a colorless one passes whatever the transponder is tuned to
-      if (a.tuned !== a.slot || a.slot >= slotsN) { mark(a.t.id, a.slot >= slotsN ? `${a.t.name} is tuned to slot ${a.tuned + 1}, which is not on this grid` : `${a.t.name} is tuned to slot ${a.tuned + 1} but plugged into ${portName(a)}, which ${a.bidi ? 'transmits' : 'passes'} slot ${a.slot + 1}: the filter blocks it`); continue; }
+      if (a.tuned !== a.slot || a.slot >= slotsN) { mark(a.t.id, a.slot >= slotsN ? `${a.t.name} is tuned to ${slotLbl(a.tuned)}, which is not on this grid` : `${a.t.name} is tuned to ${slotLbl(a.tuned)} but plugged into ${portName(a)}, which ${a.bidi ? 'transmits' : 'passes'} ${slotLbl(a.slot)}: the filter blocks it`); continue; }
       a.tx = a.slot; a.rx = a.bidi ? (Number.isInteger(a.t.p.rxSlot) ? a.t.p.rxSlot : a.prx) : a.slot;
-      if (a.bidi && a.rx !== a.prx) { mark(a.t.id, `${a.t.name} listens on slot ${a.rx + 1} but ${portName(a)} delivers slot ${a.prx + 1} to it: it would hear nothing`); continue; }
+      if (a.bidi && a.rx !== a.prx) { mark(a.t.id, `${a.t.name} listens on ${slotLbl(a.rx)} but ${portName(a)} delivers ${slotLbl(a.prx)} to it: it would hear nothing`); continue; }
       // a ROADM that is not contentionless can add a slot at only one port, whichever degree it leaves by
-      if (a.m.type === 'roadm' && !a.m.p.contentionless) { const k = a.m.id + '|' + a.slot, o = bySlot.get(k); if (o) { mark(a.t.id, `${a.t.name} and ${o.t.name} are both tuned to slot ${a.slot + 1} on ${a.m.name}, which is not contentionless: only one can be added`); continue; } bySlot.set(k, a); }
+      if (a.m.type === 'roadm' && !a.m.p.contentionless) { const k = a.m.id + '|' + a.slot, o = bySlot.get(k); if (o) { mark(a.t.id, `${a.t.name} and ${o.t.name} are both tuned to ${slotLbl(a.slot)} on ${a.m.name}, which is not contentionless: only one can be added`); continue; } bySlot.set(k, a); }
       ok.push(a);
     }
     // a transponder on a side of an OADM, or a port of a ROADM that is not directionless, talks to that side's (degree's) line only: the route may not leave or arrive by another one
@@ -956,13 +958,13 @@ const MODEL = (() => {
       }
       if (!best && a.bidi) {
         const twin = ok.find(b => b !== a && b.m !== a.m && b.bidi && b.tx === a.tx), half = ok.find(b => b !== a && b.m !== a.m && b.bidi && b.rx === a.tx);
-        mark(a.t.id, twin ? `${a.t.name} and ${twin.t.name} both transmit on slot ${a.tx + 1}: on a single fiber each end needs its own wavelength (one end on the low band, the other on the high band)`
-          : half ? `${a.t.name} transmits slot ${a.tx + 1} and listens on slot ${a.rx + 1}, but ${half.t.name} transmits slot ${half.tx + 1}: each end must transmit the slot the other listens on`
-          : `${a.t.name} has no partner: a single-fiber port transmits slot ${a.tx + 1} and listens on slot ${a.rx + 1}, so the far end has to be a single-fiber port that transmits slot ${a.rx + 1} and listens on slot ${a.tx + 1}`);
+        mark(a.t.id, twin ? `${a.t.name} and ${twin.t.name} both transmit on ${slotLbl(a.tx)}: on a single fiber each end needs its own wavelength (one end on the low band, the other on the high band)`
+          : half ? `${a.t.name} transmits ${slotLbl(a.tx)} and listens on ${slotLbl(a.rx)}, but ${half.t.name} transmits ${slotLbl(half.tx)}: each end must transmit the slot the other listens on`
+          : `${a.t.name} has no partner: a single-fiber port transmits ${slotLbl(a.tx)} and listens on ${slotLbl(a.rx)}, so the far end has to be a single-fiber port that transmits ${slotLbl(a.rx)} and listens on ${slotLbl(a.tx)}`);
         continue;
       }
       if (!best && a.t.p.conv && !a.t.p.peer) { mark(a.t.id, `${a.t.name} converts at ${(node(a.t.p.conv) || {}).name}, which puts its partner in a different slot: set \u2018Connect to\u2019 to name the far end`); continue; }
-      if (!best) { mark(a.t.id, a.t.p.peer && !ok.some(b => b.t.id === a.t.p.peer && b.slot === a.slot) ? `${a.t.name} is set to connect to ${(node(a.t.p.peer) || {}).name}, which is not on a port for slot ${a.slot + 1}` : `${a.t.name} has no partner: nothing is plugged into a port for slot ${a.slot + 1} on a mux, OADM or ROADM it can reach${a.side ? ` from ${a.m.name}'s ${a.m.type === 'oadm' ? sideName(a.side) + ' side' : 'degree ' + a.side}` : ''}`); continue; }
+      if (!best) { mark(a.t.id, a.t.p.peer && !ok.some(b => b.t.id === a.t.p.peer && b.slot === a.slot) ? `${a.t.name} is set to connect to ${(node(a.t.p.peer) || {}).name}, which is not on a port for ${slotLbl(a.slot)}` : `${a.t.name} has no partner: nothing is plugged into a port for ${slotLbl(a.slot)} on a mux, OADM or ROADM it can reach${a.side ? ` from ${a.m.name}'s ${a.m.type === 'oadm' ? sideName(a.side) + ' side' : 'degree ' + a.side}` : ''}`); continue; }
       if (a.t.p.mode !== best.t.p.mode) { const why = `${a.t.name} is ${PHY_.MODES[a.t.p.mode].short} but ${best.t.name} is ${PHY_.MODES[best.t.p.mode].short}: the ends will never lock`; mark(a.t.id, why); mark(best.t.id, why); continue; }
       used.add(a.t.id); used.add(best.t.id); pairs.push([a, best]);
     }
@@ -996,6 +998,11 @@ const MODEL = (() => {
     const d = derive(S); if (!d) return S;
     return { ...S, g: { ...S.g, plan: d.plan, nch: d.plan.length }, _derived: d };
   }
+
+  // A slot named in a message: its number (as the tables show it) and its ITU channel. The spacing is the lab's, set at the start of each entry point below.
+  let AMB_DF = 75e9;
+  const useGrid = S => { const d = +(S && S.g && S.g.df) * 1e9; if (d > 0) AMB_DF = d; };
+  const slotLbl = k => 'slot ' + (k + 1) + ' (CH' + PHY_.slotChannel(k, AMB_DF).ch + ')';
 
   // ---------- one-tap remedies ----------
   // An alarm can carry a `fix` the UI offers as a button: plain data (what to change), applied by the app, so the model stays DOM-free.
@@ -1067,6 +1074,7 @@ const MODEL = (() => {
   // that have to be simulated: the service path first, then every route that is not a stretch of an earlier one. Each channel is a member
   // of one host, with lo/hi the node positions along that host where it is added and dropped.
   function planMesh(S, chans, path, rv, noBlock) {
+    useGrid(S);
     const svcA = S.svc.a, svcZ = S.svc.z, memo = new Map(), { link, linkName, node } = mkGraph(S);
     const routeFor = c => {
       const ea = c.from || svcA, ez = c.to || svcZ, via = c.svc ? '' : c.via || '';
@@ -1113,19 +1121,19 @@ const MODEL = (() => {
         const r = routes0[k]; if (!r || dark[k] || blocked[k]) return;
         const c = chans[k], one = r.links.find(id => singles.has(id));
         if (one && both(c)[0] === both(c)[1]) {
-          const w = `slot ${c.slot + 1} is used in both directions on ${linkName(link(one))}, a single fiber: each direction needs its own wavelength`;
+          const w = `${slotLbl(c.slot)} is used in both directions on ${linkName(link(one))}, a single fiber: each direction needs its own wavelength`;
           if (c.svc) svcClash = w; else { routes[k] = null; blocked[k] = true; why[k] = w; return; }
         }
         let clash = null;
         const hit = r.links.find(id => slotsOn(c, id).some(x => { const o = used.get(x + '|' + id); if (o != null && chans[o].lg !== c.lg) { clash = x; return true; } return false; })); // the two copies of a 1+1 channel are one signal
-        if (hit) { routes[k] = null; blocked[k] = true; why[k] = `slot ${clash + 1} is already lit on ${linkName(link(hit))} by another channel${singles.has(hit) ? ' (in the other direction too: it is a single fiber)' : ''}`; }
+        if (hit) { routes[k] = null; blocked[k] = true; why[k] = `${slotLbl(clash)} is already lit on ${linkName(link(hit))} by another channel${singles.has(hit) ? ' (in the other direction too: it is a single fiber)' : ''}`; }
         else r.links.forEach(id => slotsOn(c, id).forEach(x => used.set(x + '|' + id, k)));
       });
     }
     if (!noBlock) chans.forEach((c, k) => { // a dark protection route must still be free of lit channels in its slot
       const r = routes0[k]; if (!dark[k] || !r) return;
       const hit = r.links.find(id => { const o = chans.findIndex((x, j) => !dark[j] && routes[j] && x.slot === c.slot && x.lg !== c.lg && routes[j].links.includes(id)); return o >= 0; });
-      if (hit) { blocked[k] = true; why[k] = `shared protection: slot ${c.slot + 1} is lit on ${linkName(link(hit))} by another channel`; }
+      if (hit) { blocked[k] = true; why[k] = `shared protection: ${slotLbl(c.slot)} is lit on ${linkName(link(hit))} by another channel`; }
     });
     dark.forEach((d, k) => { if (d) routes[k] = null; });
     routes.forEach((r, k) => { if (r) for (const id of r.links) { if (!loads.has(id)) loads.set(id, new Set()); loads.get(id).add(k); } });
@@ -1146,6 +1154,7 @@ const MODEL = (() => {
   // First-fit wavelength assignment: the service keeps its slot; the other channels, longest route first, each take the lowest slot that is
   // free on every fiber of their route. Channels on routes with no fiber in common end up sharing slots. Returns the new plan (or null).
   function assignSlots(S) {
+    useGrid(S);
     const g = S.g, sa = S.nodes.find(n => n.id === S.svc.a);
     if (!g || !Array.isArray(g.plan) || !g.plan.length || !isEnd(sa)) return null;
     const df = +g.df * 1e9, slotsN = PHY_.cBandSlots(df), chans = buildChans(g, sa.p.mode, true, slotsN, df);
@@ -1211,6 +1220,7 @@ const MODEL = (() => {
   // route costs detect + switch; shared protection adds the turn-up time of the dark route; both add the chance that both routes are down together.
   // A converted channel is the sum of its halves. These are expectations from cut rates, not a simulation of events.
   function resilience(S) {
+    useGrid(S);
     S = effective(S);
     const g = S.g || {}, num = (v, d) => (Number.isFinite(+v) && v !== '' && v !== null ? +v : d);
     const P = {}; for (const k in RESIL) P[k] = num(g[k], RESIL[k]);
@@ -1296,6 +1306,7 @@ const MODEL = (() => {
   // Allocate demands one by one: the first candidate route (shortest first) whose estimated margin clears opts.minMargin and that has a slot free on
   // every fiber (first fit). The service occupies its route and slot first. Returns plan entries for the placed demands and the statistics.
   function planDemands(S, demands, opts = {}) {
+    useGrid(S);
     const g = S.g, df = +g.df * 1e9, slotsN = PHY_.cBandSlots(df), minM = opts.minMargin ?? 1, K = opts.K ?? 6, cache = opts.cache || new Map();
     const { node, link } = mkGraph(S), used = Array.from({ length: slotsN }, () => new Set()), loads = new Map();
     const take = (slot, links) => links.forEach(id => { used[slot].add(id); loads.set(id, (loads.get(id) || 0) + 1); });
@@ -1376,6 +1387,7 @@ const MODEL = (() => {
   // The forward result carries the reverse one in res.rev and its status is the worse of the two. opts.single skips the reverse run.
   const STATUS_RANK = { up: 0, degraded: 1, down: 2, nopath: 2, los: 3 };
   function simulate(S, launchOverride, opts = {}) {
+    useGrid(S);
     S = effective(S);
     if (S._derived && S._derived.svcWhy && !opts.walk) return { status: 'los', headline: S._derived.svcWhy, derived: S._derived };
     const eol = !!opts.eol, rv = !!opts.reverse, W = opts.walk || null; // W: a mesh walk, the simulation of a route other than the service's (see planMesh)
@@ -1766,7 +1778,7 @@ const MODEL = (() => {
         else if (bER > m.berThr) { status = 'down'; notes.push('pre-FEC BER above the FEC limit'); }
         else if (qm < 1 || prx < m.rxMin || prx > m.rxMax) { status = 'degraded'; notes.push(qm < 1 ? `only ${f1(qm)} dB of Q margin` : prx < m.rxMin ? 'Rx below the sensitivity spec' : 'Rx above the overload point'); }
         if (f.xp > 1.5) notes.push(`XPM costs ${f1(f.xp)} dB`);
-        { const pf = portFaultOn(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot, path.links.slice(lohi[i].lo, lohi[i].hi)); if (pf) { status = 'los'; notes.unshift(`its port on ${pf.name} has failed (slot ${c.slot + 1})`); } const fw = filterWhy(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot, path.links.slice(lohi[i].lo, lohi[i].hi), c.slotRev); if (fw) { status = 'los'; notes.unshift(fw); } }
+        { const pf = portFaultOn(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot, path.links.slice(lohi[i].lo, lohi[i].hi)); if (pf) { status = 'los'; notes.unshift(`its port on ${pf.name} has failed (${slotLbl(c.slot)})`); } const fw = filterWhy(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot, path.links.slice(lohi[i].lo, lohi[i].hi), c.slotRev); if (fw) { status = 'los'; notes.unshift(fw); } }
         const lh = lohi[i], nm = k => (node(path.nodes[k]) || {}).name, route = path.nodes.slice(lh.lo, lh.hi + 1).map(id => (node(id) || {}).name);
         return { idx: i, lg: c.lg, role: c.role, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
           from: c.from, to: c.to, via: c.via, fromName: nm(lh.lo), toName: nm(lh.hi), route, routeLinks: path.links.slice(lh.lo, lh.hi), routeNodes: path.nodes.slice(lh.lo, lh.hi + 1), partial: !!W || lh.lo > 0 || lh.hi < lastPos };
@@ -1807,14 +1819,14 @@ const MODEL = (() => {
       const sp = res.channels.find(c => c.svc && c.protection);
       if (sp && !svcOnProt && STATUS_RANK[sp.protection.protect.status] >= 2) alarms.push({ sev: 'warn', text: `The service is 1+1 protected but its protection route is unusable: ${sp.protection.protect.notes[0] || 'it is down'}.` });
       if (sp && sp.protection.protect.qMargin != null && sp.protection.protect.qMargin < 0 && !svcOnProt) alarms.push({ sev: 'warn', text: `The service's protection route would not carry it: Q margin ${f1(sp.protection.protect.qMargin)} dB on the protection route.` });
-      if (failing.length) alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${failing.slice(0, 3).map(c => `slot ${c.slot + 1} (${c.short}): ${c.notes[0]}`).join('; ')}${failing.length > 3 ? '…' : ''}.` });
+      if (failing.length) alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${failing.slice(0, 3).map(c => `${slotLbl(c.slot)} (${c.short}): ${c.notes[0]}`).join('; ')}${failing.length > 3 ? '…' : ''}.` });
     }
     if (!eol && !W) { const e = simulate(S, launchOverride, { eol: true, reverse: rv, useProtect: svcOnProt }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
     // alarms & status
     const bad = [];
     if (mesh && mesh.svcClash && !eol && !rv && !W) bad.push(`The service channel cannot work: ${mesh.svcClash}.`);
     if (!eol && !rv && !W) { const fw = filterWhy(path.nodes, chans[svcIdx].slot, path.links, chans[svcIdx].slotRev); if (fw) bad.push(`The service channel is lost: ${fw}.`); }
-    if (!eol && !rv && !W) { const pf = portFaultOn(path.nodes, chans[svcIdx].slot, path.links); if (pf) bad.push(`The port for slot ${chans[svcIdx].slot + 1} on ${pf.name} has failed: the service channel is lost.`); }
+    if (!eol && !rv && !W) { const pf = portFaultOn(path.nodes, chans[svcIdx].slot, path.links); if (pf) bad.push(`The port for ${slotLbl(chans[svcIdx].slot)} on ${pf.name} has failed: the service channel is lost.`); }
     if (Z.p.mode !== modeKey) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
     if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} ${mode.coh === false ? 'dispersion tolerance' : 'DSP range'} of ${mode.cdTol} ps/nm.`);
     if (ber > mode.berThr) bad.push(`Pre-FEC BER ${ber.toExponential(2)} is above the ${mode.fec} limit ${mode.berThr.toExponential(2)}: uncorrectable errors, link down.`);
