@@ -180,3 +180,20 @@ test('raman solver: forward and backward pumping give about the same gain, and t
   assert.ok(Math.max(...t.gainDb) - Math.min(...t.gainDb) < Math.max(...b.gainDb) * 0.5, 'more pump wavelengths flatten the gain');
   assert.ok(t.gainDb.every(g => g > 5));
 });
+
+test('slots sit on the ITU grid and are named by their channel number', () => {
+  const P = require('../src/engine.js');
+  assert.equal(P.ituChannel(193.1), 31); assert.equal(P.ituChannel(192.1), 21); assert.equal(P.ituChannel(196.0), 60); assert.equal(P.ituChannel(193.15), 31.5);
+  assert.ok(Math.abs(P.wavelengthNm(193.1) - 1552.52) < 0.005, '193.1 THz is 1552.52 nm');
+  for (const gHz of [50, 75, 100, 150]) {
+    const df = gHz * 1e9, n = P.cBandSlots(df);
+    for (let k = 0; k < n; k++) { const f = P.slotFreqTHz(k, df), idx = (f - 193.1) / (gHz / 1000); assert.ok(Math.abs(idx - Math.round(idx)) < 1e-6, `${gHz} GHz slot ${k + 1} is a whole number of spacings from 193.1 THz`); }
+    const first = P.slotFreqTHz(0, df) * 1e12;
+    assert.ok(first - df / 2 >= P.CBAND.f0 - 1, 'the first slot lies inside the band'); assert.ok(first - df - df / 2 < P.CBAND.f0, 'and is the first that does');
+    assert.ok(P.slotFreqTHz(n - 1, df) <= 196.1 + 1e-9, 'the last slot centre is at or below 196.1 THz');
+    assert.ok(Math.abs(P.slotFreqTHz(1, df) - P.slotFreqTHz(0, df) - gHz / 1000) < 1e-9, 'neighbouring slots are one spacing apart');
+  }
+  // 193.1 THz is CH31 at every spacing, and the label carries channel, frequency and wavelength
+  const c = P.slotChannel(17, 100e9); assert.equal(c.ch, 31); assert.match(c.text, /^CH31 · 193\.10 THz · 1552\.52 nm$/);
+  assert.match(P.slotChannel(0, 50e9).text, /^CH13\.5 · 191\.35 THz/);
+});

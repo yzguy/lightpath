@@ -107,6 +107,7 @@ function refreshHostFaults() {
   const R = MODEL.reach(S, lastRes);
   for (const f of S.flows) { const r = R.find(x => (x.a === f.a && x.z === f.z) || (x.a === f.z && x.z === f.a)); if (r && !r.ok) { hostFaults.add(f.a); hostFaults.add(f.z); } }
 }
+const chText = (slot, short) => { const c = PHY.slotChannel(slot, +S.g.df * 1e9); return short ? `CH${c.ch} · ${c.fTHz.toFixed(2)}` : c.text; }; // a slot as its ITU channel, with the frequency and wavelength beside it
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 function nodeShape(n) {
   const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === n.id ? 'true' : 'false',
@@ -524,7 +525,7 @@ function renderInspectorBody() {
       { const slotsN = PHY.cBandSlots(+S.g.df * 1e9), cab = S.links.map(portLink).filter(x => x && x.t === n)[0], autoText = cab && cab.m ? 'Auto: the slot of its port' : 'Auto';
         // a slot is a number from 1 to 64, with its frequency beside it; blank means Auto
         const wi = el('input', { type: 'number', id: 'f-slot', step: 1, min: 1, max: slotsN, placeholder: 'Auto', 'aria-label': 'Wavelength slot, blank for Auto' }), ro = el('small', { class: 'muted' });
-        const read = v => { ro.textContent = Number.isInteger(v) ? `Slot ${v + 1} · ${PHY.slotFreqTHz(v, +S.g.df * 1e9).toFixed(2)} THz` : autoText; };
+        const read = v => { ro.textContent = Number.isInteger(v) ? `${chText(v)} (slot ${v + 1})` : autoText; };
         wi.value = Number.isInteger(p.slot) ? p.slot + 1 : ''; read(Number.isInteger(p.slot) ? p.slot : null);
         wi.addEventListener('input', () => { const v = Math.round(+wi.value); read(wi.value !== '' && v >= 1 && v <= slotsN ? v - 1 : Number.isInteger(p.slot) ? p.slot : null); });
         wi.addEventListener('change', () => { if (wi.value === '') { p.slot = null; renderAll(); return; } const v = Math.round(+wi.value); if (isFinite(v) && v >= 1 && v <= slotsN) { p.slot = v - 1; renderAll(); } else { wi.value = Number.isInteger(p.slot) ? p.slot + 1 : ''; read(Number.isInteger(p.slot) ? p.slot : null); toast(`Slots run from 1 to ${slotsN}.`); } });
@@ -532,7 +533,7 @@ function renderInspectorBody() {
         box.lastChild.append(ro); box.lastChild.append(el('small', { text: 'A tunable transponder is set to a slot. Plugged into a mux or OADM port it only gets through if it matches that port; Auto follows the port.' }));
         if (cab && cab.m.type !== 'roadm' && cab.m.p.bidi) { // on a single-fiber port it also listens on a slot of its own
           const rs = el('select', { id: 'f-rxslot', 'aria-label': 'Receive wavelength' }); rs.append(el('option', { value: '', text: 'Auto: what its port delivers' }));
-          for (let k = 0; k < slotsN; k++) rs.append(el('option', { value: String(k), text: `Slot ${k + 1} · ${PHY.slotFreqTHz(k, +S.g.df * 1e9).toFixed(2)} THz` }));
+          for (let k = 0; k < slotsN; k++) rs.append(el('option', { value: String(k), text: `Slot ${k + 1} · ${chText(k)}` }));
           rs.value = Number.isInteger(p.rxSlot) ? String(p.rxSlot) : ''; rs.addEventListener('change', () => { p.rxSlot = rs.value === '' ? null : +rs.value; renderAll(); });
           box.append(field('Receive wavelength', rs, 'A single-fiber transponder transmits one slot and listens on another. It must listen on what its port delivers, which is what the far end transmits.')); }
         if (cab) box.append(field('Power offset (dB)', numIn(p, 'off', 0.5, -10, 10), 'Launch power relative to the other channels, for a transponder on a mux, OADM or ROADM port.'));
@@ -759,6 +760,7 @@ $('#g-df').addEventListener('change', e => { const old = +S.g.df; S.g.df = +e.ta
 $('#g-launch').addEventListener('input', e => { S.g.launch = +e.target.value; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch; recompute(); });
 $('#preset').addEventListener('change', e => { if (e.target.value) applyPreset(e.target.value); else syncLab(); });
 $('#btn-fit').addEventListener('click', () => { fitView(); applyView(); });
+$('#btn-itu').addEventListener('click', () => learn('itu'));
 { const pd = $('#paldet'), ls = $('#labset'), sync = () => { pd.open = !narrow.matches; ls.open = !narrow.matches; }; sync(); narrow.addEventListener('change', sync); $('#statusbar').addEventListener('click', () => $('#results').scrollIntoView({ block: 'start' })); } // the palette is one tap away on a phone, open on a wide screen
 $('#btn-undo').addEventListener('click', undo); $('#btn-redo').addEventListener('click', redo);
 $('#btn-clear').addEventListener('click', () => {
@@ -1323,7 +1325,7 @@ function derivedPlanView(r, D) {
   wrap.append(el('div', { class: 'planbar' }, [el('b', { text: `${D.plan.length} channels` }), el('span', { class: 'muted small', text: `${D.paired} from the cabling${D.fillers ? `, ${D.fillers} background (to reach the channel count)` : ''}` }),
     el('button', { class: 'btn', text: 'Edit as a table', title: 'Turn the derived channels into an editable plan and clear the mux ports', onclick: toTable })]));
   wrap.append(el('p', { class: 'muted small', text: 'These channels follow the cabling. Plug a transponder into a port of a mux, tune it (or leave it on Auto), and plug its partner into the port for the same slot on the far mux. Click a row to light its route on the canvas.' }));
-  const tbl = el('table', { class: 'tbl plantbl' }), th = el('tr'); ['Slot (there / back)', 'THz', 'Mode', 'From', 'To', 'Protect / convert', 'Offset dB', 'Rx dBm', 'GSNR', 'Q margin', 'Status'].forEach(h => th.append(el('th', { text: h })));
+  const tbl = el('table', { class: 'tbl plantbl' }), th = el('tr'); ['Slot (there / back)', 'Channel · THz', 'Mode', 'From', 'To', 'Protect / convert', 'Offset dB', 'Rx dBm', 'GSNR', 'Q margin', 'Status'].forEach(h => th.append(el('th', { text: h })));
   tbl.append(el('thead', {}, [th]));
   const tb = el('tbody');
   D.plan.forEach((c, i) => {
@@ -1331,7 +1333,7 @@ function derivedPlanView(r, D) {
     const off = el('input', { type: 'number', step: 0.5, min: -10, max: 10, value: c.off, class: 'slotin', 'aria-label': `Power offset for slot ${c.slot + 1}`, disabled: !!c.filler });
     off.addEventListener('change', () => { const t = node(c.tx); if (t && isFinite(+off.value)) { t.p.off = Math.max(-10, Math.min(10, +off.value)); renderAll(); } });
     tb.append(el('tr', { class: (c.svc ? 'selrow' : '') + (hiChan === c ? ' hirow' : ''), onclick: ev => { if (ev.target.closest('select,input,button')) return; hiChan = hiChan === c ? null : c; renderCanvas(); renderTabBody(); } },
-      [String(c.slot + 1) + (c.slotRev != null ? ` / ${c.slotRev + 1}` : ''), PHY.slotFreqTHz(c.slot, +S.g.df * 1e9).toFixed(2), m.short, fromN, toN, c.filler ? '' : [c.prot === '1+1' ? '1+1' : c.prot === 'shared' ? '1:N' : '', c.conv ? `convert at ${(node(c.conv) || {}).name}, slot ${c.slot + 1} → ${c.slot2 + 1}` : ''].filter(Boolean).join(', '), c.filler ? '' : off,
+      [String(c.slot + 1) + (c.slotRev != null ? ` / ${c.slotRev + 1}` : ''), chText(c.slot, true), m.short, fromN, toN, c.filler ? '' : [c.prot === '1+1' ? '1+1' : c.prot === 'shared' ? '1:N' : '', c.conv ? `convert at ${(node(c.conv) || {}).name}, slot ${c.slot + 1} → ${c.slot2 + 1}` : ''].filter(Boolean).join(', '), c.filler ? '' : off,
         o && o.prx != null ? f1(o.prx) : '', o && o.gosnr != null ? f1(o.gosnr) : '', o && o.qMargin != null ? (o.qMargin > 0 ? '+' : '') + f1(o.qMargin) : '',
         o ? el('span', { class: 'st-' + o.status, text: STATUS[o.status] + (o.notes && o.notes.length ? ': ' + o.notes[0] : '') }) : ''].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x })))));
   });
@@ -1378,7 +1380,7 @@ function planView(r) {
   // Any ROADM or transponder can be where a channel is added or dropped: the channel is routed between them over the cabled network
   const pathRoadms = S.nodes.filter(n => n.type === 'roadm' || n.type === 'oadm' || isEnd(n));
   const anySingle = S.links.some(l => l.kind === 'fiber' && l.p.single); // a single fiber carries both directions, so a channel has a slot each way
-  const tbl = el('table', { class: 'tbl plantbl' }), th = el('tr'); ['', 'Slot', ...(anySingle ? ['Slot back'] : []), 'THz', 'Mode', 'Route', 'Offset dB', 'Rx dBm', 'GSNR', 'Q margin', 'XPM', 'Status', '', ''].forEach(h => th.append(el('th', { text: h })));
+  const tbl = el('table', { class: 'tbl plantbl' }), th = el('tr'); ['', 'Slot', ...(anySingle ? ['Slot back'] : []), 'Channel · THz', 'Mode', 'Route', 'Offset dB', 'Rx dBm', 'GSNR', 'Q margin', 'XPM', 'Status', '', ''].forEach(h => th.append(el('th', { text: h })));
   tbl.append(el('thead', {}, [th]));
   const tb = el('tbody');
   for (const c of plan) {
@@ -1416,7 +1418,7 @@ function planView(r) {
     const routeCell = el('span', {}, [c.svc ? 'A end → Z end (the service)' : `${c.from ? nm(c.from) : 'A end'} → ${c.to ? nm(c.to) : 'Z end'}`, extras ? el('span', { class: 'muted', text: ' · ' + extras }) : null]);
     const modeText = PHY.MODES[svcNode && c.svc ? svcMode : c.mode].short, offText = c.off ? (c.off > 0 ? '+' : '') + c.off : '0';
     const editBtn = el('button', { class: 'btn', text: editing ? 'Done' : 'Edit', 'aria-expanded': editing ? 'true' : 'false', title: 'Mode, route, converter, protection and power offset for this channel', 'aria-label': `${editing ? 'Close the editor for' : 'Edit'} the channel in slot ${c.slot + 1}`, onclick: () => { planEdit = editing ? null : c; renderTabBody(); if (!editing) { const f = document.querySelector('.editrow select'); if (f) f.focus(); } } }); // opening the editor moves focus into it
-    const row = el('tr', { class: (c.svc ? 'selrow' : '') + (hiChan === c ? ' hirow' : ''), onclick: ev => { if (ev.target.closest('select,input,button')) return; hiChan = hiChan === c ? null : c; renderCanvas(); renderTabBody(); }, title: o && o.route && o.route.length ? 'Route: ' + o.route.join(' → ') + (o.protection ? '\n' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).predicted ? 'Shared protection, predicted by failing the working route (' : 'Standby (') + (o.protection.active === 'work' ? 'protection' : 'working') + ' copy): ' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).route.join(' → ') || (o.protection.active === 'work' ? o.protection.protect : o.protection.work).notes[0]) : '') + (o.converted ? '\nConverted at ' + (o.segments[0].toName || '') + ': slot ' + (o.slot + 1) + ' then slot ' + (o.slot2 + 1) : '') : '' }, [radio, slotIn, ...(anySingle ? [revIn] : []), (PHY.CBAND.f0 / 1e12 + (c.slot + 0.5) * +S.g.df / 1000).toFixed(2), modeText, routeCell, offText,
+    const row = el('tr', { class: (c.svc ? 'selrow' : '') + (hiChan === c ? ' hirow' : ''), onclick: ev => { if (ev.target.closest('select,input,button')) return; hiChan = hiChan === c ? null : c; renderCanvas(); renderTabBody(); }, title: o && o.route && o.route.length ? 'Route: ' + o.route.join(' → ') + (o.protection ? '\n' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).predicted ? 'Shared protection, predicted by failing the working route (' : 'Standby (') + (o.protection.active === 'work' ? 'protection' : 'working') + ' copy): ' + ((o.protection.active === 'work' ? o.protection.protect : o.protection.work).route.join(' → ') || (o.protection.active === 'work' ? o.protection.protect : o.protection.work).notes[0]) : '') + (o.converted ? '\nConverted at ' + (o.segments[0].toName || '') + ': slot ' + (o.slot + 1) + ' then slot ' + (o.slot2 + 1) : '') : '' }, [radio, slotIn, ...(anySingle ? [revIn] : []), chText(c.slot, true), modeText, routeCell, offText,
       o && o.prx != null ? f1(o.prx) : '', o && o.gosnr != null ? f1(o.gosnr) : '', o && o.qMargin != null ? (o.qMargin > 0 ? '+' : '') + f1(o.qMargin) : '', o && m.coh === false ? f1(o.xpmPen) : '',
       o ? el('span', { class: 'st-' + o.status, text: STATUS[o.status] + (o.notes.length ? ': ' + o.notes[0] : '') }) : '', editBtn, del].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: x }))));
     tb.append(row);
@@ -1514,14 +1516,29 @@ const LEARN = {
   raman2: ['Raman solver', `<p>The <b>coupled-wave solver</b> treats every pump wavelength and a sample of the channels as waves in the fiber, each with its own attenuation, and lets higher-frequency waves feed lower-frequency ones through the Raman gain curve: <code>±dP<sub>i</sub>/dz = −α<sub>i</sub>P<sub>i</sub> + P<sub>i</sub> Σ<sub>j above</sub> c(Δf) P<sub>j</sub> − P<sub>i</sub> Σ<sub>j below</sub> (f<sub>i</sub>/f<sub>j</sub>) c(Δf) P<sub>j</sub></code>. Forward waves are integrated from the start of the span and backward ones from the end, alternately, until the profiles settle. Photon number is conserved. This gives what the closed-form approximation cannot: <b>pump-to-pump transfer</b> (the short-wave pump of a multi-wavelength pump feeds the long-wave one), <b>depletion</b> as the signals grow, the real <b>gain spectrum</b> and the <b>power profile along the span</b> for forward, backward and bidirectional pumping, and signal-to-signal transfer (SRS tilt) in the span.</p><p>Turn it on per fiber in the cable inspector (Raman model). The gain at the service channel, the stage split between forward and backward pumps, the pump depletion and the per-channel gain differences then come from the solver; the noise is still modelled as the equivalent lumped amplifier and double Rayleigh scattering from the gain. The Raman tab plots the profile and the gain spectrum for each pumped span.</p>`],
   trans: ['Power transients', `<p>An EDFA amplifies all channels from one pool of inverted erbium ions. If many channels vanish suddenly (an upstream fiber cut, a protection switch, a failed transponder), the pool no longer has to feed them, so the gain per surviving channel jumps toward <code>10·log<sub>10</sub>(N / survivors)</code> within about a hundred microseconds. A fast gain-control loop (AGC) cancels most of it; a slow one does not. In a cascade of amplifiers each one adds its excursion, so the surviving channels can surge by many dB by the end of the line, into receiver overload and into nonlinearity (3 dB of nonlinear noise for each dB of power), and dip equally when the channels come back.</p><p>That is why added channels are ramped up slowly and why long amplified systems need fast gain control on every amplifier. The Transients tab evaluates a sudden loss of a share of the channels along the service path with the response time of each amplifier. Raman pumps and WSS blocking are not modelled.</p>`],
   aging: ['End-of-life margin', `<p>Links are planned for the day they are worst, not the day they are lit. <b>End of life</b> here adds extra loss on every fiber span (splices from repairs, connector wear, fiber ageing; 1.0 dB by default) and a transceiver ageing penalty (0.5 dB by default). Both are editable in the inspector when nothing is selected. It then re-runs the whole simulation.</p><p>A link with a few dB of margin today can have none left at end of life. The "works today but fails at end of life" alarm is the early warning. Typical planning margin is 2-3 dB.</p>`],
+  itu: ['ITU grid and channel numbers', `<p>DWDM channels sit on a fixed frequency grid so that equipment from different vendors lines up. ITU-T G.694.1 anchors the grid at <b>193.1 THz (1552.52 nm)</b>: every channel centre is 193.1 THz plus a whole number of grid spacings. The fixed spacings are 100, 50, 25 and 12.5 GHz. The flexible grid (<i>flexi-grid</i>) places centres on 6.25 GHz steps with slot widths in multiples of 12.5 GHz, which is why 75 GHz slots are allowed (12 × 6.25).</p><p>The familiar <b>channel number</b> comes from the 100 GHz grid: frequency in THz = 190.0 + CH / 10. So <b>CH31 = 193.1 THz = 1552.52 nm</b>, CH21 = 192.1 THz and CH60 = 196.0 THz. Positions between two 100 GHz channels are decimals: CH31.5 = 193.15 THz on a 50 GHz grid.</p><p>Lightpath counts a <b>slot</b> by its place in the C-band (slot 1 is the first grid position that fits at least half a spacing in from 191.3 THz) and names its channel this way, with the frequency and wavelength beside it. Change the grid in the header and the slots, and their channel numbers, change with it. The table below lists every slot for any spacing; it is a reference and does not change your lab unless you press the button. CWDM is a different scheme: 18 channels 20 nm apart from 1271 to 1611 nm.</p>`],
   launch: ['Launch power', `<p>The per-channel power put into each span. Too low: amplifier noise dominates. Too high: nonlinearity dominates. Somewhere in between (often 0 to +2 dBm/ch for 60 GBd on SMF) GSNR peaks. Open the Launch sweep tab to see your link's curve.</p><p><b>Re-optimisation:</b> the optimum is not one number for the whole line. It depends on each span's loss and on how many channels are lit on it, so when channels are added or dropped it moves. Switch "Launch power" to re-optimised in the inspector (nothing selected) and every amplifier with a blank output target sets <code>P = (A / 2η)^(1/3)</code>, the GN optimum for the span after it, where A is the amplifier noise and η the nonlinear coefficient of that span at its current load. The sweep tab shows margin against channels lit for a fixed and a re-optimised line. The total-output limit of the amplifier still applies, and Raman gain is not included in the optimum.</p>`],
 };
 let learnTopic = 'osnr';
 function learn(t) { learnTopic = t; tab = 'learn'; renderTabBody(); $('#tabs').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
 // The topics in five groups, with a filter box that matches the title or the text of an article
 const LEARN_GROUPS = [['Basics', ['osnr', 'gsnr', 'q', 'ber', 'margin', 'rx', 'span', 'launch', 'aging']], ['Impairments', ['edfa', 'nli', 'cd', 'pmd', 'filter', 'srs', 'xpm', 'raman', 'raman2', 'trans']],
-  ['Channels and clients', ['plan', 'client', 'ports', 'reach']], ['Cabling and instruments', ['odf', 'olp', 'bidi', 'b1310', 'otdr']], ['Protection and failures', ['resil', 'fail']]];
-let learnFilter = '';
+  ['Channels and clients', ['itu', 'plan', 'client', 'ports', 'reach']], ['Cabling and instruments', ['odf', 'olp', 'bidi', 'b1310', 'otdr']], ['Protection and failures', ['resil', 'fail']]];
+let learnFilter = '', ituDf = null;
+// the grid reference: every slot at a chosen spacing as channel, frequency and wavelength (a reference; the lab's own grid is set in the header)
+function ituTable() {
+  const df = ituDf ?? +S.g.df, wrap = el('div', { class: 'ituref' }), sel = el('select', { id: 'itu-df', 'aria-label': 'Grid spacing for the reference table' });
+  [50, 75, 100, 150].forEach(v => sel.append(el('option', { value: String(v), text: `${v} GHz` + (v === +S.g.df ? ' (your lab)' : '') })));
+  sel.value = String(df); sel.addEventListener('change', () => { ituDf = +sel.value; renderTabBody(); });
+  const use = el('button', { class: 'btn', text: `Use ${df} GHz for the lab`, disabled: df === +S.g.df, onclick: () => { const g = $('#g-df'); g.value = String(df); g.dispatchEvent(new Event('change')); ituDf = null; renderTabBody(); } });
+  const n = PHY.cBandSlots(df * 1e9), first = PHY.slotChannel(0, df * 1e9), last = PHY.slotChannel(n - 1, df * 1e9);
+  wrap.append(el('div', { class: 'planbar' }, [el('b', { text: 'Grid spacing' }), sel, use]),
+    el('p', { class: 'muted small', text: `${n} slots from ${first.text.split(' · ').slice(0, 1)} (${first.fTHz.toFixed(3)} THz) to CH${last.ch} (${last.fTHz.toFixed(3)} THz). Anchor 193.1 THz = CH31.` }));
+  const tbl = el('table', { class: 'tbl' }), th = el('tr'); ['Slot', 'Channel', 'THz', 'nm'].forEach(h => th.append(el('th', { text: h }))); tbl.append(el('thead', {}, [th]));
+  const tb = el('tbody'); for (let k = 0; k < n; k++) { const c = PHY.slotChannel(k, df * 1e9); tb.append(el('tr', { class: Math.abs(c.fTHz - 193.1) < 1e-6 ? 'selrow' : '' }, [k + 1, 'CH' + c.ch, c.fTHz.toFixed(3), c.nm.toFixed(2)].map(x => el('td', { text: String(x) })))); }
+  tbl.append(tb); wrap.append(el('div', { style: 'overflow:auto;max-height:340px;max-width:420px' }, [tbl]));
+  return wrap;
+}
 function learnView() {
   const keys = Object.keys(LEARN), grouped = new Set(LEARN_GROUPS.flatMap(g => g[1])), groups = [...LEARN_GROUPS.map(([n, ks]) => [n, ks.filter(k => LEARN[k])]), ['More', keys.filter(k => !grouped.has(k))]].filter(g => g[1].length);
   const text = {}; for (const k of keys) text[k] = (LEARN[k][0] + ' ' + LEARN[k][1].replace(/<[^>]+>/g, ' ')).toLowerCase();
@@ -1549,7 +1566,8 @@ function learnView() {
   for (const [gname, ks] of groups) { const og = el('optgroup', { label: gname }); for (const k of ks) og.append(el('option', { value: k, text: LEARN[k][0] })); pick.append(og); }
   pick.value = learnTopic;
   pick.addEventListener('change', () => { learnTopic = pick.value; renderTabBody(); });
-  return el('div', { class: 'learn' }, [pick, nav, el('article', {}, [el('h3', { text: LEARN[learnTopic][0] }), el('div', { html: LEARN[learnTopic][1] })])]);
+  const art = el('article', {}, [el('h3', { text: LEARN[learnTopic][0] }), el('div', { html: LEARN[learnTopic][1] })]); if (learnTopic === 'itu') art.append(ituTable());
+  return el('div', { class: 'learn' }, [pick, nav, art]);
 }
 
 // ---------- misc ----------

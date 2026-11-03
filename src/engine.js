@@ -115,7 +115,15 @@ const PHY = (() => {
   const NLI_COH_CD = 400;
   const nliCorrelation = cdAcc => Math.max(0, 1 - Math.abs(cdAcc) / NLI_COH_CD);
   // ---- Channel plan helpers ----
-  const slotFreqTHz = (slot, dfHz) => (CBAND.f0 + (slot + 0.5) * dfHz) / 1e12;
+  // Slots sit on the ITU-T G.694.1 grid: every centre is 193.1 THz + n x spacing, and the first slot is the first such centre that fits inside the band (at least half a
+  // spacing in from 191.3 THz). A slot's number is its position in the band; its channel is the ITU designation of its frequency.
+  const ITU_ANCHOR = 193.1e12, C_LIGHT = 299792458;
+  const firstSlotN = dfHz => Math.ceil((CBAND.f0 + dfHz / 2 - ITU_ANCHOR) / dfHz - 1e-9);
+  const slotFreqTHz = (slot, dfHz) => (ITU_ANCHOR + (firstSlotN(dfHz) + slot) * dfHz) / 1e12;
+  // The familiar 100 GHz-grid channel number: CH31 = 193.1 THz, CH21 = 192.1, CH60 = 196.0 (frequency in THz = 190.0 + channel / 10). Other positions are decimals (CH31.5 on a 50 GHz grid).
+  const ituChannel = fTHz => +((fTHz - 190) * 10).toFixed(2);
+  const wavelengthNm = fTHz => C_LIGHT / (fTHz * 1e12) * 1e9;
+  const slotChannel = (slot, dfHz) => { const f = slotFreqTHz(slot, dfHz); return { slot, fTHz: f, ch: ituChannel(f), nm: wavelengthNm(f), text: `CH${ituChannel(f)} · ${f.toFixed(3).replace(/0$/, '')} THz · ${wavelengthNm(f).toFixed(2)} nm` }; };
   // Per-channel NLI relative to a reference: the same channel inside a contiguous, identical full band of refN channels at spacing df.
   // Pairwise GN terms: self-channel asinh term plus an XPM log kernel from every other channel (PSD-weighted). chans: [{f (Hz), Rs, P (W)}].
   // Normalising to the reference keeps the uniform case identical to etaNLI().
@@ -276,6 +284,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmWalk, xpmSpanPenalty, ramanGainSat, ramanSolve, ramanShape, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, slotChannel, ituChannel, wavelengthNm, ITU_ANCHOR, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmWalk, xpmSpanPenalty, ramanGainSat, ramanSolve, ramanShape, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;
