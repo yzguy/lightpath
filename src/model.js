@@ -997,6 +997,12 @@ const MODEL = (() => {
     return { ...S, g: { ...S.g, plan: d.plan, nch: d.plan.length }, _derived: d };
   }
 
+  // ---------- one-tap remedies ----------
+  // An alarm can carry a `fix` the UI offers as a button: plain data (what to change), applied by the app, so the model stays DOM-free.
+  const fixSplice = (l, label = 'Splice it back') => ({ type: 'splice', id: l.id, label });
+  const fixWork = n => ({ type: 'work', id: n.id, label: `Set ${n.name} back to Working` });
+  const fixClean = (n, port) => ({ type: 'clean', id: n.id, port, label: `Clean ${n.name} port ${port}` });
+
   // ---------- simulation ----------
   const reqCache = {};
   const reqOsnr = k => (reqCache[k] ??= PHY_.requiredOsnr(PHY_.MODES[k]));
@@ -1378,8 +1384,9 @@ const MODEL = (() => {
     const g = { ...S.g }; if (launchOverride != null) g.launch = launchOverride;
     const A = node(W ? W.a : rv ? S.svc.z : S.svc.a), Z = node(W ? W.z : rv ? S.svc.a : S.svc.z);
     if (!W && (!isEnd(A) || !isEnd(Z) || A === Z)) return { status: 'none', headline: 'Pick two transponders or muxponders as the A and Z ends of a service.' };
-    if (!W && isDead(A)) return { status: 'los', headline: `${A.name} has failed: nothing is transmitted.` };
-    if (!W && isDead(Z)) return { status: 'los', headline: `${Z.name} has failed: nothing receives the signal.` };
+    const endDown = (n, what) => { const t = `${n.name} has failed: ${what}.`; return { status: 'los', headline: t, headlineFix: fixWork(n), alarms: [{ sev: 'bad', text: t, fix: fixWork(n) }] }; };
+    if (!W && isDead(A)) return endDown(A, 'nothing is transmitted');
+    if (!W && isDead(Z)) return endDown(Z, 'nothing receives the signal');
     if (W && (isDead(A) || isDead(Z))) return { status: 'los', headline: 'A device at the end of this route has failed.' }; // its channels report LOS
     const modeKey = W ? W.svcMode : A.p.mode, mode = PHY_.MODES[modeKey];
     // A 1+1 protected service runs on its planned working route, and on the planned fiber-disjoint protection route once the working one
@@ -1564,7 +1571,7 @@ const MODEL = (() => {
         // A patch panel passes the light from one side of a port to the other: the loss of the connector pair, plus whatever a dirty or damaged connector adds on that port.
         const pn = +(/\d+/.exec(oadmSide(link(path.links[i]), nxt.id)) || [0])[0], dirty = +(nxt.p.dirty && nxt.p.dirty[pn]) || 0, b = snap(), lo = +nxt.p.il + dirty + degOf(nxt); loss(lo);
         if (planOn) { nch = litCount(i + 1); curAct = maskAt(i + 1); }
-        if (dirty > 0.3 && !eol && !rv && !W) alarms.push({ sev: 'warn', text: `${nxt.name} port ${pn}: a dirty or damaged connector costs ${f1(dirty)} dB extra. Clean it.` });
+        if (dirty > 0.3 && !eol && !rv && !W) alarms.push({ sev: 'warn', text: `${nxt.name} port ${pn}: a dirty or damaged connector costs ${f1(dirty)} dB extra. Clean it.`, fix: fixClean(nxt, pn) });
         rec(nxt.name, 'panel', b, { warn: dirty > 0.3 ? true : undefined, port: pn, inSide: oadmSide(link(path.links[i]), nxt.id), gain: -lo, note: `port ${pn}: ${f1(+nxt.p.il)} dB` + (dirty ? ` + ${f1(dirty)} dB dirty connector` : '') });
       } else if (t === 'splitter' || t === 'switch') {
         // A splitter sends the light to both branches: the branch the route takes gets its share of the power (a 99/1 tap costs 0.05 dB on the main
@@ -1647,8 +1654,8 @@ const MODEL = (() => {
     if (losAt) {
       res.status = 'los'; res.prx = -Infinity;
       // say what is wrong and what to do about it, in the headline and as an alarm (the KPIs are empty when there is no light)
-      if (losAt.node) { res.headline = `LOS at ${Z.name}: ${losAt.node.name} has failed. Replace it, or give the service a route around it.`; if (!W) alarms.push({ sev: 'bad', text: `${losAt.node.name} has failed and passes no light, so nothing reaches ${Z.name}. Set it back to Working, or add a route that avoids it.` }); }
-      else { res.headline = `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}. Splice it back, or add a second route.`; if (!W) alarms.push({ sev: 'bad', text: `${linkName(losAt)} is cut, so no light reaches ${Z.name}. Select the span and choose "Splice it back", or give the service a second fiber route (Protect, in the Channels tab).` }); }
+      if (losAt.node) { res.headline = `LOS at ${Z.name}: ${losAt.node.name} has failed. Replace it, or give the service a route around it.`; if (!W) { res.headlineFix = fixWork(losAt.node); alarms.push({ sev: 'bad', text: `${losAt.node.name} has failed and passes no light, so nothing reaches ${Z.name}. Set it back to Working, or add a route that avoids it.`, fix: fixWork(losAt.node) }); } }
+      else { res.headline = `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}. Splice it back, or add a second route.`; if (!W) { res.headlineFix = fixSplice(losAt); alarms.push({ sev: 'bad', text: `${linkName(losAt)} is cut, so no light reaches ${Z.name}. Splice it back, or give the service a second fiber route (Protect, in the Channels tab).`, fix: fixSplice(losAt) }); } }
       return res;
     }
     const prx = db(P * 1000); res.prx = prx;
@@ -1833,20 +1840,20 @@ const MODEL = (() => {
         const via = path.nodes.filter(id => !intact.nodes.includes(id)).map(id => node(id).name), dkm = km - r0.km, dq = Number.isFinite(r0.qMargin) ? res.qMargin - r0.qMargin : null;
         const over = via.length ? `over ${via.join(' and ')}` : 'over another route';
         res.restored = { links: intact.links, short: `restored ${over} after ${broke.join(' and ')}: ${sg(dkm, 'km')}${dq != null ? `, ${sg(dq, 'dB')} margin` : ''}` };
-        restAlarm = { sev: 'info', text: `The service restored itself ${over}: ${broke.join(' and ')}. The detour is ${f1(Math.abs(dkm))} km ${dkm >= 0 ? 'longer' : 'shorter'}${dq != null ? ` and the Q margin ${dq >= 0 ? 'rises' : 'falls'} by ${f1(Math.abs(dq))} dB (${f1(r0.qMargin)} to ${f1(res.qMargin)} dB)` : ''}. Splice the fiber back to return to the original route.` };
+        restAlarm = { sev: 'info', fix: (() => { const l = link(intact.links.find(id => isCut(S, link(id))) || ''); return l ? fixSplice(l, 'Splice it back to restore the original route') : null; })(), text: `The service restored itself ${over}: ${broke.join(' and ')}. The detour is ${f1(Math.abs(dkm))} km ${dkm >= 0 ? 'longer' : 'shorter'}${dq != null ? ` and the Q margin ${dq >= 0 ? 'rises' : 'falls'} by ${f1(Math.abs(dq))} dB (${f1(r0.qMargin)} to ${f1(res.qMargin)} dB)` : ''}. Splice the fiber back to return to the original route.` };
         alarms.unshift(restAlarm);
       }
     }
     if (!eol && !W) for (const n of [A, Z]) if (onSpare(n)) alarms.push({ sev: 'warn', text: `${n.name}'s primary module has failed: traffic is on the spare (${n.p.spare === 'ycable' ? 'y-cable' : 'optical switch'}). There is no module protection left.` });
     if (!eol && !rv && !W) for (const id of path.nodes) {
       const n = node(id), d = degOf(n);
-      if (d > 0) alarms.push({ sev: 'warn', text: `${n.name} is degraded: ${n.type === 'edfa' ? `its output is ${f1(d)} dB below the setting and its noise figure is worse` : isEnd(n) ? (id === A.id ? `its laser is ${f1(d)} dB weaker` : `its receiver loses ${f1(d)} dB of SNR`) : `${f1(d)} dB of extra loss`}.` });
+      if (d > 0) alarms.push({ sev: 'warn', text: `${n.name} is degraded: ${n.type === 'edfa' ? `its output is ${f1(d)} dB below the setting and its noise figure is worse` : isEnd(n) ? (id === A.id ? `its laser is ${f1(d)} dB weaker` : `its receiver loses ${f1(d)} dB of SNR`) : `${f1(d)} dB of extra loss`}.` , fix: fixWork(n) });
     }
     if (svcOnProt && !W) alarms.push({ sev: 'warn', text: protWhy === 'cut' ? `The working route has failed (a cut fiber or a failed device): traffic switched to the protection route (${Math.round(km)} km). There is no protection left until it is repaired.` : 'The working route is down: traffic switched to the protection route. There is no protection left.' });
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }
     else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; const top = alarms.find(a => a.sev === 'bad') || alarms.find(a => a.sev === 'warn'), more = alarms.filter(a => a.sev !== 'info').length - 1; // the headline names the first problem, not just that there is one
-      res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. ${top ? top.text : 'Aging or a dirty connector will take it down.'}` : `Up, but ${top ? top.text.charAt(0).toLowerCase() === top.text.charAt(0) ? top.text : 'with a warning: ' + top.text : 'with alarms to look at.'}${top && more > 0 ? ` (${more} more below)` : ''}`; }
-    else { res.status = 'up'; res.headline = `Up with ${f1(res.qMargin)} dB Q margin${res.restored ? ', ' + res.restored.short : ''}.`; if (restAlarm) restAlarm.text = 'Splice the fiber back to return to the original route; the dotted line on the canvas shows it.'; } // the headline already says what happened and what it cost
+      res.headlineFix = top && top.fix || null; res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. ${top ? top.text : 'Aging or a dirty connector will take it down.'}` : `Up, but ${top ? top.text.charAt(0).toLowerCase() === top.text.charAt(0) ? top.text : 'with a warning: ' + top.text : 'with alarms to look at.'}${top && more > 0 ? ` (${more} more below)` : ''}`; }
+    else { res.status = 'up'; res.headline = `Up with ${f1(res.qMargin)} dB Q margin${res.restored ? ', ' + res.restored.short : ''}.`; if (restAlarm) { restAlarm.text = 'Splice the fiber back to return to the original route; the dotted line on the canvas shows it.'; res.headlineFix = restAlarm.fix; } } // the headline already says what happened and what it cost
     if (res.status === 'down') { const sw = switchIfBetter(res); if (sw !== res) return sw; }
     if (!eol && !rv && !opts.single) {
       const r2 = simulate(S, launchOverride, { reverse: true, useProtect: !!opts.useProtect });

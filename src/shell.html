@@ -182,6 +182,7 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .labset[open] > summary::before { content: '\2212' }
 .kgroup { grid-column: 1 / -1; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin-top: 4px } .kgroup:first-child { margin-top: 0 }
 .tabsep { align-self: stretch; width: 1px; margin: 8px 6px; background: var(--line); flex: none }
+#headfix { align-self: center } #alarms .alfix { margin-left: 10px; padding: 2px 10px; min-height: 0 }
 .kpi.lead { grid-column: span 2 } .kpi.lead .kv { font-size: 22px }
 #alarms { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px }
 #alarms li { padding: 7px 10px; border-radius: 5px; font-size: 13px; background: var(--raised); border: 1px solid var(--line); border-left: 3px solid var(--muted) }
@@ -255,10 +256,11 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   #statusbar .sbgo { flex: none; font-size: 12px; color: var(--muted) }
   body { padding-bottom: 70px }
   body #toast { bottom: calc(66px + env(safe-area-inset-bottom, 0px)) } /* above the status strip */
-  .kpis:not(.all) > .kgroup:nth-of-type(n+2), .kpis:not(.all) > .kgroup:nth-of-type(n+2) ~ .kpi { display: none } /* the margins are the verdict; the rest is one tap away */
-  .morekpi { display: inline-flex !important }
 }
-.morekpi { display: none; justify-self: start }
+/* the five readings that give the verdict (margin, Rx, OSNR, GSNR, distance) show until "More readings"; the groups and the noise breakdown open with it */
+.kpis:not(.all) > .kgroup, .kpis:not(.all) > .kpi:not(.core) { display: none }
+.kpis:not(.all) + #diag { display: none }
+.morekpi { justify-self: start; align-self: center }
 #toast { display: flex; align-items: center; gap: 12px; width: max-content; position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 20; max-width: calc(100% - 32px) }
 #io { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 30; padding: 16px }
 #io .panel { width: min(640px, 100%); padding: 14px; display: grid; gap: 10px }
@@ -360,7 +362,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <label for="svc-z">Z <select id="svc-z"></select></label>
     <span id="dirsw" role="group" aria-label="Direction shown" hidden></span>
     <span id="status" class="status"></span>
-    <span id="headline"></span>
+    <span id="headline"></span><button class="btn" id="headfix" hidden></button>
   </div>
   <ul id="alarms"></ul>
   <div class="kpis" id="kpis"></div>

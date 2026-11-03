@@ -2034,3 +2034,24 @@ test('a cut the service survives is explained: the detour, its cost and the old 
   const dead = M.sanitize(build('lh')); dead.links.filter(l => l.kind === 'fiber')[2].p.cut = true; const rl = M.simulate(dead);
   assert.equal(rl.status, 'los'); assert.equal(rl.restored, undefined);
 });
+
+test('alarms offer a one-tap remedy as plain data: splice, set back to Working, clean a port', () => {
+  const nm = (X, n) => X.nodes.find(x => x.name === n);
+  // a dirty connector: clean that port
+  const odf = M.sanitize(build('odf')), ro = M.simulate(odf), pn = nm(odf, 'ODF-B');
+  assert.deepEqual(ro.headlineFix, { type: 'clean', id: pn.id, port: 1, label: 'Clean ODF-B port 1' });
+  assert.deepEqual(ro.alarms.find(a => a.fix).fix, ro.headlineFix);
+  delete pn.p.dirty[1]; const clean = M.simulate(odf); assert.equal(clean.status, 'up'); assert.ok(!clean.headlineFix, 'nothing to offer once it is fixed');
+  // a cut: splice that cable
+  const lh = M.sanitize(build('lh')), fib = lh.links.filter(l => l.kind === 'fiber')[2]; fib.p.cut = true;
+  let r = M.simulate(lh); assert.deepEqual(r.headlineFix, { type: 'splice', id: fib.id, label: 'Splice it back' });
+  assert.ok(r.alarms.some(a => a.fix && a.fix.id === fib.id && /Splice it back/.test(a.text)));
+  fib.p.cut = false; assert.ok(!M.simulate(lh).headlineFix);
+  // a failed service end now has an alarm row and a fix, not just a headline
+  const e = M.sanitize(build('lh')); nm(e, 'TRX-Z').p.fail = 'dead'; r = M.simulate(e);
+  assert.equal(r.status, 'los'); assert.equal(r.alarms.length, 1); assert.equal(r.headlineFix.type, 'work'); assert.equal(r.headlineFix.id, nm(e, 'TRX-Z').id); assert.match(r.headlineFix.label, /Set TRX-Z back to Working/);
+  // a failed device in the middle, and a survived cut on the ring
+  const m = M.sanitize(build('lh')); nm(m, 'ILA-2').p.fail = 'dead'; r = M.simulate(m); assert.equal(r.headlineFix.type, 'work'); assert.equal(r.headlineFix.id, nm(m, 'ILA-2').id);
+  const ring = M.sanitize(build('ring')), r0 = M.simulate(ring), cutL = ring.links.filter(l => l.kind === 'fiber').find(l => r0.path.links.includes(l.id)); cutL.p.cut = true;
+  r = M.simulate(ring); assert.equal(r.headlineFix.type, 'splice'); assert.equal(r.headlineFix.id, cutL.id); assert.match(r.headlineFix.label, /restore the original route/);
+});

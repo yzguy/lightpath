@@ -100,7 +100,7 @@ function refreshHostFaults() {
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 function nodeShape(n) {
   const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === n.id ? 'true' : 'false',
-    'aria-label': `${n.name}, ${(TYPES[n.type] || {}).label || n.type}${n.p && n.p.fail === 'dead' ? ', failed' : n.p && n.p.fail === 'degraded' ? ', degraded' : ''}` });
+    'aria-label': `${n.name}, ${(TYPES[n.type] || {}).label || n.type}${S.svc && S.svc.a === n.id ? ', service A end' : S.svc && S.svc.z === n.id ? ', service Z end' : ''}${n.p && n.p.fail === 'dead' ? ', failed' : n.p && n.p.fail === 'degraded' ? ', degraded' : ''}${panelDirty(n) ? ', dirty connector on port ' + Object.entries(n.p.dirty).filter(([, v]) => +v > 0.3).map(([k]) => k).join(', ') : ''}` });
   if (n.type === 'trx') {
     g.append(sv('rect', { x: -46, y: -22, width: 92, height: 44, rx: 4, class: 'body' }));
     g.append(sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' }));
@@ -761,6 +761,28 @@ let tab = 'power';
 function tile(label, val, unit, topic, cls = '') {
   return el('button', { class: 'kpi ' + cls, onclick: () => learn(topic), title: 'Explain ' + label }, [el('span', { class: 'kl', text: label }), el('span', { class: 'kv' }, [document.createTextNode(val), el('small', { text: unit })])]);
 }
+// A remedy offered by an alarm: plain data from the model (splice a cable, set a device back to Working, clean a patch panel port)
+function applyFix(f) {
+  if (!f) return;
+  let what = '';
+  if (f.type === 'splice') { const l = link(f.id); if (l) { l.p.cut = false; what = 'Spliced the fiber back'; } }
+  else if (f.type === 'work') { const n = node(f.id); if (n) { n.p.fail = ''; what = `${n.name} is working again`; } }
+  else if (f.type === 'clean') { const n = node(f.id); if (n && n.p.dirty) { delete n.p.dirty[f.port]; what = `Cleaned ${n.name} port ${f.port}`; } }
+  if (!what) return;
+  checkpoint(); renderAll(); toast(what, { label: 'Undo', fn: undo });
+}
+const sameFix = (a, b) => !!a && !!b && a.type === b.type && a.id === b.id && a.port === b.port;
+function renderAlarms(r) {
+  const al = $('#alarms'); al.innerHTML = '';
+  const hf = lastRes.headlineFix, hb = $('#headfix');
+  hb.hidden = !hf; if (hf) { hb.textContent = hf.label; hb.onclick = () => applyFix(hf); }
+  // the headline already says the first problem in full: do not repeat it in the list; a remedy shows once, next to the headline or on its own alarm
+  (r.alarms || []).filter(a => !(lastRes.headline && lastRes.headline.includes(a.text))).slice(0, 6).forEach(a => {
+    const li = el('li', { class: 'al-' + a.sev }, [a.text]);
+    if (a.fix && !sameFix(a.fix, hf)) li.append(el('button', { class: 'btn alfix', text: a.fix.label, onclick: () => applyFix(a.fix) }));
+    al.append(li);
+  });
+}
 function renderResults() {
   const box = $('#results');
   const sw = $('#dirsw'); sw.innerHTML = '';
@@ -782,28 +804,26 @@ function renderResults() {
   $('#sb-status').className = 'status s-' + lastRes.status; $('#sb-status').textContent = STATUS[lastRes.status]; $('#sb-text').textContent = lastRes.headline;
   { const msg = `${STATUS[lastRes.status]}. ${lastRes.headline}`; if (msg !== srLast) { srLast = msg; $('#sr-live').textContent = msg; } } // announced only when it changes
   const k = $('#kpis'); k.innerHTML = ''; $('#diag').innerHTML = '';
-  if (!r.mode) { $('#tabbody').innerHTML = ''; $('#alarms').innerHTML = ''; renderTabBody(); return; }
+  if (!r.mode) { $('#tabbody').innerHTML = ''; renderAlarms(r); renderTabBody(); return; }
   const m = r.mode;
   const prxCls = !isFinite(r.prx) ? 'bad' : r.prx < m.rxMin || r.prx > m.rxMax ? 'warn' : '';
   // The numbers come in three short groups: the margins (the verdict, led by Q margin), the signal that reaches the receiver, and the line it crossed
   const kg = t => el('span', { class: 'kgroup', text: t }), sg = v => (v > 0 ? '+' : '') + f1(v), lvl = (v, warnBelow) => (v < 0 ? 'bad' : v < warnBelow ? 'warn' : '');
   if (r.ber != null) {
-    k.append(kg('Margins'), tile('Q margin', sg(r.qMargin), ' dB', 'margin', (r.qMargin < 0 || lastRes.status === 'down' || lastRes.status === 'los' ? 'bad' : r.qMargin < 1 || lastRes.status === 'degraded' ? 'warn' : 'good') + ' lead'),
+    k.append(kg('Margins'), tile('Q margin', sg(r.qMargin), ' dB', 'margin', (r.qMargin < 0 || lastRes.status === 'down' || lastRes.status === 'los' ? 'bad' : r.qMargin < 1 || lastRes.status === 'degraded' ? 'warn' : 'good') + ' lead core'),
       tile('OSNR margin', sg(r.osnrMargin), ' dB', 'margin', lvl(r.osnrMargin, 2)), tile('Q margin, end of life', sg(r.eol.qMargin), ' dB', 'aging', lvl(r.eol.qMargin, 1)),
       tile('Q margin, worst channel', sg(r.worstQMargin), ' dB', 'srs', lvl(r.worstQMargin, 1)));
   }
-  k.append(kg('Signal'), tile('Rx power', isFinite(r.prx) ? f1(r.prx) : 'LOS', isFinite(r.prx) ? ' dBm' : '', 'rx', prxCls));
+  k.append(kg('Signal'), tile('Rx power', isFinite(r.prx) ? f1(r.prx) : 'LOS', isFinite(r.prx) ? ' dBm' : '', 'rx', prxCls + ' core'));
   if (r.ber != null) {
-    k.append(tile('OSNR', f1(r.osnr), ' dB', 'osnr'), tile('GSNR (w/ NLI)', f1(r.gosnr), ' dB', 'gsnr'), tile('Q-factor', f1(r.q), ' dB', 'q'),
+    k.append(tile('OSNR', f1(r.osnr), ' dB', 'osnr', 'core'), tile('GSNR (w/ NLI)', f1(r.gosnr), ' dB', 'gsnr', 'core'), tile('Q-factor', f1(r.q), ' dB', 'q'),
       tile('Pre-FEC BER', r.ber < 1e-15 ? '<1e-15' : r.ber.toExponential(1), '', 'ber', r.ber > m.berThr ? 'bad' : ''),
-      kg('Line'), tile('Distance', Math.round(r.km), ' km', 'span'), tile('CD', Math.round(r.cd).toLocaleString(), ' ps/nm', 'cd', Math.abs(r.cd) > m.cdTol ? 'bad' : ''), tile('Mean DGD', f1(r.dgd), ' ps', 'pmd'),
+      kg('Line'), tile('Distance', Math.round(r.km), ' km', 'span', 'core'), tile('CD', Math.round(r.cd).toLocaleString(), ' ps/nm', 'cd', Math.abs(r.cd) > m.cdTol ? 'bad' : ''), tile('Mean DGD', f1(r.dgd), ' ps', 'pmd'),
       tile('SRS tilt (peak)', f1(r.tilt), ' dB', 'srs'), ...(m.coh === false ? [tile('XPM penalty', f1(r.xpmPen), ' dB', 'xpm', r.xpmPen > 1.5 ? 'warn' : '')] : []));
   }
-  if (r.ber != null) k.append(el('button', { class: 'btn morekpi', text: kpiAll ? 'Fewer readings' : 'More readings', 'aria-expanded': kpiAll ? 'true' : 'false', onclick: () => { kpiAll = !kpiAll; renderResults(); } })); // phone only (hidden by CSS on a wide screen)
+  if (r.ber != null) k.append(el('button', { class: 'btn quiet morekpi', text: kpiAll ? 'Fewer readings' : 'More readings', 'aria-expanded': kpiAll ? 'true' : 'false', onclick: () => { kpiAll = !kpiAll; renderResults(); } })); // the first five readings are the verdict; the rest (margins, signal, line, and the noise breakdown) open with this
   k.classList.toggle('all', kpiAll);
-  const al = $('#alarms'); al.innerHTML = '';
-  // the headline already says the first problem in full: do not repeat it in the list
-  r.alarms.filter(a => !(lastRes.headline && lastRes.headline.includes(a.text))).slice(0, 6).forEach(a => al.append(el('li', { class: 'al-' + a.sev, text: a.text })));
+  renderAlarms(r);
   if (r.ber != null) $('#diag').append(el('div', {}, [diagnose(r)]));
   renderTabBody();
 }
