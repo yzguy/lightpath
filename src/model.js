@@ -13,7 +13,7 @@ const MODEL = (() => {
     otdr: { label: 'OTDR', hint: 'Traces a fiber: loss, events, breaks', maxLinks: 1, def: () => ({ pulse: 100 }) },
     host: { label: 'Host / router', hint: 'Traffic endpoint with Ethernet ports', maxLinks: 8, def: () => ({ ip: '', ports: 1, speed: 100 }) },
     splitter: { label: 'Splitter / tap', hint: 'Passive power splitter, 50/50 up to a 99/1 monitor tap', maxLinks: 3, def: () => ({ ratio: '50/50', excess: 0.3 }) },
-    switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, switchMs: 20 }) },
+    switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, revertive: true, wtrMin: 5, switchMs: 20 }) },
     panel: { label: 'Patch panel / ODF', hint: 'Fiber panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, dirty: {} }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24, bidi: false, role: 'low' }) },
     oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, osc: false, p1310: false, o1310: '10g-lr', bidi: false, eRole: 'low', wRole: 'high' }) },
@@ -452,7 +452,7 @@ const MODEL = (() => {
         for (const k of Object.keys(raw).slice(0, 96)) { const i = +k, v = raw[k]; if (Number.isInteger(i) && i >= 1 && i <= p.ports && Number.isFinite(+v) && v !== '' && v !== null && typeof v !== 'boolean' && +v > 0) p.dirty[i] = Math.min(10, +v); } // extra loss of a dirty or damaged connector, by port number
       }
       if (n.type === 'splitter') { p.ratio = SPLIT[p.ratio] ? p.ratio : '50/50'; p.excess = Math.min(3, Math.max(0, Number.isFinite(+p.excess) && p.excess !== '' && p.excess !== null ? +p.excess : 0.3)); }
-      if (n.type === 'switch') { p.il = Math.min(10, Math.max(0, Number.isFinite(+p.il) && p.il !== '' && p.il !== null ? +p.il : 1)); p.pos = p.pos === 'b' ? 'b' : 'a'; p.auto = p.auto !== false; p.switchMs = Math.min(1000, Math.max(1, Number.isFinite(+p.switchMs) && p.switchMs !== '' && p.switchMs !== null ? +p.switchMs : 20)); }
+      if (n.type === 'switch') { p.il = Math.min(10, Math.max(0, Number.isFinite(+p.il) && p.il !== '' && p.il !== null ? +p.il : 1)); p.pos = p.pos === 'b' ? 'b' : 'a'; p.auto = p.auto !== false; p.revertive = p.revertive !== false; p.wtrMin = Math.min(120, Math.max(0, Number.isFinite(+p.wtrMin) && p.wtrMin !== '' && p.wtrMin !== null ? +p.wtrMin : 5)); p.switchMs = Math.min(1000, Math.max(1, Number.isFinite(+p.switchMs) && p.switchMs !== '' && p.switchMs !== null ? +p.switchMs : 20)); }
       if (n.type === 'otdr') p.pulse = OTDR_PULSES.includes(+p.pulse) ? +p.pulse : 100;
       if (n.type === 'host') { p.ip = parseIp(p.ip) ? String(p.ip).trim() : ''; p.ports = Math.min(8, Math.max(1, Math.round(+p.ports) || 1)); p.speed = HOST_SPEEDS.includes(+p.speed) ? +p.speed : 100; }
       if (n.type === 'roadm') { p.degrees = Math.min(9, Math.max(1, Math.round(+p.degrees) || 4)); p.ports = Math.min(64, Math.max(1, Math.round(+p.ports) || 16)); p.first = Math.min(63, Math.max(0, Math.round(+p.first) || 0)); }
@@ -781,7 +781,7 @@ const MODEL = (() => {
         if (un.type === 'panel' && arr) { const m = /^([rf])(\d+)$/.exec(arr); if (!m || oadmSide(l, me) !== (m[1] === 'r' ? 'f' : 'r') + m[2]) continue; } // in at the rear of a port, out at the front of the same port
         if (isTriPort(un) && arr) {
           const out = oadmSide(l, me); if (arr === 'c' ? out === 'c' : out !== 'c') continue;
-          if (un.type === 'switch') { const branch = arr === 'c' ? out : arr; if (branch !== (un.p.pos === 'b' ? 'b' : 'a')) { if (!un.p.auto) continue; extra = 0.5; } }
+          if (un.type === 'switch') { const branch = arr === 'c' ? out : arr; if (branch !== (un.p.pos === 'b' ? 'b' : 'a')) { if (!un.p.auto) continue; extra = 1e4; } } // the other port is used only when the selected one cannot carry the light
         }
         const dead = isDead(node(v));
         if (dead && !allowCut && !plan) continue;
@@ -1249,7 +1249,8 @@ const MODEL = (() => {
     const { link, node } = mkGraph(S), YEAR = 8760 * 3600, svc = S.svc || {};
     const len = id => { const l = link(id); return l && l.kind === 'fiber' ? +l.p.len : 0; }, km = ids => ids.reduce((a, id) => a + len(id), 0);
     // restoring over a route through an auto-switching optical switch takes the detection plus the switch time, not the control plane's restoration time
-    const restoreOf = alt => { const sw = alt.nodes.map(id => node(id)).filter(n => n && n.type === 'switch' && n.p.auto); return sw.length ? (P.detectMs + Math.max(...sw.map(n => +n.p.switchMs || 20))) / 1000 : P.restoreSec; };
+    // A revertive switch moves back after the repair and the wait-to-restore time: a second hit of the switch time per cut (a non-revertive one stays where it went).
+    const restoreOf = alt => { const sw = alt.nodes.map(id => node(id)).filter(n => n && n.type === 'switch' && n.p.auto); return sw.length ? (P.detectMs + Math.max(...sw.map(n => (+n.p.switchMs || 20) * (n.p.revertive ? 2 : 1)))) / 1000 : P.restoreSec; };
     const lam = k => P.cutRate * k / 1000, Uf = k => lam(k) * P.mttr / 8760;
     const plan = Array.isArray(g.plan) && g.plan.length ? g.plan : [{ svc: true, from: '', to: '', via: '', conv: '', prot: '' }];
     const section = (x, y, via, prot) => { // one routed stretch, optionally protected
@@ -1461,7 +1462,7 @@ const MODEL = (() => {
     const txDbm = W && A.type === 'oadm' ? +A.p.tx - +A.p.ad : W && A.type === 'roadm' ? +g.launch : (A.p.tx === '' || A.p.tx == null ? mode.tx : +A.p.tx) - (isEnd(A) ? degOf(A) + spareLoss(A) : 0); // a channel added at a ROADM starts at the launch level; a degraded laser is weaker
     let mpi = 0, xpmPen = 0, P = lin(txDbm) / 1000, Pase = P / lin(mode.txOsnr), Pnli = 0, cd = 0, dgd2 = 0, km = 0, passes = 0, nch = 1, maxNch = 1, tilt = 0;
     const tiltSeen = []; // tilt (dB, low- minus high-frequency channel) at every amplifier input and at the receiver
-    const hops = [], alarms = [];
+    const hops = [], alarms = [], failovers = []; // a protection switch that is passing its other port because the selected one cannot carry the light
     const snap = () => ({ sig: db(P * 1000), ase: db(Pase * 1000), nli: Pnli > 0 ? db(Pnli * 1000 * PHY_.BREF / Rs) : -99 });
     const osnrNow = () => db(P / Pase);
     const gosnrNow = () => db(1 / (Pase / P + (Pnli / P) * Rs / PHY_.BREF));
@@ -1621,6 +1622,7 @@ const MODEL = (() => {
         // A splitter sends the light to both branches: the branch the route takes gets its share of the power (a 99/1 tap costs 0.05 dB on the main
         // branch and 20 dB on the tap). A switch passes one branch for about 1 dB. Which branch is the route's cable on that side of the device.
         const inP = oadmSide(link(path.links[i]), nxt.id), branch = inP !== 'c' ? inP : oadmSide(link(path.links[i + 1]), nxt.id);
+        if (t === 'switch' && !W && !eol && !rv && branch !== (nxt.p.pos === 'b' ? 'b' : 'a')) failovers.push({ id: nxt.id, name: nxt.name, from: nxt.p.pos === 'b' ? 'b' : 'a', to: branch, revertive: !!nxt.p.revertive, wtrMin: +nxt.p.wtrMin || 0 });
         const b = snap(), lo = (t === 'splitter' ? splitLossDb(nxt, branch) : +nxt.p.il) + degOf(nxt); loss(lo);
         if (planOn) { nch = litCount(i + 1); curAct = maskAt(i + 1); }
         rec(nxt.name, t, b, { inP, outP: inP === 'c' ? branch : 'c', gain: -lo, note: t === 'splitter' ? `${nxt.p.ratio} splitter, port ${branch.toUpperCase()}: ${f1(lo)} dB` : `switch passing port ${branch.toUpperCase()}${nxt.p.pos === branch ? '' : ' (it switched away from the selected port)'}` });
@@ -1665,7 +1667,8 @@ const MODEL = (() => {
       r2.switched = true; return r2;
     };
     if (isEnd(Z) && spareLoss(Z)) loss(spareLoss(Z)); // the switch or y-cable in front of the receiver
-    const res = { mode, modeKey, A, Z, path, raman: ramanViews, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
+    for (const f of failovers) alarms.push({ sev: 'info', text: `${f.name} moved from port ${f.from.toUpperCase()} to port ${f.to.toUpperCase()}: the light is on the protection path. ${f.revertive ? `It goes back to port ${f.from.toUpperCase()} after the repair and ${f.wtrMin} min of stable light (wait-to-restore), with a second short hit.` : `It stays on port ${f.to.toUpperCase()} after the repair (non-revertive), and port ${f.from.toUpperCase()} becomes the standby.`}` });
+    const res = { failovers, mode, modeKey, A, Z, path, raman: ramanViews, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
     if (!eol && !rv && !W && S.nodes.some(n => n.type === 'oadm' && (n.p.p1310 || n.p.osc))) {
       res.b1310 = band1310(S); res.osc = oscSpans(S);
       for (const r of res.b1310.links) if (r.status === 'down' || (r.status === 'warn' && /overload/.test(r.why))) alarms.push({ sev: 'warn', text: `The 1310 nm link ${r.aName} to ${r.bName} ${r.status === 'down' ? 'is down' : 'is overloaded'}: ${r.why}.` });

@@ -2102,3 +2102,25 @@ test('distributed Raman noise: the integral matches the lumped figure for a unif
   const nf = r => +/effective noise figure is ([\d.-]+)/.exec(r.hops.find(h => /Raman/.test(h.note || '')).note)[1]; assert.ok(nf(fw) < nf(bw), 'forward pumping has the lower span noise figure: the gain comes before most of the loss');
   assert.equal(M.sanitize({ nodes: [], links: [], g: { tempC: 999 } }).g.tempC, 85); assert.equal(M.sanitize({ nodes: [], links: [], g: { tempC: 'x' } }).g.tempC, 27);
 });
+
+test('revertive switching: failover is reported, a revertive switch hits twice per cut, a non-revertive one is told to stay put', () => {
+  const mk = rev => { const S = M.sanitize(build('olp')), sw = S.nodes.find(n => n.type === 'switch'); sw.p.revertive = rev; return { S, sw }; };
+  // defaults and sanitising
+  const d = M.TYPES.switch.def(); assert.equal(d.revertive, true); assert.equal(d.wtrMin, 5);
+  const bad = mk(true); bad.sw.p.wtrMin = 9999; bad.sw.p.revertive = 'maybe'; const cl = M.sanitize(clone(bad.S)).nodes.find(n => n.type === 'switch'); assert.equal(cl.p.wtrMin, 120); assert.equal(cl.p.revertive, true);
+  bad.sw.p.wtrMin = 'x'; assert.equal(M.sanitize(clone(bad.S)).nodes.find(n => n.type === 'switch').p.wtrMin, 5);
+  // intact: nothing to report, and the selected port is used even though the other branch is the shorter one
+  const { S, sw } = mk(true); let r = M.simulate(S); assert.deepEqual(r.failovers, []); assert.equal(r.status, 'up');
+  const fib = S.links.filter(l => l.kind === 'fiber'), working = fib.find(l => r.path.links.includes(l.id)); assert.equal(working.p.len, 60, 'the working branch is the 60 km one');
+  const short = M.sanitize(clone(S)); short.links.filter(l => l.kind === 'fiber').find(l => !r.path.links.includes(l.id)).p.len = 5; assert.ok(M.simulate(short).path.links.includes(working.id), 'a much shorter protection branch is not used while the selected port is fine');
+  // a cut on the working branch: the switch rides the other port and says so, with the revert story
+  working.p.cut = true; r = M.simulate(S); assert.equal(r.status, 'up'); assert.equal(r.failovers.length, 1); assert.deepEqual([r.failovers[0].from, r.failovers[0].to, r.failovers[0].revertive], ['a', 'b', true]);
+  assert.ok(r.alarms.some(a => /SW-Z moved from port A to port B.*goes back to port A after the repair and 5 min of stable light/.test(a.text)));
+  const nr = mk(false); nr.S.links.filter(l => l.kind === 'fiber').find(l => l.p.len === 60).p.cut = true; const rn = M.simulate(nr.S);
+  assert.equal(rn.failovers[0].revertive, false); assert.ok(rn.alarms.some(a => /stays on port B after the repair \(non-revertive\)/.test(a.text)));
+  // moving the position to the port it failed over to (what the app does for a non-revertive switch) makes the failover go away, and it survives the splice
+  nr.sw.p.pos = 'b'; assert.deepEqual(M.simulate(nr.S).failovers, []); nr.S.links.forEach(l => { l.p.cut = false; }); const spliced = M.simulate(nr.S); assert.deepEqual(spliced.failovers, []); assert.ok(spliced.path.links.includes(nr.S.links.filter(l => l.kind === 'fiber').find(l => l.p.len === 80).id), 'still on the 80 km protection branch after the repair');
+  // availability: a revertive switch costs one more switch time per cut
+  const a = M.resilience(mk(true).S)[0], b = M.resilience(mk(false).S)[0], lam = 3 * 60 / 1000;
+  assert.ok(Math.abs((a.downSec - b.downSec) - lam * 0.020) < 1e-9, 'one extra 20 ms hit per cut');
+});
