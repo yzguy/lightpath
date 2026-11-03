@@ -519,7 +519,7 @@ const MODEL = (() => {
     const hostIds = new Set(nodes.filter(n => n.type === 'host').map(n => n.id));
     const flows = (Array.isArray(o.flows) ? o.flows : []).slice(0, 40).map(f => (f && typeof f === 'object' && hostIds.has(f.a) && hostIds.has(f.z) && f.a !== f.z && Number.isFinite(+f.gbps) && f.gbps !== '' && f.gbps !== null && typeof f.gbps !== 'boolean' ? { a: f.a, z: f.z, gbps: Math.min(1600, Math.max(0, +f.gbps)) } : null)).filter(Boolean);
     const demands = (Array.isArray(o.demands) ? o.demands : []).slice(0, 40).map(d => (d && typeof d === 'object' && seen.has(d.a) && seen.has(d.z) && d.a !== d.z && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.a) || {}).type) && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.z) || {}).type)
-      ? { a: d.a, z: d.z, mode: PHY_.MODES[d.mode] ? d.mode : 'zrp400', count: Math.min(96, Math.max(1, Math.round(num(d.count, 1)))) } : null)).filter(Boolean);
+      ? { a: d.a, z: d.z, mode: PHY_.MODES[d.mode] ? d.mode : 'zrp400', count: Math.min(96, Math.max(1, Math.round(num(d.count, 1)))), prot: d.prot === '1+1' ? '1+1' : '' } : null)).filter(Boolean);
     return { nodes, links, g, svc, demands, flows };
   }
 
@@ -1359,24 +1359,58 @@ const MODEL = (() => {
     if (opts.order === 'longest') list.sort((p, q) => rank(q) - rank(p));
     const results = [], entries = [];
     for (const d of list) {
-      const mode = PHY_.MODES[d.mode] || PHY_.MODES.zrp400, cs = cands(d), out = { a: d.a, z: d.z, mode: d.mode };
+      const mode = PHY_.MODES[d.mode] || PHY_.MODES.zrp400, cs = cands(d), out = { a: d.a, z: d.z, mode: d.mode, prot: d.prot === '1+1' };
       if (!cs.length) { results.push({ ...out, status: 'no route' }); continue; }
-      let reach = false, placed = null;
+      const ok = e => Math.abs(e.cd) <= mode.cdTol && e.margin >= minM, wantProt = d.prot === '1+1', freeOn = links => used.findIndex(u => links.every(id => !u.has(id)));
+      const nm = id => (node(id) || {}).name;
+      let reach = false, placed = null, fallback = null, why = '';
       for (const r of cs) {
         const est = estimateRoute(S, r, mode, loads, df);
-        if (Math.abs(est.cd) > mode.cdTol || est.margin < minM) continue;
+        if (!ok(est)) continue;
         reach = true;
-        const slot = used.findIndex(u => r.links.every(id => !u.has(id)));
-        if (slot >= 0) { placed = { slot, r, est }; break; }
+        if (wantProt) { // 1+1: a fiber-disjoint second route lit with the same copy in the same slot, both routes loading their fibers
+          const pp = plannedPair(S, d.a, d.z, r.via);
+          if (!pp.P0) { const s = freeOn(r.links); if (s >= 0 && !fallback) fallback = { slot: s, r, est }; why = 'no fiber-disjoint route'; continue; }
+          const P = { ...pp.P0, km: pp.P0.links.reduce((t, id) => t + (link(id).kind === 'fiber' ? +link(id).p.len : 0), 0) }, pe = estimateRoute(S, P, mode, loads, df);
+          if (!ok(pe)) { why = 'protection route out of reach'; continue; }
+          const links = [...new Set([...r.links, ...P.links])], slot = freeOn(links);
+          if (slot >= 0) { placed = { slot, r, est, links, P, pe }; break; }
+        } else {
+          const slot = freeOn(r.links);
+          if (slot >= 0) { placed = { slot, r, est, links: r.links }; break; }
+        }
       }
-      if (!placed) { results.push({ ...out, status: reach ? 'blocked' : 'unreachable' }); continue; }
-      take(placed.slot, placed.r.links);
-      entries.push({ slot: placed.slot, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: placed.r.via, conv: '', slot2: placed.slot, prot: '' });
-      results.push({ ...out, status: 'placed', slot: placed.slot, km: placed.r.km, hops: placed.r.nodes.length - 1, margin: placed.est.margin, via: placed.r.via, detour: placed.r !== cs[0], route: placed.r.nodes.map(id => (node(id) || {}).name) });
+      let conv = null;
+      if (!placed && !fallback && opts.converters && !wantProt) { // a converter at a ROADM on the way gives each half its own slot (wavelength continuity no longer ties them), each half judged on its own
+        for (const r of cs) {
+          for (let i = 1; i < r.nodes.length - 1 && !conv; i++) {
+            if ((node(r.nodes[i]) || {}).type !== 'roadm') continue;
+            const h1 = { nodes: r.nodes.slice(0, i + 1), links: r.links.slice(0, i) }, h2 = { nodes: r.nodes.slice(i), links: r.links.slice(i) }, e1 = estimateRoute(S, h1, mode, loads, df), e2 = estimateRoute(S, h2, mode, loads, df);
+            if (!ok(e1) || !ok(e2)) continue;
+            const s1 = freeOn(h1.links), s2 = freeOn(h2.links);
+            if (s1 >= 0 && s2 >= 0) conv = { s1, s2, at: r.nodes[i], r, h1, h2, margin: Math.min(e1.margin, e2.margin) };
+          }
+          if (conv) break;
+        }
+      }
+      const route = r => r.nodes.map(nm);
+      if (placed) {
+        take(placed.slot, placed.links);
+        entries.push({ slot: placed.slot, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: placed.r.via, conv: '', slot2: placed.slot, prot: wantProt ? '1+1' : '' });
+        results.push({ ...out, status: 'placed', slot: placed.slot, km: placed.r.km, hops: placed.r.nodes.length - 1, margin: placed.P ? Math.min(placed.est.margin, placed.pe.margin) : placed.est.margin, via: placed.r.via, detour: placed.r !== cs[0], route: route(placed.r), protRoute: placed.P ? route(placed.P) : undefined, protKm: placed.P ? placed.P.km : undefined });
+      } else if (fallback) { // wanted protection, but nothing is disjoint: carry it unprotected and say so
+        take(fallback.slot, fallback.r.links);
+        entries.push({ slot: fallback.slot, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: fallback.r.via, conv: '', slot2: fallback.slot, prot: '' });
+        results.push({ ...out, status: 'placed', unprotected: true, slot: fallback.slot, km: fallback.r.km, hops: fallback.r.nodes.length - 1, margin: fallback.est.margin, via: fallback.r.via, detour: fallback.r !== cs[0], route: route(fallback.r) });
+      } else if (conv) {
+        take(conv.s1, conv.h1.links); take(conv.s2, conv.h2.links);
+        entries.push({ slot: conv.s1, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: conv.r.via, conv: conv.at, slot2: conv.s2, prot: '' });
+        results.push({ ...out, status: 'placed', converted: nm(conv.at), slot: conv.s1, slot2: conv.s2, km: conv.r.km, hops: conv.r.nodes.length - 1, margin: conv.margin, via: conv.r.via, detour: conv.r !== cs[0], route: route(conv.r) });
+      } else results.push({ ...out, status: reach ? 'blocked' : 'unreachable', why: reach ? why : '' });
     }
-    const n = k => results.filter(r => r.status === k).length, placed = n('placed'), blocked = n('blocked');
+    const n = k => results.filter(r => r.status === k).length, placed = n('placed'), blocked = n('blocked'), protectedN = results.filter(r => r.status === 'placed' && r.protRoute).length, unprotectedN = results.filter(r => r.unprotected).length, convertedN = results.filter(r => r.converted).length;
     const fibers = [...loads].filter(([id]) => link(id).kind === 'fiber').map(([id, c]) => ({ id, name: `${node(link(id).a).name}–${node(link(id).b).name}`, n: c, util: c / slotsN }));
-    return { entries, results, stats: { demands: results.length, placed, blocked, unreachable: n('unreachable') + n('no route'), blocking: placed + blocked ? blocked / (placed + blocked) : 0,
+    return { entries, results, stats: { demands: results.length, placed, blocked, protected: protectedN, unprotected: unprotectedN, converted: convertedN, unreachable: n('unreachable') + n('no route'), blocking: placed + blocked ? blocked / (placed + blocked) : 0,
       maxUtil: Math.max(0, ...fibers.map(f => f.util)), slotsUsed: used.filter(u => u.size).length, slots: slotsN, fibers, svcSlot } };
   }
   // Blocking probability against offered load: random demands between random pairs of ROADMs (or ends), a fixed seed so it is repeatable.

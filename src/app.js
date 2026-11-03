@@ -935,7 +935,7 @@ function renderTabBody() {
 }
 
 // demand-driven planner: a traffic list in, routes and slots out, with blocking
-let plannerOpts = { minMargin: 1, K: 6, order: 'given' };
+let plannerOpts = { minMargin: 1, K: 6, order: 'given', converters: false };
 function plannerView() {
   S.demands ??= [];
   const wrap = el('div', { class: 'planwrap pad' }), nodes = S.nodes.filter(n => n.type === 'roadm' || isEnd(n)), modes = Object.entries(PHY.MODES).map(([k, m]) => [k, m.short]);
@@ -945,45 +945,48 @@ function plannerView() {
   const kSel = el('select', { 'aria-label': 'Alternative routes' }); [[1, 'Shortest route only'], [2, 'Up to 2 routes'], [4, 'Up to 4 routes'], [6, 'Up to 6 routes']].forEach(([v, t]) => kSel.append(el('option', { value: v, text: t }))); kSel.value = plannerOpts.K; kSel.addEventListener('change', () => { plannerOpts.K = +kSel.value; redo(); });
   const oSel = el('select', { 'aria-label': 'Order' }); [['given', 'In the order listed'], ['longest', 'Longest routes first']].forEach(([v, t]) => oSel.append(el('option', { value: v, text: t }))); oSel.value = plannerOpts.order; oSel.addEventListener('change', () => { plannerOpts.order = oSel.value; redo(); });
   const mm = el('input', { type: 'number', step: 0.5, min: -5, max: 10, value: plannerOpts.minMargin, 'aria-label': 'Minimum margin (dB)', class: 'slotin' }); mm.addEventListener('change', () => { if (isFinite(+mm.value)) { plannerOpts.minMargin = +mm.value; redo(); } });
-  optRow.append(el('b', { text: 'Traffic' }), kSel, oSel, el('span', { class: 'muted small', text: 'Minimum Q margin' }), mm, el('span', { class: 'muted small', text: 'dB' }));
-  const tbl = el('table', { class: 'tbl' }), th = el('tr'); ['From', 'To', 'Mode', 'Channels', ''].forEach(h => th.append(el('th', { text: h })));
+  const cv = el('input', { type: 'checkbox', id: 'pl-conv', checked: plannerOpts.converters }); cv.addEventListener('change', () => { plannerOpts.converters = cv.checked; redo(); });
+  optRow.append(el('b', { text: 'Traffic' }), kSel, oSel, el('label', { class: 'small', title: 'When no slot is free end to end, regenerate the channel at a ROADM on its route into another slot. Each half has to clear the margin on its own.' }, [cv, ' Use converters']), el('span', { class: 'muted small', text: 'Minimum Q margin' }), mm, el('span', { class: 'muted small', text: 'dB' }));
+  const tbl = el('table', { class: 'tbl' }), th = el('tr'); ['From', 'To', 'Mode', 'Channels', 'Protect', ''].forEach(h => th.append(el('th', { text: h })));
   tbl.append(el('thead', {}, [th]));
   const tb = el('tbody');
   const nodeSel = (d, key) => { const s = el('select', { 'aria-label': key === 'a' ? 'From' : 'To' }); nodes.forEach(n => s.append(el('option', { value: n.id, text: n.name }))); s.value = d[key]; s.addEventListener('change', () => { d[key] = s.value; if (d.a === d.z) d[key === 'a' ? 'z' : 'a'] = nodes.find(n => n.id !== d[key]).id; redo(); }); return s; };
   S.demands.forEach(d => {
     const ms = el('select', { 'aria-label': 'Mode' }); modes.forEach(([k, t]) => ms.append(el('option', { value: k, text: t }))); ms.value = d.mode; ms.addEventListener('change', () => { d.mode = ms.value; redo(); });
     const cnt = el('input', { type: 'number', step: 1, min: 1, max: 96, value: d.count, class: 'slotin', 'aria-label': 'Channels' }); cnt.addEventListener('change', () => { d.count = Math.max(1, Math.min(96, Math.round(+cnt.value) || 1)); redo(); });
-    tb.append(el('tr', {}, [nodeSel(d, 'a'), nodeSel(d, 'z'), ms, cnt, el('button', { class: 'btn', text: '×', title: 'Remove', 'aria-label': `Remove the demand from ${(node(d.a) || {}).name || 'A'} to ${(node(d.z) || {}).name || 'Z'}`, onclick: () => { S.demands.splice(S.demands.indexOf(d), 1); redo(); } })].map(x => el('td', {}, [x]))));
+    const pr = el('select', { 'aria-label': 'Protection', title: '1+1: a second copy on a route that shares no fiber with the working one, in the same slot, loading both routes' }); [['', 'None'], ['1+1', '1+1']].forEach(([v, t]) => pr.append(el('option', { value: v, text: t }))); pr.value = d.prot || ''; pr.addEventListener('change', () => { d.prot = pr.value; redo(); });
+    tb.append(el('tr', {}, [nodeSel(d, 'a'), nodeSel(d, 'z'), ms, cnt, pr, el('button', { class: 'btn', text: '×', title: 'Remove', 'aria-label': `Remove the demand from ${(node(d.a) || {}).name || 'A'} to ${(node(d.z) || {}).name || 'Z'}`, onclick: () => { S.demands.splice(S.demands.indexOf(d), 1); redo(); } })].map(x => el('td', {}, [x]))));
   });
   tbl.append(tb);
   const addBtn = el('button', { class: 'btn', text: 'Add demand', onclick: () => { S.demands.push({ a: nodes[0].id, z: nodes[1].id, mode: nodes.find(n => isEnd(n)) ? nodes.find(n => isEnd(n)).p.mode : 'zrp400', count: 4 }); redo(); } });
   const meshBtn = el('button', { class: 'btn', text: 'Every pair of ROADMs × 4', title: 'Replace the list with 4 channels between each pair of ROADMs', onclick: () => { const rs = S.nodes.filter(n => n.type === 'roadm'); const mode = (S.nodes.find(isEnd) || { p: { mode: 'zrp400' } }).p.mode; S.demands = []; for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) S.demands.push({ a: rs[i].id, z: rs[j].id, mode, count: 4 }); redo(); } });
   wrap.append(optRow, el('div', { style: 'overflow:auto;max-height:240px' }, [tbl]), el('div', { class: 'planbar' }, [addBtn, meshBtn]));
   if (!S.demands.length) return (wrap.append(el('p', { class: 'muted', text: 'List the traffic you want to carry: who talks to whom, at what rate, how many channels. The planner routes each channel (shortest route first, then detours through other ROADMs when a fiber is full or too long), gives it the first free slot, checks the estimated margin and reports what is blocked.' })), wrap);
-  const r = MODEL.planDemands(S, S.demands, { minMargin: plannerOpts.minMargin, K: plannerOpts.K, order: plannerOpts.order }), st = r.stats;
-  wrap.append(el('p', { html: `<b>${st.placed}</b> of ${st.demands} placed, <b class="${st.blocked ? 'st-down' : 'st-up'}">${st.blocked}</b> blocked (${(100 * st.blocking).toFixed(1)}%), ${st.unreachable ? `<b class="st-degraded">${st.unreachable}</b> out of reach, ` : ''}${st.slotsUsed} of ${st.slots} slots used, busiest fiber ${(100 * st.maxUtil).toFixed(0)}% full.` }));
+  const r = MODEL.planDemands(S, S.demands, { minMargin: plannerOpts.minMargin, K: plannerOpts.K, order: plannerOpts.order, converters: plannerOpts.converters }), st = r.stats;
+  wrap.append(el('p', { html: `<b>${st.placed}</b> of ${st.demands} placed, <b class="${st.blocked ? 'st-down' : 'st-up'}">${st.blocked}</b> blocked (${(100 * st.blocking).toFixed(1)}%), ${st.unreachable ? `<b class="st-degraded">${st.unreachable}</b> out of reach, ` : ''}${st.protected ? `${st.protected} protected, ` : ''}${st.unprotected ? `<b class="st-degraded">${st.unprotected}</b> asked for protection but have no disjoint route, ` : ''}${st.converted ? `${st.converted} converted, ` : ''}${st.slotsUsed} of ${st.slots} slots used, busiest fiber ${(100 * st.maxUtil).toFixed(0)}% full.` }));
   wrap.append(el('div', { class: 'planbar' }, [el('button', { class: 'btn primary', text: 'Apply to the bench', title: 'Replace the channel plan with the service plus these channels; the Channels tab then shows the full simulation', onclick: () => {
     const svc = (S.g.plan && S.g.plan.find(c => c.svc)) || { slot: st.svcSlot, mode: (node(S.svc.a) || { p: { mode: 'zrp400' } }).p.mode, off: 0, svc: true, from: '', to: '', via: '', conv: '', slot2: st.svcSlot, prot: '' };
     S.g.plan = MODEL.sanitizePlan([{ ...svc, slot: st.svcSlot }, ...r.entries], +S.g.df); S.g.nch = S.g.plan.length; tab = 'plan'; renderAll(); toast(`${r.entries.length} channels added to the plan`); } })]));
   const rt = el('table', { class: 'tbl' }), rth = el('tr'); ['', 'Demand', 'Status', 'Slot', 'Route', 'km', 'Est. margin'].forEach(h => rth.append(el('th', { text: h })));
   rt.append(el('thead', {}, [rth]));
   const rb = el('tbody'), nm = id => (node(id) || {}).name;
-  r.results.forEach((x, i) => rb.append(el('tr', {}, [i + 1, `${nm(x.a)} → ${nm(x.z)} (${PHY.MODES[x.mode].short})`, el('span', { class: x.status === 'placed' ? (x.detour ? 'st-degraded' : 'st-up') : 'st-down', text: x.status === 'placed' ? (x.detour ? 'PLACED, DETOUR' : 'PLACED') : x.status.toUpperCase() }), x.slot != null ? x.slot + 1 : '', x.route ? x.route.join(' → ') : '', x.km != null ? Math.round(x.km) : '', x.margin != null ? f1(x.margin) : ''].map(v => (v instanceof Node ? el('td', {}, [v]) : el('td', { text: String(v) }))))));
+  r.results.forEach((x, i) => rb.append(el('tr', {}, [i + 1, `${nm(x.a)} → ${nm(x.z)} (${PHY.MODES[x.mode].short})`, el('span', { class: x.status === 'placed' ? (x.detour || x.unprotected ? 'st-degraded' : 'st-up') : 'st-down', text: x.status === 'placed' ? [x.converted ? 'CONVERTED' : x.protRoute ? 'PROTECTED' : x.unprotected ? 'UNPROTECTED' : 'PLACED', x.detour ? 'DETOUR' : ''].filter(Boolean).join(', ') : x.status.toUpperCase() + (x.why ? ` (${x.why})` : '') }), x.slot != null ? (x.slot2 != null ? `${x.slot + 1} → ${x.slot2 + 1}` : x.slot + 1) : '', x.route ? x.route.join(' → ') + (x.protRoute ? ` | protection ${x.protRoute.join(' → ')}` : '') + (x.converted ? ` (converted at ${x.converted})` : '') : '', x.km != null ? Math.round(x.km) : '', x.margin != null ? f1(x.margin) : ''].map(v => (v instanceof Node ? el('td', {}, [v]) : el('td', { text: String(v) }))))));
   rt.append(rb);
   wrap.append(el('div', { style: 'overflow:auto;max-height:300px' }, [rt]));
   // blocking against offered load, with and without detours
   const loadsList = [10, 20, 40, 60, 80, 100, 140, 180], md = S.demands[0].mode;
-  const c1 = MODEL.blockingCurve(S, md, loadsList, 8, 3, { K: 1, minMargin: plannerOpts.minMargin }), cK = MODEL.blockingCurve(S, md, loadsList, 8, 3, { K: Math.max(2, plannerOpts.K), minMargin: plannerOpts.minMargin });
+  const cC = plannerOpts.converters ? MODEL.blockingCurve(S, md, loadsList, 8, 3, { K: Math.max(2, plannerOpts.K), minMargin: plannerOpts.minMargin, converters: true }) : [], c1 = MODEL.blockingCurve(S, md, loadsList, 8, 3, { K: 1, minMargin: plannerOpts.minMargin }), cK = MODEL.blockingCurve(S, md, loadsList, 8, 3, { K: Math.max(2, plannerOpts.K), minMargin: plannerOpts.minMargin });
   if (c1.length) {
-    const W = 900, H = 240, ml = 46, mr = 16, mt = 16, mb = 40, lo = loadsList[0], hi = loadsList[loadsList.length - 1], ymax = Math.max(10, Math.ceil(Math.max(...c1.map(p => p.p), ...cK.map(p => p.p)) * 10) * 10);
+    const W = 900, H = 240, ml = 46, mr = 16, mt = 16, mb = 40, lo = loadsList[0], hi = loadsList[loadsList.length - 1], ymax = Math.max(10, Math.ceil(Math.max(...c1.map(p => p.p), ...cK.map(p => p.p), ...cC.map(p => p.p)) * 10) * 10);
     const X = v => ml + (v - lo) / (hi - lo) * (W - ml - mr), Y = v => mt + (1 - v / ymax) * (H - mt - mb);
     const s = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Blocking probability versus offered channels' });
     for (let v = 0; v <= ymax + 1e-9; v += ymax / 5) { s.append(sv("line", { x1: ml, x2: W - mr, y1: Y(v), y2: Y(v), class: "grid" })); const t = sv('text', { x: ml - 6, y: Y(v) + 4, class: 'ax', 'text-anchor': 'end' }); t.textContent = Math.round(v) + '%'; s.append(t); }
     loadsList.forEach(n => { const t = sv('text', { x: X(n), y: H - mb + 16, class: 'ax', 'text-anchor': 'middle' }); t.textContent = n; s.append(t); });
     const xl = sv('text', { x: (ml + W - mr) / 2, y: H - 6, class: 'ax', 'text-anchor': 'middle' }); xl.textContent = 'Channels offered (random pairs of ROADMs)'; s.append(xl);
     s.append(sv('path', { d: c1.map((p, i) => `${i ? 'L' : 'M'}${X(p.n)},${Y(p.p * 100)}`).join(' '), class: 'pl l-ase dashed' }));
+    if (cC.length) s.append(sv('path', { d: cC.map((p, i) => `${i ? 'L' : 'M'}${X(p.n)},${Y(p.p * 100)}`).join(' '), class: 'pl l-nli' }));
     s.append(sv('path', { d: cK.map((p, i) => `${i ? 'L' : 'M'}${X(p.n)},${Y(p.p * 100)}`).join(' '), class: 'pl l-sig' }));
-    wrap.append(el('h3', { text: 'Blocking against load' }), s, el('div', { class: 'legend' }, [lg('l-ase dashed', 'Shortest route only'), lg('l-sig', `Up to ${Math.max(2, plannerOpts.K)} routes`), el('span', { class: 'muted', text: 'Random traffic between ROADM pairs on this network, first-fit slots, averaged over 8 draws. The service keeps its slot. Detours let the network carry more before it blocks, at the price of longer routes with less margin.' })]));
+    wrap.append(el('h3', { text: 'Blocking against load' }), s, el('div', { class: 'legend' }, [lg('l-ase dashed', 'Shortest route only'), lg('l-sig', `Up to ${Math.max(2, plannerOpts.K)} routes`), ...(cC.length ? [lg('l-nli', 'With converters')] : []), el('span', { class: 'muted', text: 'Random traffic between ROADM pairs on this network, first-fit slots, averaged over 8 draws. The service keeps its slot. Detours let the network carry more before it blocks, at the price of longer routes with less margin.' })]));
   }
   return wrap;
 }

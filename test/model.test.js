@@ -2181,3 +2181,36 @@ test('patch cord length: default 3 m, sanitised, and it counts in latency, loss 
   for (const cord of R.links.filter(l => l.kind === 'patch')) { cord.p.len = 1003; const d = lat().latencyUs - l0; cord.p.len = 3; if (Math.abs(d - 4.9) < 1e-6) hit++; }
   assert.ok(hit >= 2, 'every cord on the path adds 4.9 us for a kilometre more of glass');
 });
+
+test('planner: a protected demand lights a fiber-disjoint second route and loads both', () => {
+  const S = build('mesh'), { ra, rb, rc } = meshIds(S); S.g.df = 150;
+  const r = M.planDemands(S, [{ a: ra, z: rb, mode: 'zrp400', count: 2, prot: '1+1' }, { a: ra, z: rc, mode: 'zrp400', count: 1 }]);
+  assert.equal(r.stats.protected, 2); assert.equal(r.stats.unprotected, 0);
+  assert.deepEqual(r.results.slice(0, 2).map(x => x.route.join('>') + ' | ' + x.protRoute.join('>')), Array(2).fill('ROADM-A>ROADM-B | ROADM-A>ROADM-C>ROADM-B'));
+  assert.deepEqual(r.entries.map(e => e.prot), ['1+1', '1+1', '']);
+  assert.equal(r.results[0].protKm, 180);
+  assert.equal(r.results[2].slot, 2, 'the protection copies already hold slots 0 and 1 on A-C');
+  // with no disjoint route the demand is carried unprotected and says so
+  const T = build('mesh'), t = meshIds(T); T.g.df = 150;
+  T.links = T.links.filter(l => !(l.kind === 'fiber' && [l.a, l.b].includes(t.rc))); // C is cut off: A-B has no second route
+  const u = M.planDemands(T, [{ a: t.ra, z: t.rb, mode: 'zrp400', count: 1, prot: '1+1' }]);
+  assert.equal(u.stats.unprotected, 1); assert.equal(u.results[0].status, 'placed'); assert.equal(u.entries[0].prot, '');
+  assert.equal(M.sanitize({ ...clone(S), demands: [{ a: ra, z: rb, mode: 'zrp400', count: 1, prot: 'x' }] }).demands[0].prot, '');
+  assert.equal(M.sanitize({ ...clone(S), demands: [{ a: ra, z: rb, mode: 'zrp400', count: 1, prot: '1+1' }] }).demands[0].prot, '1+1');
+});
+
+test('planner: a converter relieves wavelength-continuity blocking, each half judged on its own', () => {
+  const S = M.sanitize(build('mesh')), { ra, rb, rc } = meshIds(S); S.g.df = 150; const svc0 = S.svc; S.svc = { a: rc, z: rb }; // the planner only needs the service's route and slot
+  S.links.find(l => l.kind === 'fiber' && [l.a, l.b].includes(ra) && [l.a, l.b].includes(rb)).p.cut = true; // A-B only through C
+  const ds = [{ a: ra, z: rc, mode: 'zrp400', count: 31 }, { a: rc, z: rb, mode: 'zrp400', count: 16 }, { a: ra, z: rb, mode: 'zrp400', count: 1 }];
+  const plain = M.planDemands(S, ds), conv = M.planDemands(S, ds, { converters: true });
+  assert.equal(plain.stats.blocked, 1, 'no slot is free on both A-C and C-B');
+  assert.equal(conv.stats.blocked, 0); assert.equal(conv.stats.converted, 1);
+  const last = conv.results[conv.results.length - 1], e = conv.entries[conv.entries.length - 1];
+  assert.equal(last.converted, 'ROADM-C'); assert.notEqual(last.slot, last.slot2);
+  assert.equal(e.conv, rc); assert.equal(e.slot, last.slot); assert.equal(e.slot2, last.slot2);
+  // the entry is a valid plan: the simulator carries it
+  S.svc = svc0; S.g.plan = M.sanitizePlan([{ ...S.g.plan.find(c => c.svc), slot: 5, slot2: 5 }, e], +S.g.df);
+  const sim = M.simulate(S), ch = sim.channels.find(c => !c.svc);
+  assert.ok(ch && ch.status !== 'blocked' && ch.status !== 'los', 'converted channel status ' + (ch && ch.status));
+});
