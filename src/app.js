@@ -20,11 +20,26 @@ const KEY = 'lightpath-v1', OLD_KEY = 'optical-lab-v1'; // the app was called Op
 function load() {
   try {
     const t = localStorage.getItem(KEY) ?? localStorage.getItem(OLD_KEY);
-    if (t) { const o = JSON.parse(t), v = o && o.view; S = { ...MODEL.sanitize(o), view: v && isFinite(v.k) && isFinite(v.x) && isFinite(v.y) && v.k > 0 ? { x: v.x, y: v.y, k: v.k } : { x: -40, y: -60, k: 1 } }; return; }
+    if (t) { const o = JSON.parse(t), v = o && o.view; S = { ...MODEL.sanitize(o), view: v && isFinite(v.k) && isFinite(v.x) && isFinite(v.y) && v.k > 0 ? { x: v.x, y: v.y, k: v.k } : { x: -40, y: -60, k: 1 } };
+      try { const l = JSON.parse(localStorage.getItem(LAB_KEY)); if (l && PRESETS[l.key]) { labKey = l.key; labHash = l.hash; } } catch (e) {} // which scenario it started as
+      return; }
   } catch (e) { /* corrupt or outdated save: fall through to the default scenario */ }
   applyPreset('dci', true);
 }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} if (!restoring) remember(); }
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} if (!restoring) remember(); syncLab(); }
+// The Lab menu keeps showing the scenario on the bench, with "· edited" once it has been changed; a lab that is not a scenario says so.
+const LAB_KEY = 'lightpath-lab';
+let labKey = '', labHash = null;
+const strHash = t => { let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return String(h); };
+function syncLab() {
+  const sel = $('#preset'); if (!sel || !S) return;
+  for (const o of sel.options) { o.dataset.base ??= o.textContent; o.textContent = o.dataset.base; }
+  if (labKey && PRESETS[labKey]) {
+    labHash ??= strHash(snapshot()); // the first render after a load is the baseline
+    sel.value = labKey; sel.selectedOptions[0].textContent = sel.selectedOptions[0].dataset.base + (strHash(snapshot()) !== labHash ? ' · edited' : '');
+  } else { sel.value = ''; sel.options[0].textContent = 'Your own lab · load a scenario…'; }
+  try { localStorage.setItem(LAB_KEY, JSON.stringify({ key: labKey, hash: labHash })); } catch (e) {}
+}
 // Undo and redo: every change ends in save(), which records a snapshot of the lab (not the pan and zoom). Edits that come in a quick burst (typing a number,
 // dragging a slider or a node) are one step; checkpoint() makes the next change a step of its own (a scenario load, a delete, an import, a clear).
 const hist = { stack: [], i: -1, last: 0, seal: false, max: 60 };
@@ -51,7 +66,7 @@ const redo = () => { if (stepHistory(1)) toast('Redone', { label: 'Undo', fn: un
 function applyPreset(k, quiet) {
   const p = MODEL.sanitize(PRESETS[k].build());
   S = { ...p, view: { x: -40, y: -60, k: 1 } }; // everything the scenario defines, its traffic flows included
-  sel = null; if (!quiet) { fitView(true); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
+  labKey = k; labHash = null; sel = null; if (!quiet) { fitView(true); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
 }
 const node = id => S.nodes.find(n => n.id === id);
 const link = id => S.links.find(l => l.id === id);
@@ -709,7 +724,7 @@ function bindGlobals() {
 $('#g-nch').addEventListener('input', e => { if (S.g.plan) { S.g.plan = null; toast('Channel plan reset to a uniform line'); } S.g.nch = +e.target.value; $('#g-nch-v').textContent = S.g.nch; renderAll(); });
 $('#g-df').addEventListener('change', e => { const old = +S.g.df; S.g.df = +e.target.value; if (S.g.plan) { S.g.plan = MODEL.remapPlan(S.g.plan, old, S.g.df); if (S.g.plan) S.g.nch = S.g.plan.length; } renderAll(); });
 $('#g-launch').addEventListener('input', e => { S.g.launch = +e.target.value; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch; recompute(); });
-$('#preset').addEventListener('change', e => { if (e.target.value) { applyPreset(e.target.value); e.target.value = ''; } });
+$('#preset').addEventListener('change', e => { if (e.target.value) applyPreset(e.target.value); else syncLab(); });
 $('#btn-fit').addEventListener('click', () => { fitView(); applyView(); });
 { const pd = $('#paldet'), sync = () => { pd.open = !narrow.matches; }; sync(); narrow.addEventListener('change', sync); } // the palette is one tap away on a phone, open on a wide screen
 $('#btn-undo').addEventListener('click', undo); $('#btn-redo').addEventListener('click', redo);
@@ -722,7 +737,7 @@ $('#btn-export').addEventListener('click', () => { $('#io').hidden = false; $('#
 $('#io-close').addEventListener('click', () => { $('#io').hidden = true; });
 $('#io-copy').addEventListener('click', () => { const t = $('#io-text'); navigator.clipboard?.writeText(t.value).then(() => toast('Copied topology JSON'), () => { t.select(); toast('Select-all done; press Ctrl/Cmd+C'); }) ?? t.select(); });
 $('#io-load').addEventListener('click', () => {
-  try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; sel = null; $('#io').hidden = true; fitView(true); checkpoint(); renderAll(); toast('Topology loaded', { label: 'Undo', fn: undo }); }
+  try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; labKey = ''; sel = null; $('#io').hidden = true; fitView(true); checkpoint(); renderAll(); toast('Topology loaded', { label: 'Undo', fn: undo }); }
   catch (e) { toast('That text is not a topology export. Paste the JSON from Export.'); }
 });
 
@@ -732,7 +747,7 @@ csvMode.value = 'zrp400';
 $('#csv-build').addEventListener('click', () => {
   const r = MODEL.fromSpans($('#csv-text').value, csvMode.value);
   if (!r.topo) return toast(r.errors[0]);
-  S = { ...S, ...MODEL.sanitize(r.topo) }; sel = null; $('#io').hidden = true; fitView(true); checkpoint(); renderAll();
+  S = { ...S, ...MODEL.sanitize(r.topo) }; labKey = ''; sel = null; $('#io').hidden = true; fitView(true); checkpoint(); renderAll();
   toast(`Built ${r.spans.length} span${r.spans.length === 1 ? '' : 's'}` + (r.errors.length ? `. ${r.errors.length} row${r.errors.length === 1 ? '' : 's'} skipped: ${r.errors[0]}` : ''));
 });
 
