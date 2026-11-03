@@ -1331,13 +1331,16 @@ const MODEL = (() => {
   }
   // A quick physical-layer estimate for planning: one amplifier per span at the global launch power, the nonlinear noise of the channels already
   // on each fiber, ROADM filtering and dispersion. The Channels tab gives the full simulation once the plan is applied.
-  function estimateRoute(S, r, mode, loads, df) {
-    const { link, node } = mkGraph(S), Rs = mode.Rs, P = lin(+S.g.launch || 0) / 1000;
+  // o is the channel's own launch offset (dB) and pw2 the sum of lin(2 x offset) of the channels on each fiber (the cross terms go with the neighbours' power
+  // squared); `counted` says the channel is already in `loads`. Self and cross terms are weighted 1/n and (n-1)/n, so with no offsets it is the plain estimate.
+  function estimateRoute(S, r, mode, loads, df, o = 0, pw2 = null, counted = false) {
+    const { link, node } = mkGraph(S), Rs = mode.Rs, P0 = lin(+S.g.launch || 0) / 1000, P = P0 * lin(o);
     let ase = 0, nli = 0, cd = 0, passes = 0;
     for (const id of r.links) {
       const l = link(id); if (l.kind !== 'fiber') continue;
-      const fb = PHY_.FIBERS[l.p.fiber], L = +l.p.len, sl = fb.att * L + +l.p.extra, n = Math.max(1, (loads.get(id) || 0) + 1);
-      ase += lin(PHY_.ampNfEff(5.5, sl)) * PHY_.H * PHY_.NU * lin(sl) * PHY_.BREF; nli += PHY_.etaNLI(fb, L, Rs, n, df) * P ** 3; cd += fb.D * L;
+      const fb = PHY_.FIBERS[l.p.fiber], L = +l.p.len, sl = fb.att * L + +l.p.extra, k = loads.get(id) || 0, n = Math.max(1, counted ? k : k + 1), ones = n - 1;
+      const avg = !pw2 || !ones ? 1 : Math.max(0, (pw2.get(id) || 0) - (counted ? lin(2 * o) : 0)) / ones;
+      ase += lin(PHY_.ampNfEff(5.5, sl)) * PHY_.H * PHY_.NU * lin(sl) * PHY_.BREF; nli += PHY_.etaNLI(fb, L, Rs, n, df) * P * (P * P / n + P0 * P0 * avg * ones / n); cd += fb.D * L;
     }
     r.nodes.forEach((id, i) => { if ((node(id) || {}).type === 'roadm') passes += i === 0 || i === r.nodes.length - 1 ? 1 : 2; });
     const line = 1 / (ase / P * Rs / PHY_.BREF + (nli > 0 ? nli / P : 0)), eff = PHY_.effSnr(mode, line, passes * PHY_.filterPenaltyPerPass(Rs, df) + PHY_.cdPenalty(mode, cd));
@@ -1349,14 +1352,31 @@ const MODEL = (() => {
     useGrid(S);
     const g = S.g, df = +g.df * 1e9, slotsN = PHY_.cBandSlots(df), minM = opts.minMargin ?? 1, K = opts.K ?? 6, cache = opts.cache || new Map();
     const { node, link } = mkGraph(S), used = Array.from({ length: slotsN }, () => new Set()), loads = new Map();
-    const take = (slot, links) => links.forEach(id => { used[slot].add(id); loads.set(id, (loads.get(id) || 0) + 1); });
+    const pw2 = new Map(), placedList = []; // pw2: per fiber, the sum of lin(2 x launch offset) of what is on it; placedList: the routes and offsets already given out
+    const take = (slot, links, o = 0) => links.forEach(id => { used[slot].add(id); loads.set(id, (loads.get(id) || 0) + 1); pw2.set(id, (pw2.get(id) || 0) + lin(2 * o)); });
+    const OFFS = [0.5, -0.5, 1, -1, 1.5, -1.5, 2, -2, 2.5, -2.5, 3, -3];
     const sp = S.svc && node(S.svc.a) && node(S.svc.z) ? route(S, S.svc.a, S.svc.z, false) || route(S, S.svc.a, S.svc.z, true) : null;
     const svcEntry = Array.isArray(g.plan) ? g.plan.find(c => c.svc) : null, svcSlot = svcEntry ? +svcEntry.slot : Math.floor(slotsN / 2);
     if (sp) take(svcSlot, sp.links);
+    if (sp && svcEntry && PHY_.MODES[svcEntry.mode]) placedList.push({ r: sp, mode: PHY_.MODES[svcEntry.mode], o: 0 });
     const list = []; demands.forEach(d => { for (let i = 0; i < d.count && list.length < 96; i++) list.push(d); });
     const rank = d => { const c = cands(d); return c.length ? c[0].km : 0; };
     function cands(d) { const key = d.a + '>' + d.z; if (!cache.has(key)) cache.set(key, candidateRoutes(S, d.a, d.z, K)); return cache.get(key); }
     if (opts.order === 'longest') list.sort((p, q) => rank(q) - rank(p));
+    // The smallest launch offset (dB) at which every given route clears the margin and no channel already on a shared fiber falls below it (its own
+    // offset stays; the new channel adds load and cross-channel noise). Offset 0 is the plain estimate.
+    function withOffset(routes, mode) {
+      const ok0 = (e) => Math.abs(e.cd) <= mode.cdTol && e.margin >= minM;
+      for (const o of opts.launch ? [0, ...OFFS] : [0]) {
+        const ests = routes.map(r => estimateRoute(S, r, mode, loads, df, o, pw2)); if (!ests.every(ok0)) continue;
+        if (o !== 0) {
+          const loads2 = new Map(loads), pw22 = new Map(pw2), ids = new Set(); for (const r of routes) for (const id of r.links) { ids.add(id); loads2.set(id, (loads2.get(id) || 0) + 1); pw22.set(id, (pw22.get(id) || 0) + lin(2 * o)); }
+          if (!placedList.every(p => !p.r.links.some(id => ids.has(id)) || ok0(estimateRoute(S, p.r, p.mode, loads2, df, p.o, pw22, true)))) continue;
+        }
+        return { o, ests };
+      }
+      return null;
+    }
     const results = [], entries = [];
     for (const d of list) {
       const mode = PHY_.MODES[d.mode] || PHY_.MODES.zrp400, cs = cands(d), out = { a: d.a, z: d.z, mode: d.mode, prot: d.prot === '1+1' };
@@ -1365,20 +1385,20 @@ const MODEL = (() => {
       const nm = id => (node(id) || {}).name;
       let reach = false, placed = null, fallback = null, why = '';
       for (const r of cs) {
-        const est = estimateRoute(S, r, mode, loads, df);
-        if (!ok(est)) continue;
+        const w1 = withOffset([r], mode); if (!w1) continue; // out of reach, even with a launch offset when that is allowed
         reach = true;
-        if (wantProt) { // 1+1: a fiber-disjoint second route lit with the same copy in the same slot, both routes loading their fibers
-          const pp = plannedPair(S, d.a, d.z, r.via);
-          if (!pp.P0) { const s = freeOn(r.links); if (s >= 0 && !fallback) fallback = { slot: s, r, est }; why = 'no fiber-disjoint route'; continue; }
-          const P = { ...pp.P0, km: pp.P0.links.reduce((t, id) => t + (link(id).kind === 'fiber' ? +link(id).p.len : 0), 0) }, pe = estimateRoute(S, P, mode, loads, df);
-          if (!ok(pe)) { why = 'protection route out of reach'; continue; }
-          const links = [...new Set([...r.links, ...P.links])], slot = freeOn(links);
-          if (slot >= 0) { placed = { slot, r, est, links, P, pe }; break; }
-        } else {
+        if (!wantProt) {
           const slot = freeOn(r.links);
-          if (slot >= 0) { placed = { slot, r, est, links: r.links }; break; }
+          if (slot >= 0) { placed = { slot, r, est: w1.ests[0], links: r.links, o: w1.o }; break; }
+          continue;
         }
+        // 1+1: a fiber-disjoint second route lit with the same copy in the same slot, both routes loading their fibers
+        const pp = plannedPair(S, d.a, d.z, r.via);
+        if (!pp.P0) { const s = freeOn(r.links); if (s >= 0 && !fallback) fallback = { slot: s, r, est: w1.ests[0], o: w1.o }; why = 'no fiber-disjoint route'; continue; }
+        const P = { ...pp.P0, km: pp.P0.links.reduce((t, id) => t + (link(id).kind === 'fiber' ? +link(id).p.len : 0), 0) }, w2 = withOffset([r, P], mode);
+        if (!w2) { why = 'protection route out of reach'; continue; }
+        const links = [...new Set([...r.links, ...P.links])], slot = freeOn(links);
+        if (slot >= 0) { placed = { slot, r, est: w2.ests[0], links, P, pe: w2.ests[1], o: w2.o }; break; }
       }
       let conv = null;
       if (!placed && !fallback && opts.converters && !wantProt) { // a converter at a ROADM on the way gives each half its own slot (wavelength continuity no longer ties them), each half judged on its own
@@ -1395,15 +1415,15 @@ const MODEL = (() => {
       }
       const route = r => r.nodes.map(nm);
       if (placed) {
-        take(placed.slot, placed.links);
-        entries.push({ slot: placed.slot, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: placed.r.via, conv: '', slot2: placed.slot, prot: wantProt ? '1+1' : '' });
-        results.push({ ...out, status: 'placed', slot: placed.slot, km: placed.r.km, hops: placed.r.nodes.length - 1, margin: placed.P ? Math.min(placed.est.margin, placed.pe.margin) : placed.est.margin, via: placed.r.via, detour: placed.r !== cs[0], route: route(placed.r), protRoute: placed.P ? route(placed.P) : undefined, protKm: placed.P ? placed.P.km : undefined });
+        take(placed.slot, placed.links, placed.o); placedList.push({ r: placed.r, mode, o: placed.o }); if (placed.P) placedList.push({ r: placed.P, mode, o: placed.o });
+        entries.push({ slot: placed.slot, mode: d.mode, off: placed.o, svc: false, from: d.a, to: d.z, via: placed.r.via, conv: '', slot2: placed.slot, prot: wantProt ? '1+1' : '' });
+        results.push({ ...out, status: 'placed', launchOff: placed.o || undefined, slot: placed.slot, km: placed.r.km, hops: placed.r.nodes.length - 1, margin: placed.P ? Math.min(placed.est.margin, placed.pe.margin) : placed.est.margin, via: placed.r.via, detour: placed.r !== cs[0], route: route(placed.r), protRoute: placed.P ? route(placed.P) : undefined, protKm: placed.P ? placed.P.km : undefined });
       } else if (fallback) { // wanted protection, but nothing is disjoint: carry it unprotected and say so
-        take(fallback.slot, fallback.r.links);
-        entries.push({ slot: fallback.slot, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: fallback.r.via, conv: '', slot2: fallback.slot, prot: '' });
-        results.push({ ...out, status: 'placed', unprotected: true, slot: fallback.slot, km: fallback.r.km, hops: fallback.r.nodes.length - 1, margin: fallback.est.margin, via: fallback.r.via, detour: fallback.r !== cs[0], route: route(fallback.r) });
+        take(fallback.slot, fallback.r.links, fallback.o); placedList.push({ r: fallback.r, mode, o: fallback.o });
+        entries.push({ slot: fallback.slot, mode: d.mode, off: fallback.o, svc: false, from: d.a, to: d.z, via: fallback.r.via, conv: '', slot2: fallback.slot, prot: '' });
+        results.push({ ...out, status: 'placed', unprotected: true, launchOff: fallback.o || undefined, slot: fallback.slot, km: fallback.r.km, hops: fallback.r.nodes.length - 1, margin: fallback.est.margin, via: fallback.r.via, detour: fallback.r !== cs[0], route: route(fallback.r) });
       } else if (conv) {
-        take(conv.s1, conv.h1.links); take(conv.s2, conv.h2.links);
+        take(conv.s1, conv.h1.links); take(conv.s2, conv.h2.links); placedList.push({ r: conv.h1, mode, o: 0 }, { r: conv.h2, mode, o: 0 });
         entries.push({ slot: conv.s1, mode: d.mode, off: 0, svc: false, from: d.a, to: d.z, via: conv.r.via, conv: conv.at, slot2: conv.s2, prot: '' });
         results.push({ ...out, status: 'placed', converted: nm(conv.at), slot: conv.s1, slot2: conv.s2, km: conv.r.km, hops: conv.r.nodes.length - 1, margin: conv.margin, via: conv.r.via, detour: conv.r !== cs[0], route: route(conv.r) });
       } else results.push({ ...out, status: reach ? 'blocked' : 'unreachable', why: reach ? why : '' });

@@ -2214,3 +2214,25 @@ test('planner: a converter relieves wavelength-continuity blocking, each half ju
   const sim = M.simulate(S), ch = sim.channels.find(c => !c.svc);
   assert.ok(ch && ch.status !== 'blocked' && ch.status !== 'los', 'converted channel status ' + (ch && ch.status));
 });
+
+test('planner: a launch offset rescues a demand that misses the margin at the nominal power, without hurting its neighbours', () => {
+  const S = M.sanitize(build('mesh')), { ra, rb } = meshIds(S), ab = S.links.find(l => l.kind === 'fiber' && [l.a, l.b].includes(ra) && [l.a, l.b].includes(rb));
+  const ds = [{ a: ra, z: rb, mode: 'zrp400', count: 3 }];
+  assert.ok(M.planDemands(S, ds, { K: 1 }).results.every(x => x.margin == null || Math.abs(x.launchOff || 0) < 1e-9), 'no offsets unless asked');
+  const same = M.planDemands(S, ds, { K: 1 }), same2 = M.planDemands(S, ds, { K: 1, launch: true });
+  assert.deepEqual(same.results.map(x => x.status), same2.results.map(x => x.status), 'a fine route is left alone');
+  assert.ok(same2.entries.every(e => e.off === 0));
+  ab.p.extra = 10; // an unusually lossy span: ASE-limited
+  const without = M.planDemands(S, ds, { K: 1 }), withL = M.planDemands(S, ds, { K: 1, launch: true });
+  assert.equal(without.stats.placed, 0); assert.equal(without.stats.unreachable, 3);
+  assert.equal(withL.stats.placed, 3);
+  assert.ok(withL.results.every(x => x.launchOff > 0 && x.margin >= 1), 'raised power, margin cleared');
+  assert.deepEqual(withL.entries.map(e => e.off), withL.results.map(x => x.launchOff), 'the offset goes into the plan');
+  // a lot of channels already on the fiber: raising one more channel would push the others under, so the planner will not
+  ab.p.extra = 10.5;
+  const crowded = M.planDemands(S, [{ a: ra, z: rb, mode: 'zrp400', count: 2 }], { K: 1, launch: true });
+  assert.ok(crowded.results.every(x => x.status !== 'placed' || x.margin >= 1));
+  // offsets are applied by the simulator: the first channel's launch offset reaches the plan
+  const plan = M.sanitizePlan([{ ...S.g.plan.find(c => c.svc) }, ...withL.entries], +S.g.df);
+  assert.ok(plan.filter(c => !c.svc).every(c => c.off > 0));
+});
