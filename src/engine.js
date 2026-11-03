@@ -174,6 +174,24 @@ const PHY = (() => {
   // A forward pump lifts the signal power over the first ~20 km: peak rise ~ 0.45 * gain - 1 dB. NLI goes as power cubed over about
   // half the effective length, so the span's NLI is scaled by 10^(1.5 * rise / 10).
   const ramanFwdNliFactor = gfDb => lin(1.5 * Math.max(0, 0.45 * gfDb - 1));
+  // Distributed Raman noise. Spontaneous Raman scattering adds noise all along the span where there is gain. Noise created at z rides the same net gain as the signal
+  // from z to the end, so with the signal's power profile S(z) from the solver and the local Raman gain coefficient g(z) = d ln S / dz + alpha:
+  //   P_ase = 2 n_sp h nu B S(L) * integral of g(z) / S(z) dz        (two polarisations; n_sp = 1 + 1 / (exp(h df / kT) - 1) for the pump-to-signal shift df)
+  // which is 2 n_sp h nu B (G - 1) for a uniform gain, the lumped amplifier's figure. Returned in units of h nu B, at the end of the fiber. The temperature (RAMAN.tempK)
+  // sets n_sp: a warmer fiber is noisier, and at 0 K only the quantum term (n_sp = 1) is left.
+  const KB = 1.380649e-23, HPLANCK = 6.62607015e-34;
+  RAMAN.tempK = 300;
+  const nspRaman = (shiftTHz, T = RAMAN.tempK) => 1 + 1 / Math.expm1(HPLANCK * Math.max(1e-3, shiftTHz) * 1e12 / (KB * Math.max(1, T)));
+  function ramanAseN(fiber, fTHz, profile, i, shiftTHz, T) {
+    const z = profile.z, S = profile.sig[i], n = z.length, alpha = (fiber.att + (RAMAN.pumpAtt - fiber.att) * Math.min(1, Math.max(0, (fTHz - 194) / 13))) / 4.343;
+    let I = 0;
+    for (let k = 0; k < n - 1; k++) {
+      const dz = z[k + 1] - z[k]; if (!(dz > 0) || !(S[k] > 0) || !(S[k + 1] > 0)) continue;
+      const g = Math.max(0, Math.log(S[k + 1] / S[k]) / dz + alpha); // the Raman gain coefficient (1/km): the net slope plus the fiber loss
+      I += g / Math.sqrt(S[k] * S[k + 1]) * dz;
+    }
+    return 2 * nspRaman(shiftTHz, T) * S[n - 1] * I;
+  }
   // Coupled-wave solver. Every wave (signal samples and pumps, forward or backward) obeys
   //   +-dP_i/dz = -a_i P_i + P_i * sum_{j above i} c(f_j - f_i) P_j - P_i * sum_{j below i} (f_i / f_j) c(f_i - f_j) P_j
   // with c the Raman gain per watt and km (the triangular shape of ramanShape times RAMAN.cr scaled by the fiber's gamma). Higher-frequency waves feed
@@ -298,6 +316,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, slotChannel, slotFromText, ituChannel, wavelengthNm, ITU_ANCHOR, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmWalk, xpmSpanPenalty, ramanGainSat, ramanSolve, ramanShape, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, slotChannel, ramanAseN, nspRaman, slotFromText, ituChannel, wavelengthNm, ITU_ANCHOR, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmWalk, xpmSpanPenalty, ramanGainSat, ramanSolve, ramanShape, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

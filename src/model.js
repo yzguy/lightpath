@@ -502,6 +502,7 @@ const MODEL = (() => {
     const gi = o.g && typeof o.g === 'object' ? o.g : {};
     const num = (v, d) => (Number.isFinite(+v) && v !== '' && v !== null ? +v : d);
     const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 75, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', reopt: gi.reopt === true, plan: null,
+      tempC: Math.min(85, Math.max(-40, num(gi.tempC, 27))), // the fiber temperature: sets the spontaneous Raman noise
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))),
       rampMs: Math.min(10000, Math.max(0, num(gi.rampMs, 0))), lossPct: Math.min(95, Math.max(1, num(gi.lossPct, PHY_.TRANSIENT.lossPct))), agcUs: Math.min(5000, Math.max(0, num(gi.agcUs, PHY_.TRANSIENT.agcUs))),
       cutRate: Math.min(50, Math.max(0, num(gi.cutRate, RESIL.cutRate))), mttr: Math.min(720, Math.max(0.5, num(gi.mttr, RESIL.mttr))), detectMs: Math.min(1000, Math.max(0, num(gi.detectMs, RESIL.detectMs))),
@@ -1482,7 +1483,9 @@ const MODEL = (() => {
       const fS = chans[svcIdx].fTHz, gS = interp(r.gainDb, fS), g0S = interp(r.gain0Db, fS);
       let fracF = pf > 0 && pb > 0 ? 0.5 : pf > 0 ? 1 : 0; // split of the gain between the forward and backward pumps
       if (pf > 0 && pb > 0) { const gF = interp(PHY_.ramanSolve(fb, Lk, mk(pf, 'fwd'), sigs, { noSmall: true }).gainDb, fS), gB = interp(PHY_.ramanSolve(fb, Lk, mk(pb, 'back'), sigs, { noSmall: true }).gainDb, fS); fracF = gF / Math.max(1e-9, gF + gB); }
-      return { gb: gS * (1 - fracF), gf: gS * fracF, g0b: g0S * (1 - fracF), g0f: g0S * fracF, gS, depl: r.depletion, relFn: f => interp(r.gainDb, f) / Math.max(1e-9, gS), spread: Math.max(...r.gainDb) - Math.min(...r.gainDb),
+      // distributed ASE (units of h nu B at the fiber end) for every sampled frequency, from the signal power profiles
+      const shiftAt = f => (pumps.length ? pumps.reduce((t, p) => t + p.fTHz, 0) / pumps.length : 206) - f, Tk = (Number.isFinite(+g.tempC) ? +g.tempC : 27) + 273.15, aseArr = sigs.map((sg, i) => PHY_.ramanAseN(fb, sg.fTHz, r.profile, i, shiftAt(sg.fTHz), Tk));
+      return { aseFn: f => interp(aseArr, f), gb: gS * (1 - fracF), gf: gS * fracF, g0b: g0S * (1 - fracF), g0f: g0S * fracF, gS, depl: r.depletion, relFn: f => interp(r.gainDb, f) / Math.max(1e-9, gS), spread: Math.max(...r.gainDb) - Math.min(...r.gainDb),
         pumps, samples: sigs.map(s => s.fTHz), gainDb: r.gainDb, profile: { z: r.profile.z, sig: r.profile.sig, off: r.profile.off, pump: r.profile.pump } };
     }
     // Launch re-optimisation (g.reopt): an amplifier whose output target is left blank sets the GN-optimal per-channel power for the span
@@ -1533,6 +1536,7 @@ const MODEL = (() => {
         else if (l.p.nch !== '' && l.p.nch != null) nch = Math.min(96, Math.max(1, Math.round(+l.p.nch)));
         maxNch = Math.max(maxNch, nch);
         const sl = fb.att * Lk + +pd(l.p, 'extra') + (eol ? eolSpan : 0);
+        let nfDist = null; // the span's effective noise figure when the solver's distributed noise is used
         const pump = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +pd(l.p, 'raman') || 0));
         const rdir = ['back', 'fwd', 'both'].includes(l.p.ramanDir) ? l.p.ramanDir : 'back', npump = Math.min(3, Math.max(1, Math.round(+l.p.ramanPumps || 1)));
         const pb = rdir === 'fwd' ? 0 : rdir === 'both' ? pump / 2 : pump, pf = rdir === 'back' ? 0 : rdir === 'both' ? pump / 2 : pump;
@@ -1562,7 +1566,14 @@ const MODEL = (() => {
         if (planOn) ev.push({ k: 'S', fbNl, Lk, nch, act: act.slice(), fwdF, rho, dcd: fb.D * Lk, dg2: fb.pmd ** 2 * Lk, xpm: nch > 1 });
         if (gr > 0) mpi += PHY_.drsRatio(gr, fb, Lk);
         tilt += PHY_.srsTilt(fb, Lk, P, nch, df) + ripplePP;
-        if (gr > 0) {
+        if (gr > 0 && useSolver && solved.aseFn) {
+          // Distributed Raman noise from the coupled-wave solver: the noise generated all along the span, in place of the equivalent lumped amplifiers below.
+          const exDb = sl - fb.att * Lk, aseS = solved.aseFn(chans[svcIdx].fTHz), gNet = lin(gr - fb.att * Lk);
+          loss(sl); P *= lin(gr); Pnli *= lin(gr);
+          Pase = Pase * lin(gr) + PHY_.H * PHY_.NU * PHY_.BREF * aseS * lin(-exDb);
+          nfDist = db((aseS + 1) / gNet);
+          if (planOn) ev.push({ k: 'RD', gain: gr, ex: lin(-exDb), aseFn: solved.aseFn, rel });
+        } else if (gr > 0) {
           // Equivalent lumped amplifiers. Backward pump: gain late in the span (noiseFrac * gain dB of loss still ahead of the signal),
           // so most of the span loss is paid before the noise enters. Forward pump: gain early, noisier (pump RIN) and no OSNR benefit.
           let c = 0;
@@ -1572,7 +1583,7 @@ const MODEL = (() => {
           loss(sl - c);
         } else loss(sl);
         cd += fb.D * Lk; dgd2 += fb.pmd ** 2 * Lk; km += Lk;
-        rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: gr - sl, len: Lk, launch: b.sig, ...(gr > 0 ? { raman: gr, note: `Raman ${rdir === 'both' ? 'bidirectional' : rdir === 'fwd' ? 'forward' : 'backward'} pump ${pump} mW (${npump}): +${gr.toFixed(1)} dB on-off gain` + (depl > 0.05 ? `, pump depletion cost ${(sb.g0 + sf.g0 - gr).toFixed(1)} dB` : '') } : {}) });
+        rec(`${Lk} km ${fb.name.split(' ')[0]}`, 'span', b, { gain: gr - sl, len: Lk, launch: b.sig, ...(gr > 0 ? { raman: gr, note: `Raman ${rdir === 'both' ? 'bidirectional' : rdir === 'fwd' ? 'forward' : 'backward'} pump ${pump} mW (${npump}): +${gr.toFixed(1)} dB on-off gain` + (depl > 0.05 ? `, pump depletion cost ${(sb.g0 + sf.g0 - gr).toFixed(1)} dB` : '') + (nfDist != null ? `; distributed noise: the span's effective noise figure is ${nfDist.toFixed(1)} dB` : '') } : {}) });
         if (depl > 0.15 && !eol && !rv) alarms.push({ sev: 'info', text: `${linkName(l)}: signal power is depleting the Raman pump (${Math.round(depl * 100)}% of its photons): about ${f1(sb.g0 + sf.g0 - gr)} dB of gain lost. Add pump power or reduce channels.` });
         if (pump > PHY_.RAMAN.warnMw) alarms.push({ sev: 'warn', text: `${linkName(l)}: ${pump} mW Raman pump is a Class 4 laser. Check connector cleanliness (fiber-fuse risk) and eye safety.` });
         if (gr > 0 && !eol && !rv && +l.p.raman > PHY_.RAMAN.maxMw) alarms.push({ sev: 'info', text: `${linkName(l)}: pump limited to ${PHY_.RAMAN.maxMw} mW.` });
@@ -1762,6 +1773,7 @@ const MODEL = (() => {
       for (const e of ev) {
         if (e.k === 'L') { sP *= e.f; each(i => { Pc[i] *= e.f; Pa[i] *= e.f; Pn[i] *= e.f; }); }
         else if (e.k === 'A') { sP *= e.G; each(i => { Pc[i] *= e.G; Pn[i] *= e.G; Pa[i] = Pa[i] * e.G + lin(e.nfe) * hnb * e.G; }); }
+        else if (e.k === 'RD') { sP *= lin(e.gain); each(i => { const gi = lin(e.gain * (e.rel ? e.rel[i] : 1)); Pc[i] *= gi; Pn[i] *= gi; Pa[i] = Pa[i] * gi + hnb * e.aseFn(chans[i].fTHz) * e.ex; }); }
         else if (e.k === 'R') { sP *= lin(e.gain); each(i => { const gi = lin(e.gain * (e.rel ? e.rel[i] : 1)); Pc[i] *= gi; Pn[i] *= gi; Pa[i] = Pa[i] * gi + lin(e.nf) * hnb * gi; }); }
         else if (e.k === 'Z') each(i => { const c = sP * lin(chans[i].off) / Pc[i]; Pc[i] *= c; Pn[i] *= c; Pa[i] *= c; });
         else if (e.k === 'C') each(i => { cdc[i] += e.dcd; dg2[i] += e.dg2; });

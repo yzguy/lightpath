@@ -108,7 +108,7 @@ test('sanitize: drops junk, fills defaults, keeps valid data', () => {
   assert.deepEqual([v.name, v.x, v.y, v.p.att], ['7', 0, 0, 5]);
   assert.equal(c.nodes[0].p.mode, 'zr400');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.fiber, 'smf');
-  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, eolSpan: 1, eolTrx: 0.5, rampMs: 0, lossPct: 50, agcUs: 20, cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60, devRate: 0.02 });
+  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, tempC: 27, eolSpan: 1, eolTrx: 0.5, rampMs: 0, lossPct: 50, agcUs: 20, cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60, devRate: 0.02 });
   assert.deepEqual(c.svc, { a: null, z: S.svc.z });
   assert.ok(M.simulate(c).status); // and the cleaned topology simulates without throwing
 });
@@ -2083,4 +2083,22 @@ test('a remedy can be carried out on the lab: splice, work, clean and an amplifi
   // a receiver below its sensitivity spec but not lost also offers the amplifier
   const long = M.sanitize({ nodes: [a, z], links: [{ id: 'l1', a: 'na', b: 'nz', kind: 'fiber', p: { ...M.linkDefaults('fiber'), len: 52 } }], g: { nch: 1, df: 75, launch: 0 }, svc: { a: 'na', z: 'nz' } });
   const rl = M.simulate(long); if (rl.status !== 'los') assert.ok(rl.alarms.some(x => /Rx LOW/.test(x.text) && x.fix && x.fix.type === 'insertAmp'));
+});
+
+test('distributed Raman noise: the integral matches the lumped figure for a uniform gain, vanishes without gain, and grows with temperature', () => {
+  const P = require('../src/engine.js'), L = 20, g = 0.3, z = Array.from({ length: 61 }, (_, k) => L * k / 60), S = z.map(x => 1e-3 * Math.exp(g * x)), G = Math.exp(g * L);
+  const ase = P.ramanAseN({ att: 0, gamma: 1.3 }, 193.4, { z, sig: [S] }, 0, 13.2, 300);
+  assert.ok(Math.abs(ase / (2 * P.nspRaman(13.2, 300) * (G - 1)) - 1) < 0.01, 'a uniform gain gives 2 n_sp (G - 1), the lumped amplifier figure');
+  const loss = z.map(x => 1e-3 * Math.exp(-0.2 / 4.343 * x)); assert.ok(P.ramanAseN({ att: 0.2, gamma: 1.3 }, 193.4, { z, sig: [loss] }, 0, 13.2, 300) < 1e-6, 'a passive fiber adds none');
+  assert.ok(P.nspRaman(13.2, 350) > P.nspRaman(13.2, 300) && P.nspRaman(13.2, 300) > P.nspRaman(13.2, 250)); assert.ok(Math.abs(P.nspRaman(13.2, 0.001) - 1) < 1e-6, 'only the quantum term is left at 0 K');
+  assert.ok(Math.abs(P.nspRaman(13.2, 300) - 1.138) < 0.005);
+  // in a span: the solver's distributed noise replaces the equivalent lumped amplifier, stays within a couple of dB of it, and follows the temperature
+  const span = (o, t) => { const p = M.PRESETS.dci.build(), X = M.sanitize({ nodes: p.nodes, links: p.links, g: { ...p.g, tempC: t ?? 27 }, svc: p.svc }), f = X.links.find(l => l.kind === 'fiber'); f.p.len = 110; Object.assign(f.p, o); return M.simulate(X); };
+  const off = span({}), lumped = span({ raman: 600, ramanFull: false }), dist = span({ raman: 600, ramanFull: true });
+  assert.ok(dist.osnr > off.osnr + 1, 'a 600 mW backward pump still buys OSNR with the distributed noise'); assert.ok(Math.abs(dist.osnr - lumped.osnr) < 2.5, 'and agrees with the equivalent lumped amplifier to within about two dB');
+  assert.match(dist.hops.find(h => /Raman/.test(h.note || '')).note, /distributed noise: the span's effective noise figure is [\d.]+ dB/); assert.ok(!/distributed noise/.test(lumped.hops.find(h => /Raman/.test(h.note || '')).note), 'the closed-form model keeps the lumped noise');
+  assert.ok(span({ raman: 600, ramanFull: true }, -40).osnr > span({ raman: 600, ramanFull: true }, 85).osnr, 'a warmer fiber is noisier');
+  const fw = span({ raman: 600, ramanDir: 'fwd', ramanFull: true }), bw = span({ raman: 600, ramanDir: 'back', ramanFull: true });
+  const nf = r => +/effective noise figure is ([\d.-]+)/.exec(r.hops.find(h => /Raman/.test(h.note || '')).note)[1]; assert.ok(nf(fw) < nf(bw), 'forward pumping has the lower span noise figure: the gain comes before most of the loss');
+  assert.equal(M.sanitize({ nodes: [], links: [], g: { tempC: 999 } }).g.tempC, 85); assert.equal(M.sanitize({ nodes: [], links: [], g: { tempC: 'x' } }).g.tempC, 27);
 });
