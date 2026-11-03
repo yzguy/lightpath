@@ -173,7 +173,8 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .kpi.good { border-left-color: var(--good) } .kpi.warn { border-left-color: var(--warn) } .kpi.bad { border-left-color: var(--bad) }
 .kpi.bad .kv { color: var(--bad) }
 #alarms:empty, #diag:empty { display: none }
-#diag > div { padding: 8px 10px; border-radius: 5px; font-size: 13px; background: var(--raised); border: 1px solid var(--line) }
+#diag > div { padding: 6px 2px; font-size: 13px; border-top: 1px solid var(--line) } /* flat: it already sits in the results panel */
+.planwrap p, .learn p { max-width: 66ch } /* explanatory text keeps a readable measure on a wide screen */
 .labset { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center }
 .labset > summary { display: none; cursor: pointer; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); align-items: center; min-height: 44px; list-style: none }
 .labset > summary::-webkit-details-marker { display: none }

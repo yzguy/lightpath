@@ -1822,6 +1822,7 @@ const MODEL = (() => {
     if (res.qMargin >= 0 && res.worstQMargin < 0) alarms.push({ sev: 'warn', text: `SRS tilt of up to ${f1(peakTilt)} dB leaves the highest-frequency channel with ${f1(res.worstQMargin)} dB of Q margin while the middle channel still passes. Turn on amplifier tilt control or add a ROADM to re-equalise.` });
     if (xpmPen > 1.5) alarms.push({ sev: 'warn', text: `Cross-phase modulation from neighbouring channels costs ${f1(xpmPen)} dB. Lower the launch power, space the ${mode.short} channels apart or move them away from the ${g.neighbors === 'coh' ? 'coherent ' : ''}neighbours.` });
     if (rerouteCut) alarms.push({ sev: 'warn', text: 'Every path crosses a cut fiber or a failed device.' });
+    let restAlarm = null;
     // The service survived a cut or a failed device by taking another route: say so, with what the detour cost (the same lab, healed, is the comparison)
     if (!rerouteCut && !svcOnProt && !eol && !rv && !W && !opts.single && (S.links.some(l => isCut(S, l)) || S.nodes.some(n => isDead(n) && !onSpare(n)))) {
       const intact = route(S, A.id, Z.id, true, { ignoreCut: true });
@@ -1832,7 +1833,8 @@ const MODEL = (() => {
         const via = path.nodes.filter(id => !intact.nodes.includes(id)).map(id => node(id).name), dkm = km - r0.km, dq = Number.isFinite(r0.qMargin) ? res.qMargin - r0.qMargin : null;
         const over = via.length ? `over ${via.join(' and ')}` : 'over another route';
         res.restored = { links: intact.links, short: `restored ${over} after ${broke.join(' and ')}: ${sg(dkm, 'km')}${dq != null ? `, ${sg(dq, 'dB')} margin` : ''}` };
-        alarms.unshift({ sev: 'info', text: `The service restored itself ${over}: ${broke.join(' and ')}. The detour is ${f1(Math.abs(dkm))} km ${dkm >= 0 ? 'longer' : 'shorter'}${dq != null ? ` and the Q margin ${dq >= 0 ? 'rises' : 'falls'} by ${f1(Math.abs(dq))} dB (${f1(r0.qMargin)} to ${f1(res.qMargin)} dB)` : ''}. Splice the fiber back to return to the original route.` });
+        restAlarm = { sev: 'info', text: `The service restored itself ${over}: ${broke.join(' and ')}. The detour is ${f1(Math.abs(dkm))} km ${dkm >= 0 ? 'longer' : 'shorter'}${dq != null ? ` and the Q margin ${dq >= 0 ? 'rises' : 'falls'} by ${f1(Math.abs(dq))} dB (${f1(r0.qMargin)} to ${f1(res.qMargin)} dB)` : ''}. Splice the fiber back to return to the original route.` };
+        alarms.unshift(restAlarm);
       }
     }
     if (!eol && !W) for (const n of [A, Z]) if (onSpare(n)) alarms.push({ sev: 'warn', text: `${n.name}'s primary module has failed: traffic is on the spare (${n.p.spare === 'ycable' ? 'y-cable' : 'optical switch'}). There is no module protection left.` });
@@ -1844,7 +1846,7 @@ const MODEL = (() => {
     if (bad.length) { res.status = 'down'; res.headline = bad[0]; }
     else if (res.qMargin < 1 || alarms.some(a => a.sev !== 'info')) { res.status = 'degraded'; const top = alarms.find(a => a.sev === 'bad') || alarms.find(a => a.sev === 'warn'), more = alarms.filter(a => a.sev !== 'info').length - 1; // the headline names the first problem, not just that there is one
       res.headline = res.qMargin < 1 ? `Up, but only ${f1(res.qMargin)} dB of Q margin. ${top ? top.text : 'Aging or a dirty connector will take it down.'}` : `Up, but ${top ? top.text.charAt(0).toLowerCase() === top.text.charAt(0) ? top.text : 'with a warning: ' + top.text : 'with alarms to look at.'}${top && more > 0 ? ` (${more} more below)` : ''}`; }
-    else { res.status = 'up'; res.headline = `Up with ${f1(res.qMargin)} dB Q margin${res.restored ? ', ' + res.restored.short : ''}.`; }
+    else { res.status = 'up'; res.headline = `Up with ${f1(res.qMargin)} dB Q margin${res.restored ? ', ' + res.restored.short : ''}.`; if (restAlarm) restAlarm.text = 'Splice the fiber back to return to the original route; the dotted line on the canvas shows it.'; } // the headline already says what happened and what it cost
     if (res.status === 'down') { const sw = switchIfBetter(res); if (sw !== res) return sw; }
     if (!eol && !rv && !opts.single) {
       const r2 = simulate(S, launchOverride, { reverse: true, useProtect: !!opts.useProtect });

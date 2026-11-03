@@ -470,7 +470,10 @@ function renderInspectorBody() {
     const p = n.p; p.fail ??= ''; p.degDb ??= 3;
     const head = el('div', { class: 'insp-head' }, [el('h2', { text: TYPES[n.type].label }), field('Name', nm)]); box.append(head); // type, name, condition and delete stay at the top while the fields scroll
     head.append(field('Condition', selIn(p, 'fail', [['', 'Working'], ['degraded', 'Degraded'], ['dead', 'Failed (no light passes)']])));
-    box.append(el('p', { class: 'muted small', text: 'Failed: the device passes no light, so routes avoid it (restoration or protection) and a service through it is LOS. Degraded: an amplifier loses output (pump ageing) and gets noisier, a laser gets weaker, a receiver loses SNR, a ROADM, mux, VOA or DCM adds loss.' }));
+    // say what the chosen condition means (and for this kind of device), not all of them at once
+    const condText = p.fail === 'dead' ? 'Failed: the device passes no light, so routes avoid it (restoration or protection) and a service through it is LOS.'
+      : p.fail === 'degraded' ? `Degraded: ${n.type === 'edfa' ? 'its output falls and its noise figure rises (pump ageing)' : isEnd(n) ? 'its laser gets weaker and its receiver loses SNR' : 'it adds extra loss'}.` : '';
+    if (condText) box.append(el('p', { class: 'muted small', text: condText }));
     if (p.fail === 'degraded') box.append(field('Degradation (dB)', numIn(p, 'degDb', 0.5, 0, 30)));
     if (n.type === 'roadm' || n.type === 'mux' || n.type === 'oadm') {
       const list = (key, max, hint, label) => {

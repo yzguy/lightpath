@@ -2026,7 +2026,7 @@ test('a cut the service survives is explained: the detour, its cost and the old 
   const r = M.simulate(S);
   assert.equal(r.status, 'up'); assert.ok(r.km > r0.km, 'the detour is longer');
   assert.match(r.headline, /restored over ROADM-B after ROADM-A–ROADM-C is cut: \+140\.0 km, −[\d.]+ dB margin/);
-  const a = r.alarms[0]; assert.equal(a.sev, 'info'); assert.match(a.text, /restored itself over ROADM-B.*140\.0 km longer.*Q margin falls by .* dB.*Splice the fiber back/);
+  const a = r.alarms[0]; assert.equal(a.sev, 'info'); assert.match(a.text, /^Splice the fiber back to return to the original route/); assert.doesNotMatch(a.text, /140/, 'the headline carries the cost; the alarm does not repeat it');
   assert.deepEqual(new Set(r.restored.links), new Set(r0.path.links), 'the ghost is the original route');
   // a failed device that is routed around gets the same story, and with no spare route it is the LOS message, not this one
   const d = M.sanitize(build('ring')); d.nodes.find(n => n.name === 'ROADM-C').p.fail = 'dead'; const rd = M.simulate(d);
