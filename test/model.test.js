@@ -2124,3 +2124,29 @@ test('revertive switching: failover is reported, a revertive switch hits twice p
   const a = M.resilience(mk(true).S)[0], b = M.resilience(mk(false).S)[0], lam = 3 * 60 / 1000;
   assert.ok(Math.abs((a.downSec - b.downSec) - lam * 0.020) < 1e-9, 'one extra 20 ms hit per cut');
 });
+
+test('a degraded port hurts only its own channel: add side costs power and OSNR, drop side power only', () => {
+  const S = M.sanitize(build('mix')), r0 = M.simulate(S), slot = S.g.plan.find(c => !c.svc).slot;
+  const base = r0.channels.find(c => c.slot === slot);
+  const mA = S.nodes.find(n => n.name === 'MUX-A'), mB = S.nodes.find(n => n.name === 'MUX-B');
+  const moved = r => r.channels.filter((c, i) => Math.abs(c.prx - r0.channels[i].prx) > 0.01 || Math.abs(c.gosnr - r0.channels[i].gosnr) > 0.01).map(c => c.slot);
+  mA.p.degPorts = { [slot]: 4 };
+  const ra = M.simulate(S), ca = ra.channels.find(c => c.slot === slot);
+  assert.deepEqual(moved(ra), [slot], 'no other channel moves');
+  assert.ok(Math.abs(ca.prx - base.prx + 4) < 0.01, 'the add side survives re-levelling: Rx falls by the full 4 dB');
+  assert.ok(ca.gosnr < base.gosnr - 0.5, 'and its OSNR falls');
+  assert.ok(ra.alarms.some(a => a.fix && a.fix.type === 'repairPort'), 'an alarm offers a replacement port');
+  mA.p.degPorts = {}; mB.p.degPorts = { [slot]: 4 };
+  const rb = M.simulate(S), cb = rb.channels.find(c => c.slot === slot);
+  assert.ok(Math.abs(cb.prx - base.prx + 4) < 0.01);
+  assert.ok(Math.abs(cb.gosnr - base.gosnr) < 0.01, 'a drop-side loss leaves the OSNR alone');
+  const fix = rb.alarms.find(a => a.fix && a.fix.type === 'repairPort').fix;
+  M.applyFix(S, fix);
+  assert.deepEqual(mB.p.degPorts, {});
+});
+
+test('degPorts is sanitised: junk and non-positive values are dropped, loss is capped', () => {
+  const S = build('mix'), mb = S.nodes.find(n => n.name === 'MUX-B');
+  mb.p.degPorts = { 3: 2, '-1': 5, 200: 1, x: 2, 4: 0, 5: true, 6: 99 };
+  assert.deepEqual(M.sanitize(clone(S)).nodes.find(n => n.name === 'MUX-B').p.degPorts, { 3: 2, 6: 30 });
+});

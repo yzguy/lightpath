@@ -112,7 +112,7 @@ const chText = (slot, short) => { const c = PHY.slotChannel(slot, +S.g.df * 1e9)
 // A fault badge at the top right of a device, drawn beside it (not inside) so the device's own styling cannot fade it: a red cross for a failed device, an amber
 // exclamation mark for a degraded one, a dirty connector or a host whose traffic is stuck. It keeps its size on screen when zoomed out.
 function faultBadge(n, body) {
-  const kind = n.p && n.p.fail === 'dead' ? 'bad' : (n.p && n.p.fail === 'degraded') || panelDirty(n) || hostFaults.has(n.id) ? 'warn' : null; if (!kind) return null;
+  const kind = n.p && n.p.fail === 'dead' ? 'bad' : (n.p && n.p.fail === 'degraded') || panelDirty(n) || weakPorts(n) || hostFaults.has(n.id) ? 'warn' : null; if (!kind) return null;
   const bb = body.getBBox(), g = sv('g', { class: 'faultg ' + kind, 'data-x': n.x + bb.x + bb.width, 'data-y': n.y + bb.y, 'pointer-events': 'none' });
   g.setAttribute('transform', `translate(${g.dataset.x},${g.dataset.y}) scale(${floorScale(9, S.view.k * 8)})`);
   g.append(sv('circle', { cx: 0, cy: 0, r: 8, class: 'faultbadge' }));
@@ -121,8 +121,9 @@ function faultBadge(n, body) {
   return g;
 }
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
+const weakPorts = n => !!n.p && !!n.p.degPorts && Object.values(n.p.degPorts).some(v => +v > 0);
 function nodeShape(n) {
-  const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === n.id ? 'true' : 'false',
+  const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || weakPorts(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === n.id ? 'true' : 'false',
     'aria-label': `${n.name}, ${(TYPES[n.type] || {}).label || n.type}${S.svc && S.svc.a === n.id ? ', service A end' : S.svc && S.svc.z === n.id ? ', service Z end' : ''}${n.p && n.p.fail === 'dead' ? ', failed' : n.p && n.p.fail === 'degraded' ? ', degraded' : ''}${panelDirty(n) ? ', dirty connector on port ' + Object.entries(n.p.dirty).filter(([, v]) => +v > 0.3).map(([k]) => k).join(', ') : ''}` });
   if (n.type === 'trx') {
     g.append(sv('rect', { x: -46, y: -22, width: 92, height: 44, rx: 4, class: 'body' }));
@@ -536,6 +537,10 @@ function renderInspectorBody() {
       }
       box.append(list('badPorts', 128, 'Slot numbers (as in the Channels tab) whose add/drop port on this device has failed. Only the channels that join or leave the line here are lost; everything else keeps running.', 'Failed ports (slots)'),
         list('badCards', 16, `A card serves ${MODEL.PORTS_PER_CARD} consecutive slots: card 1 is slots 1-${MODEL.PORTS_PER_CARD}, card 2 the next ${MODEL.PORTS_PER_CARD}, and so on. A failed card takes down all of its ports at once.`, 'Failed cards'));
+      { p.degPorts ??= {};
+        const di = el('input', { value: Object.entries(p.degPorts).map(([k, v]) => `${+k + 1}=${v}`).join(', '), id: 'f-degPorts', placeholder: 'none' });
+        di.addEventListener('input', () => { const d = {}; for (const tok of di.value.split(/[\s,;]+/).filter(Boolean)) { const [k, v] = tok.split('='), i = Math.round(+k), db = v === undefined ? 3 : +v; if (Number.isInteger(i) && i >= 1 && i <= 128 && isFinite(db) && db > 0) d[i - 1] = Math.min(30, db); } p.degPorts = d; recompute(); });
+        box.append(field('Degraded ports (slot=dB)', di, 'A weak port rather than a dead one, for example 4=3 for 3 dB extra loss on the port for slot 4. Only the channel that uses it is hurt: on the add side its power and OSNR fall, on the drop side only its power does. An alarm offers to replace the port.')); }
     }
     { const d = TYPES[n.type].def(); for (const k in d) if (p[k] === undefined) p[k] = d[k]; } // fields added since this lab was saved
     if (isEnd(n)) {

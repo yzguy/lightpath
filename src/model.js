@@ -432,6 +432,8 @@ const MODEL = (() => {
       if (n.type === 'roadm' || n.type === 'mux' || n.type === 'oadm') {
         const ints = (v, max) => [...new Set((Array.isArray(v) ? v : []).filter(x => typeof x === 'number' && Number.isInteger(x) && x >= 0 && x < max))].sort((a, b) => a - b).slice(0, max);
         p.badPorts = ints(n.p && n.p.badPorts, 128); p.badCards = ints(n.p && n.p.badCards, 16);
+        { const dp = {}, raw = n.p && n.p.degPorts && typeof n.p.degPorts === 'object' && !Array.isArray(n.p.degPorts) ? n.p.degPorts : {}; // a degraded (not failed) port: extra loss on the one channel that uses it
+          for (const k of Object.keys(raw).slice(0, 128)) { const i = Number(k), db = raw[k]; if (Number.isInteger(i) && i >= 0 && i < 128 && typeof db !== 'boolean' && Number.isFinite(+db) && +db > 0) dp[i] = Math.min(30, Math.max(0.1, +db)); } p.degPorts = dp; }
         if (n.type === 'oadm') {
           const raw = n.p || {}, legacy = Array.isArray(raw.slots) && raw.slots.length && raw.eFirst === undefined ? ints(raw.slots, 128) : null; // an older lab: one list of slots, served from both sides
           const num = (v, d, lo, hi) => (Number.isFinite(+v) && v !== '' && v !== null && typeof v !== 'boolean' ? Math.min(hi, Math.max(lo, Math.round(+v))) : d);
@@ -539,6 +541,14 @@ const MODEL = (() => {
   // slots each. Only the channels that join or leave the line at that device are lost; everything else keeps running.
   const PORTS_PER_CARD = 8;
   const portDown = (n, slot) => !!n && !!n.p && ((Array.isArray(n.p.badPorts) && n.p.badPorts.includes(slot)) || (Array.isArray(n.p.badCards) && n.p.badCards.includes(Math.floor(slot / PORTS_PER_CARD))));
+  // A degraded port (p.degPorts: slot -> extra dB) costs only the channel that joins or leaves through it. A degraded port on the add side (the first half of the route)
+  // weakens the signal before the amplifiers, so the OSNR falls by the same amount; one on the drop side only lowers the power at the receiver.
+  const degDb = (n, slot) => (n && n.p && n.p.degPorts && +n.p.degPorts[slot] > 0 ? +n.p.degPorts[slot] : 0);
+  function portDeg(ns, slot, lks) {
+    let add = 0, drop = 0; const hits = [];
+    for (let k = 0; k < ns.length; k++) { const d = degDb(ns[k], slot); if (d > 0 && usesPort(ns, k, lks)) { const side = k < ns.length / 2 ? 'add' : 'drop'; if (side === 'add') add += d; else drop += d; hits.push({ node: ns[k], db: d, side }); } }
+    return { add, drop, hits };
+  }
   // A passive OADM serves a block of slots on each side: east (eFirst, ePorts) and west (wFirst, wPorts). A transponder is plugged into a port of
   // one side and talks to that side's line; a channel entering from a side in one of that side's slots is dropped. A channel can also not pass
   // through in a slot either side serves (dropped at the input, or in the way of the added channel at the output).
@@ -1012,6 +1022,7 @@ const MODEL = (() => {
   // where an amplifier helps most: the longest fiber span on the route
   const ampSpot = (S, path) => (path ? path.links.map(id => S.links.find(l => l.id === id)).filter(l => l && l.kind === 'fiber').sort((a, b) => +b.p.len - +a.p.len)[0] : null);
   const fixAmp = (S, l) => ({ type: 'insertAmp', id: l.id, label: `Add an amplifier halfway along ${S.nodes.find(n => n.id === l.a).name}–${S.nodes.find(n => n.id === l.b).name}` });
+  const fixRepairPort = (n, slot) => ({ type: 'repairPort', id: n.id, slot, label: `Replace ${n.name} port for slot ${slot + 1}` });
   const fixClean = (n, port) => ({ type: 'clean', id: n.id, port, label: `Clean ${n.name} port ${port}` });
 
   // Carry out a remedy on S (in place); returns a sentence saying what was done, or '' if it no longer applies.
@@ -1021,6 +1032,7 @@ const MODEL = (() => {
     if (f.type === 'splice') { const l = link(f.id); if (l && l.p.cut) { l.p.cut = false; return 'Spliced the fiber back'; } }
     else if (f.type === 'work') { const n = node(f.id); if (n && n.p.fail) { n.p.fail = ''; return `${n.name} is working again`; } }
     else if (f.type === 'clean') { const n = node(f.id); if (n && n.p.dirty && n.p.dirty[f.port] != null) { delete n.p.dirty[f.port]; return `Cleaned ${n.name} port ${f.port}`; } }
+    else if (f.type === 'repairPort') { const n = node(f.id); if (n && n.p.degPorts && n.p.degPorts[f.slot] != null) { delete n.p.degPorts[f.slot]; return `Replaced the ${n.name} port for slot ${f.slot + 1}`; } }
     else if (f.type === 'insertAmp') { // split a fiber span in two with an amplifier in the middle
       const l = link(f.id), a = l && node(l.a), b = l && node(l.b); if (!l || l.kind !== 'fiber' || !a || !b) return '';
       let name = `${PREFIX.edfa}-${S.nodes.filter(n => n.type === 'edfa').length + 1}`; while (S.nodes.some(n => n.name === name)) name += "'";
@@ -1525,6 +1537,10 @@ const MODEL = (() => {
     }
 
     rec(A.name, 'tx', snap(), { note: `Tx ${f1(txDbm)} dBm, Tx OSNR ${mode.txOsnr} dB` });
+    // degraded add/drop ports on the service channel's route: the add side costs the signal before the line, the drop side after it
+    const sdeg = !W ? portDeg(path.nodes.map(id => node(id)), chans[svcIdx].slot, path.links.map(id => link(id))) : { add: 0, drop: 0, hits: [] };
+    // The add side is an offset for this channel alone: the amplifiers go on following the other channels, so it stays low at every span. Its transmitter noise passes the port with it.
+    if (sdeg.add > 0) Pase *= lin(-sdeg.add);
     let losAt = null;
     for (let i = 0; i < path.links.length; i++) {
       const l = link(path.links[i]), nxt = node(path.nodes[i + 1]), prv = node(path.nodes[i]);
@@ -1638,7 +1654,7 @@ const MODEL = (() => {
         // Channels that leave here take the drop port (one WSS pass, the drop structure and a drop amplifier) instead of expressing through.
         if (leaving.length) { const dg = p.amps ? 4 : 0; ev.push({ k: 'D', idx: leaving, G: lin(dg), nfe: PHY_.ampNfEff(+p.nf, dg), f: lin(-(+p.wss + +p.ad)) }); }
         const b = snap(); const lo = np * +p.wss + (add || drop ? +p.ad : 0) + degOf(nxt); loss(lo); passes += np; tiltSeen.push(tilt); tilt = 0;
-        if (planOn) { ev.push({ k: 'W', n: np }); ev.push({ k: 'Z' }); if (joining.length) ev.push({ k: 'J', idx: joining }); curAct = maskAt(k); } // the WSS equalises every channel, added ones join at the same level
+        if (planOn) { ev.push({ k: 'W', n: np }); ev.push({ k: 'Z', wss: true }); if (joining.length) ev.push({ k: 'J', idx: joining }); curAct = maskAt(k); } // the WSS equalises every channel, added ones join at the same level
         rec(nxt.name + (add ? ' add' : drop ? ' drop' : ' express'), 'roadm', b, { gain: -lo, note: `${np} WSS pass${np > 1 ? 'es' : ''}` + (leaving.length ? `, ${leaving.length} channel${leaving.length > 1 ? 's' : ''} dropped` : '') + (joining.length ? `, ${joining.length} added` : '') });
         if (planOn && !drop) nch = litCount(k);
         if (p.amps && !drop) amp(nxt.name + ' boost', p.nf + 0.5, 'auto', +g.launch, 0, 0, 35, 24, true, i + 1);
@@ -1705,6 +1721,8 @@ const MODEL = (() => {
       else { res.headline = `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}. Splice it back, or add a second route.`; if (!W) { res.headlineFix = fixSplice(losAt); alarms.push({ sev: 'bad', text: `${linkName(losAt)} is cut, so no light reaches ${Z.name}. Splice it back, or give the service a second fiber route (Protect, in the Channels tab).`, fix: fixSplice(losAt) }); } }
       return res;
     }
+    if (sdeg.add > 0) P *= lin(-sdeg.add); // the offset it has carried the whole way
+    if (sdeg.drop > 0) { const f = lin(-sdeg.drop); P *= f; Pase *= f; Pnli *= f; }
     const prx = db(P * 1000); res.prx = prx;
     if (prx < mode.rxMin - 12 && !W) {
       res.status = 'los'; res.headline = `LOS at ${Z.name}: ${f1(prx)} dBm is below what the receiver can detect.`;
@@ -1769,16 +1787,19 @@ const MODEL = (() => {
       const N = nChan, hnb = PHY_.H * PHY_.NU * PHY_.BREF, P0 = lin(txDbm) / 1000;
       const Pc = new Array(N).fill(0), Pa = new Array(N).fill(0), Pn = new Array(N).fill(0), xp = new Array(N).fill(0), cdc = new Array(N).fill(0), dg2 = new Array(N).fill(0), psc = new Array(N).fill(0);
       const alive = chans.map((_, i) => !!lohi[i] && lohi[i].lo === 0), fin = new Array(N).fill(null);
-      chans.forEach((c, i) => { if (alive[i]) { Pc[i] = P0 * lin(c.off); Pa[i] = Pc[i] / lin(c.m.txOsnr); } });
+      // each channel's own degraded ports: the add side before it reaches the line, the drop side after
+      const dgf = new Array(N).fill(1); // the level a degraded add port keeps a channel below the others until a WSS levels it
+      const dgs = chans.map((c, i) => (lohi[i] ? portDeg(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1).map(id => node(id)), c.slot, path.links.slice(lohi[i].lo, lohi[i].hi).map(id => link(id))) : { add: 0, drop: 0, hits: [] }));
+      chans.forEach((c, i) => { if (alive[i]) { dgf[i] = lin(-dgs[i].add); Pc[i] = P0 * lin(c.off) * dgf[i]; Pa[i] = Pc[i] / lin(c.m.txOsnr); } });
       let sP = P0;
       const each = fn => { for (let i = 0; i < N; i++) if (alive[i]) fn(i); };
-      const freeze = i => { fin[i] = { Pc: Pc[i], Pa: Pa[i], Pn: Pn[i], xp: xp[i], cd: cdc[i], dg2: dg2[i], ps: psc[i] }; alive[i] = false; };
+      const freeze = i => { const fd = lin(-dgs[i].drop); fin[i] = { Pc: Pc[i] * fd, Pa: Pa[i] * fd, Pn: Pn[i] * fd, xp: xp[i], cd: cdc[i], dg2: dg2[i], ps: psc[i] }; alive[i] = false; };
       for (const e of ev) {
         if (e.k === 'L') { sP *= e.f; each(i => { Pc[i] *= e.f; Pa[i] *= e.f; Pn[i] *= e.f; }); }
         else if (e.k === 'A') { sP *= e.G; each(i => { Pc[i] *= e.G; Pn[i] *= e.G; Pa[i] = Pa[i] * e.G + lin(e.nfe) * hnb * e.G; }); }
         else if (e.k === 'RD') { sP *= lin(e.gain); each(i => { const gi = lin(e.gain * (e.rel ? e.rel[i] : 1)); Pc[i] *= gi; Pn[i] *= gi; Pa[i] = Pa[i] * gi + hnb * e.aseFn(chans[i].fTHz) * e.ex; }); }
         else if (e.k === 'R') { sP *= lin(e.gain); each(i => { const gi = lin(e.gain * (e.rel ? e.rel[i] : 1)); Pc[i] *= gi; Pn[i] *= gi; Pa[i] = Pa[i] * gi + lin(e.nf) * hnb * gi; }); }
-        else if (e.k === 'Z') each(i => { const c = sP * lin(chans[i].off) / Pc[i]; Pc[i] *= c; Pn[i] *= c; Pa[i] *= c; });
+        else if (e.k === 'Z') each(i => { if (e.wss) dgf[i] = 1; const c = sP * lin(chans[i].off) * dgf[i] / Pc[i]; Pc[i] *= c; Pn[i] *= c; Pa[i] *= c; }); // tilt control keeps a channel's own offset and weak port; a WSS levels everything
         else if (e.k === 'C') each(i => { cdc[i] += e.dcd; dg2[i] += e.dg2; });
         else if (e.k === 'W') each(i => { psc[i] += e.n; });
         else if (e.k === 'D') for (const i of e.idx) {
@@ -1787,7 +1808,7 @@ const MODEL = (() => {
           freeze(i);
         }
         else if (e.k === 'J') for (const i of e.idx) { // added at this ROADM: level with the express channels, own transmitter noise, nothing accumulated yet
-          Pc[i] = (e.padd != null ? e.padd : sP) * lin(chans[i].off); Pa[i] = Pc[i] / lin(chans[i].m.txOsnr); Pn[i] = 0; xp[i] = 0; cdc[i] = 0; dg2[i] = 0; psc[i] = 1; alive[i] = true;
+          dgf[i] = lin(-dgs[i].add); Pc[i] = (e.padd != null ? e.padd : sP) * lin(chans[i].off) * dgf[i]; Pa[i] = Pc[i] / lin(chans[i].m.txOsnr); Pn[i] = 0; xp[i] = 0; cdc[i] = 0; dg2[i] = 0; psc[i] = 1; alive[i] = true;
         }
         else if (e.k === 'S') {
           const pl = chans.map((c, j) => ({ f: c.f, Rs: c.Rs, P: lin(c.off) })).filter((_, j) => e.act[j]), at = chans.map((_, j) => j).filter(j => e.act[j]);
@@ -1815,6 +1836,7 @@ const MODEL = (() => {
         else if (bER > m.berThr) { status = 'down'; notes.push('pre-FEC BER above the FEC limit'); }
         else if (qm < 1 || prx < m.rxMin || prx > m.rxMax) { status = 'degraded'; notes.push(qm < 1 ? `only ${f1(qm)} dB of Q margin` : prx < m.rxMin ? 'Rx below the sensitivity spec' : 'Rx above the overload point'); }
         if (f.xp > 1.5) notes.push(`XPM costs ${f1(f.xp)} dB`);
+        for (const h of dgs[i].hits) notes.push(`its port on ${h.node.name} is degraded (+${f1(h.db)} dB, ${h.side} side)`);
         { const pf = portFaultOn(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot, path.links.slice(lohi[i].lo, lohi[i].hi)); if (pf) { status = 'los'; notes.unshift(`its port on ${pf.name} has failed (${slotLbl(c.slot)})`); } const fw = filterWhy(path.nodes.slice(lohi[i].lo, lohi[i].hi + 1), c.slot, path.links.slice(lohi[i].lo, lohi[i].hi), c.slotRev); if (fw) { status = 'los'; notes.unshift(fw); } }
         const lh = lohi[i], nm = k => (node(path.nodes[k]) || {}).name, route = path.nodes.slice(lh.lo, lh.hi + 1).map(id => (node(id) || {}).name);
         return { idx: i, lg: c.lg, role: c.role, slot: c.slot, fTHz: c.fTHz, modeKey: c.mode, short: m.short, rate: m.rate, svc: c.svc, off: c.off, prx, osnr: db(f.Pc / f.Pa), gosnr: db(1 / (1 / snrA + 1 / snrN + mpi) * m.Rs / PHY_.BREF), ber: bER, q, qMargin: qm, xpmPen: f.xp, status, notes,
@@ -1863,6 +1885,11 @@ const MODEL = (() => {
     const bad = [];
     if (mesh && mesh.svcClash && !eol && !rv && !W) bad.push(`The service channel cannot work: ${mesh.svcClash}.`);
     if (!eol && !rv && !W) { const fw = filterWhy(path.nodes, chans[svcIdx].slot, path.links, chans[svcIdx].slotRev); if (fw) bad.push(`The service channel is lost: ${fw}.`); }
+    if (!eol && !rv && !W) { // a degraded port: on the service channel's route it costs that channel; elsewhere it is only noted
+      for (const h of sdeg.hits) alarms.push({ sev: 'warn', text: `${h.node.name}: the port for ${slotLbl(chans[svcIdx].slot)} is degraded, ${f1(h.db)} dB of extra loss on the ${h.side} side of the service channel${h.side === 'add' ? ' (it enters the line weaker, so OSNR falls by the same amount)' : ' (it lowers the received power)'}. Only this channel is affected.`, fix: fixRepairPort(h.node, chans[svcIdx].slot) });
+      const seen = new Set(sdeg.hits.map(h => h.node.id + '|' + chans[svcIdx].slot)); let extra = 0;
+      for (const n of S.nodes) for (const [k, db] of Object.entries(n.p.degPorts || {})) if (!seen.has(n.id + '|' + k) && extra++ < 3) alarms.push({ sev: 'info', text: `${n.name}: the port for ${slotLbl(+k)} is degraded (${f1(+db)} dB extra loss). It affects only the channel that uses that port.`, fix: fixRepairPort(n, +k) });
+    }
     if (!eol && !rv && !W) { const pf = portFaultOn(path.nodes, chans[svcIdx].slot, path.links); if (pf) bad.push(`The port for ${slotLbl(chans[svcIdx].slot)} on ${pf.name} has failed: the service channel is lost.`); }
     if (Z.p.mode !== modeKey) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
     if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} ${mode.coh === false ? 'dispersion tolerance' : 'DSP range'} of ${mode.cdTol} ps/nm.`);
