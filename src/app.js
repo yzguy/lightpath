@@ -87,7 +87,15 @@ function fitView(readable) {
   // On a phone the whole-lab overview would render labels at 5px: open at a readable zoom from the left (pan or pinch for the rest; Fit gives the overview)
   if (readable && r.width < 600 && k < 0.6) { const k2 = 0.6; S.view = { k: k2, x: Math.min(...xs) - 70 / k2, y: (Math.min(...ys) + Math.max(...ys)) / 2 - r.height / 2 / k2 }; }
 }
-function applyView() { gRoot.setAttribute('transform', `scale(${S.view.k}) translate(${-S.view.x},${-S.view.y})`); }
+// Text and the fault badge are drawn in canvas units, so zooming out shrinks them below what can be read. They are counter-scaled to a floor on screen (names 11px,
+// cable labels and A/Z tags 9px, the badge 9px across) and only grow, never shrink, so a zoomed-in view looks as drawn.
+const floorScale = (px, k, max = 2.4) => Math.min(max, Math.max(1, px / (k * 1)));
+function applyView() {
+  const k = S.view.k;
+  gRoot.setAttribute('transform', `scale(${k}) translate(${-S.view.x},${-S.view.y})`);
+  gRoot.style.setProperty('--lf1', floorScale(11, k * 11.5)); gRoot.style.setProperty('--lf2', floorScale(9, k * 11)); gRoot.style.setProperty('--lf3', floorScale(9, k * 10));
+  gRoot.querySelectorAll('.faultg').forEach(g => g.setAttribute('transform', `translate(40,-16) scale(${floorScale(9, k * 8)})`));
+}
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
 
 // a host whose traffic cannot get through is outlined on the canvas, like any other faulty device (computed once per change, not per drag)
@@ -121,7 +129,7 @@ function nodeShape(n) {
     g.append(sv('rect', { x: -40, y: -16, width: 80, height: 32, rx: 3, class: 'body' }));
     const t = sv('text', { x: -34, y: -4, class: 'glyph small' }); t.textContent = `ODF ${n.p.ports}`; g.append(t);
     const k = Math.min(12, n.p.ports); for (let i = 0; i < k; i++) g.append(sv('rect', { x: -34 + i * (68 / k), y: 3, width: Math.max(3, 68 / k - 2), height: 8, rx: 1, class: 'pport' + (n.p.dirty && n.p.dirty[i + 1] ? ' dirty' : '') }));
-    if (panelDirty(n)) { g.append(sv('circle', { cx: 40, cy: -16, r: 8, class: 'faultbadge' })); const b = sv('text', { x: 40, y: -12.5, class: 'faultmark', 'text-anchor': 'middle' }); b.textContent = '!'; g.append(b); } // a dirty connector you can see at any zoom
+    if (panelDirty(n)) { const fg = sv('g', { class: 'faultg', transform: `translate(40,-16) scale(${floorScale(9, S.view.k * 8)})` }); fg.append(sv('circle', { cx: 0, cy: 0, r: 8, class: 'faultbadge' })); const b = sv('text', { x: 0, y: 3.5, class: 'faultmark', 'text-anchor': 'middle' }); b.textContent = '!'; fg.append(b); g.append(fg); } // a dirty connector you can see at any zoom
   } else if (n.type === 'splitter') {
     g.append(sv('rect', { x: -34, y: -20, width: 68, height: 40, rx: 4, class: 'body' }));
     g.append(sv('path', { d: 'M-28,0 L-6,0 M-6,0 L26,-10 M-6,0 L26,10', class: 'thin' }));
@@ -381,6 +389,17 @@ function connect(a, b, kind) {
   }
   select({ kind: 'link', id: l.id }); toast(`${kind === 'fiber' ? 'Fiber span' : 'Patch cord'}: ${a.name} ↔ ${b.name}`);
 }
+// A new device goes in the first free place near the middle of what you are looking at (not on top of another device), then outwards in a spiral
+function freeSpot() {
+  const r = svg.getBoundingClientRect(), c = toWorld(r.left + r.width / 2, r.top + r.height / 2), sx = 150, sy = 110;
+  const free = (x, y) => S.nodes.every(n => Math.abs(n.x - x) >= 120 || Math.abs(n.y - y) >= 90);
+  for (let ring = 0; ring < 12; ring++) for (let dy = -ring; dy <= ring; dy++) for (let dx = -ring; dx <= ring; dx++) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+    const x = Math.round((c.x + dx * sx) / 10) * 10, y = Math.round((c.y + dy * sy) / 10) * 10;
+    if (free(x, y)) return { x, y };
+  }
+  return c;
+}
 function addNode(type, x, y) {
   const count = S.nodes.filter(n => n.type === type).length + 1;
   let name = `${PREFIX[type]}-${count}`; while (S.nodes.some(n => n.name === name)) name += "'";
@@ -406,7 +425,7 @@ function setEnd(id) {
 document.querySelectorAll('.pal-item').forEach(it => {
   it.addEventListener('dragstart', e => { e.dataTransfer.setData('text/plain', it.dataset.type); e.dataTransfer.effectAllowed = 'copy'; });
   it.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); it.click(); } });
-  it.addEventListener('click', () => { const r = svg.getBoundingClientRect(); const w = toWorld(r.left + r.width / 2 + (Math.random() - 0.5) * 80, r.top + r.height / 2 + (Math.random() - 0.5) * 60); addNode(it.dataset.type, w.x, w.y); });
+  it.addEventListener('click', () => { const w = freeSpot(); addNode(it.dataset.type, w.x, w.y); });
 });
 svg.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
 svg.addEventListener('drop', e => { e.preventDefault(); const t = e.dataTransfer.getData('text/plain'); if (TYPES[t]) { const w = toWorld(e.clientX, e.clientY); addNode(t, w.x, w.y); } });

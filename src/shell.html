@@ -90,8 +90,8 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .node .led { fill: var(--good) }
 .node .glyph { font-family: var(--f-mono); font-size: 12px; font-weight: 600; fill: var(--ink) }
 .node .glyph.small { font-size: 10px }
-.node .nlabel { font-family: var(--f-mono); font-size: 11.5px; fill: var(--muted); font-weight: 500 }
-.node .endtag { font-family: var(--f-ui); font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; fill: var(--accent-text) }
+.node .nlabel { font-family: var(--f-mono); font-size: calc(11.5px * var(--lf1, 1)); fill: var(--muted); font-weight: 500 }
+.node .endtag { font-family: var(--f-ui); font-size: calc(10px * var(--lf3, 1)); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; fill: var(--accent-text) }
 .node.sel .body { stroke: var(--accent); stroke-width: 3 }
 .node.sel .nlabel { fill: var(--ink) }
 .t-roadm .body, .t-oadm .body { fill: var(--raised) }
@@ -115,7 +115,7 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .link.k-patch .wire { stroke: var(--muted); stroke-width: 2; stroke-dasharray: 5 4 }
 .link.sel .wire { stroke: var(--accent); stroke-width: 6; filter: drop-shadow(0 0 3px var(--accent)) }
 .link.cut .wire { stroke: var(--bad); stroke-dasharray: 2 6 }
-.llabel { font-family: var(--f-mono); font-size: 11px; fill: var(--ink); paint-order: stroke; stroke: var(--panel); stroke-width: 4px; pointer-events: none }
+.llabel { font-family: var(--f-mono); font-size: calc(11px * var(--lf2, 1)); fill: var(--ink); paint-order: stroke; stroke: var(--panel); stroke-width: calc(4px * var(--lf2, 1)); pointer-events: none }
 .cutmark { font-size: 20px; fill: var(--bad); font-weight: 700 }
 .lightpath { stroke: var(--sig); stroke-width: 2.5; stroke-dasharray: 3 9; stroke-linecap: round; fill: none; pointer-events: none; animation: flow 0.9s linear infinite }
 .lightpath.down, .lightpath.los { stroke: var(--bad) }
