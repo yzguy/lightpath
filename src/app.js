@@ -732,7 +732,8 @@ function renderInspectorBody() {
       box.append(el('div', { class: 'spec' }, [specRow('Attenuation', `${fb.att} dB/km`), specRow('Span loss', `${f1(fb.att * l.p.len + +l.p.extra)} dB`), specRow('Dispersion', `${fb.D} ps/nm/km → ${Math.round(fb.D * l.p.len)} ps/nm`), specRow('PMD', `${fb.pmd} ps/√km`), specRow('Nonlinear γ', `${fb.gamma} /W/km`)]));
     } else {
       if (l.p.il == null) l.p.il = linkDefaults('patch').il;
-      box.append(field('Loss (dB)', numIn(l.p, 'il', 0.1, 0, 10)));
+      if (l.p.len == null) l.p.len = linkDefaults('patch').len;
+      box.append(field('Loss (dB)', numIn(l.p, 'il', 0.1, 0, 10)), field('Length (m)', numIn(l.p, 'len', 1, 0, 2000), 'A patch cord is 1 to 10 m in a rack. Its glass adds 0.25 dB/km (negligible until it is hundreds of metres), 4.9 µs of latency per km, and its length places the connector events on the OTDR trace; events closer than the dead zone merge.'));
     }
     if (l.kind === 'fiber') {
       const gi = el('input', { value: l.p.srlg || '', id: 'f-srlg', placeholder: 'e.g. duct1', maxlength: 24 });

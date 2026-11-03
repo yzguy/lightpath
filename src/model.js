@@ -26,7 +26,7 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', panel: 'ODF', splitter: 'SPL', switch: 'SW', host: 'HOST', meter: 'PM', otdr: 'OTDR', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', single: false } : { il: 0.5, dir: 'both', cut: false, mport: null, sa: '', sb: '', cport: null, hport: null });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', single: false } : { il: 0.5, len: 3, dir: 'both', cut: false, mport: null, sa: '', sb: '', cport: null, hport: null });
 
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
@@ -478,6 +478,7 @@ const MODEL = (() => {
       if (!l || typeof l.id !== 'string' || lseen.has(l.id) || !seen.has(l.a) || !seen.has(l.b) || l.a === l.b) continue;
       const kind = l.kind === 'fiber' ? 'fiber' : 'patch', p = fill(linkDefaults(kind), l.p);
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
+      if (kind === 'patch') { const v = l.p && l.p.len; p.len = Number.isFinite(+v) && v !== '' && v !== null && typeof v !== 'boolean' && +v >= 0 ? Math.min(+v, 2000) : 3; } // metres
       p.cutAt = kind === 'fiber' && p.cutAt !== '' && p.cutAt !== null && typeof p.cutAt !== 'boolean' && Number.isFinite(+p.cutAt) && +p.cutAt >= 0 ? Math.min(+p.cutAt, 300) : '';
       { const A0 = nodes.find(n => n.id === l.a), B0 = nodes.find(n => n.id === l.b), inst = x => x && (x.type === 'meter' || x.type === 'otdr'), test = x => x && (x.type === 'panel' || x.type === 'splitter' || x.type === 'switch');
         if ((inst(A0) || inst(B0)) && !((inst(A0) && test(B0)) || (inst(B0) && test(A0)))) continue; // an instrument plugs into a patch panel, splitter or switch port and nothing else
@@ -564,7 +565,8 @@ const MODEL = (() => {
   const OTDR_PULSES = [10, 30, 100, 300, 1000, 3000];
   const OTDR_DR = { 10: 12, 30: 16, 100: 22, 300: 27, 1000: 32, 3000: 36 }; // dynamic range in dB of one-way loss, by pulse width (ns): representative
   const METER = { min: -50, max: 10 };
-  const PATCH_KM = 0.003; // a patch cord is taken as 3 m
+  const PATCH_ATT = 0.25; // dB/km of the glass in a patch cord (C band, 1310 nm is higher); only matters for a long run of cord
+  const patchKm = l => (Number.isFinite(+l.p.len) ? +l.p.len : 3) / 1000; // a patch cord's length in km (the cable has it in metres; 3 m by default)
   function meterRead(S, hops, n) {
     const { node } = mkGraph(S), l = S.links.find(x => x.a === n.id || x.b === n.id);
     if (!l) return { status: 'none', why: 'not plugged into anything' };
@@ -627,7 +629,7 @@ const MODEL = (() => {
         if (far()) { ev('noise', 'noise floor', 0, -90, `the trace sinks into the noise (dynamic range ${DR} dB): use a longer pulse`); return finish('the trace sinks into the noise: use a longer pulse'), out; }
         if (+nx.p.extra > 0.05) ev('connector', 'connector / splice', +nx.p.extra, +nx.p.extra > 1 ? -32 : -48, +nx.p.extra > 1 ? 'a lossy joint: dirty connector or poor splice' : 'connector or splice');
       } else {
-        km += PATCH_KM; if (isCut(S, nx)) { ev('break', 'patch cord', 0, -14, 'a cut patch cord'); return finish('a patch cord is cut'), out; }
+        km += patchKm(nx); if (isCut(S, nx)) { ev('break', 'patch cord', 0, -14, 'a cut patch cord'); return finish('a patch cord is cut'), out; }
         if (+nx.p.il > 0.01) ev('connector', 'patch cord', +nx.p.il, -50, 'connector');
       }
       prev = nx; cur = nid; arr = sideOf(nx, nid);
@@ -654,7 +656,7 @@ const MODEL = (() => {
         let l = l0, cur = a.id, km = 0, extra = P1310_LOSS, why = '', hops = [a.name], b = null;
         for (let guard = 0; guard < 40; guard++) {
           if (isCut(S, l)) { why = `the fiber ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; break; }
-          km += l.kind === 'fiber' ? +l.p.len : 0;
+          km += l.kind === 'fiber' ? +l.p.len : patchKm(l);
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid); hops.push(n.name);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
           if (n.type === 'oadm' && n.p.p1310) { b = n; extra += P1310_LOSS; break; }
@@ -698,7 +700,7 @@ const MODEL = (() => {
         let l = l0, cur = a.id, km = 0, extra = 2 * OSC.filter, why = '', b = null;
         for (let guard = 0; guard < 40; guard++) {
           if (isCut(S, l)) { why = `the fiber ${node(l.a).name}–${node(l.b).name} is cut`; break; }
-          km += l.kind === 'fiber' ? +l.p.len : 0;
+          km += l.kind === 'fiber' ? +l.p.len : patchKm(l);
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
           if (site(n)) { b = n; break; }
@@ -799,7 +801,7 @@ const MODEL = (() => {
         const dead = isDead(node(v));
         if (dead && !allowCut && !plan) continue;
         if (x.excludeNodes && x.excludeNodes.has(v) && v !== zId) continue;
-        const w = (l.kind === 'fiber' ? +l.p.len : 0.01) + 0.01 + extra + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0), vk = isTriPort(node(v)) || node(v).type === 'panel' ? v + '#' + oadmSide(l, v) : v;
+        const w = (l.kind === 'fiber' ? +l.p.len : 0.01 + patchKm(l)) + 0.01 + extra + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0), vk = isTriPort(node(v)) || node(v).type === 'panel' ? v + '#' + oadmSide(l, v) : v;
         if (dist[vk] == null || dist[u] + w < dist[vk]) { dist[vk] = dist[u] + w; prev[vk] = { u, l: l.id }; }
       }
     }
@@ -829,7 +831,7 @@ const MODEL = (() => {
   // One-way latency in microseconds along a channel: fiber, any dispersion-compensating fiber, and the two transceivers
   function latencyUs(S, entry) {
     const { link, node } = mkGraph(S); let us = 0, km = 0;
-    for (const id of entry.ch.routeLinks || []) { const l = link(id); if (l && l.kind === 'fiber') { km += +l.p.len; us += +l.p.len * LAT.fiberUsPerKm; } }
+    for (const id of entry.ch.routeLinks || []) { const l = link(id); if (!l) continue; const d = l.kind === 'fiber' ? +l.p.len : patchKm(l); km += d; us += d * LAT.fiberUsPerKm; }
     for (const id of entry.ch.routeNodes || []) { const n = node(id); if (n && n.type === 'dcm') us += Math.abs(+n.p.cd) / 17 * LAT.fiberUsPerKm; }
     us += 2 * (entry.mode && entry.mode.coh === false ? LAT.directUs : LAT.coherentUs);
     return { us, km };
@@ -1548,7 +1550,7 @@ const MODEL = (() => {
     for (let i = 0; i < path.links.length; i++) {
       const l = link(path.links[i]), nxt = node(path.nodes[i + 1]), prv = node(path.nodes[i]);
       if (isCut(S, l)) { losAt = l; hops.push({ name: linkName(l), kind: 'cut', in: snap(), out: { sig: -99, ase: -99, nli: -99 }, km, nch, note: l.p.cut ? 'Fiber cut' : `Fiber cut (shared risk group ${l.p.srlg})` }); break; }
-      if (l.kind === 'patch') { const b = snap(); loss(+l.p.il); rec('patch', 'patch', b, { gain: -l.p.il }); }
+      if (l.kind === 'patch') { const b = snap(), lo = +l.p.il + PATCH_ATT * patchKm(l); loss(lo); rec('patch', 'patch', b, { gain: -lo, note: patchKm(l) >= 0.0095 ? `${+(patchKm(l) * 1000).toPrecision(3)} m of cord` : undefined }); }
       else {
         const fb = PHY_.FIBERS[l.p.fiber], Lk = +l.p.len, b = snap();
         // Per-span loading: from this fiber onward (until a mux or ROADM changes it) only this many channels are lit.

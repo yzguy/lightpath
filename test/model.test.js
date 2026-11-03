@@ -1724,7 +1724,7 @@ const hostPair = (S, a, b) => { const id = n => S.nodes.find(x => x.name === n).
 test('reachability: hosts on matching muxponder client ports reach each other, with a latency from the fiber', () => {
   const S = M.sanitize(build('reach')), r = hostPair(S, 'HOST-A1', 'HOST-B1');
   assert.equal(r.ok, true); assert.ok(r.steps.every(s => s.ok));
-  assert.ok(Math.abs(r.latencyUs - (80 * 4.9 + 20)) < 1e-6, `latency ${r.latencyUs}`); assert.equal(r.rate, 100);
+  assert.ok(Math.abs(r.latencyUs - (80 * 4.9 + 20 + 0.012 * 4.9)) < 1e-6, `latency ${r.latencyUs}`); assert.equal(r.rate, 100); // latency: fiber, the transceivers and four 3 m patch cords
   assert.equal(hostPair(S, 'HOST-A2', 'HOST-B2').ok, true);
   assert.match(hostPair(S, 'HOST-A1', 'HOST-B2').why, /client port 1 is carried to client port 1.*client port 2/);
   assert.match(hostPair(S, 'HOST-A1', 'HOST-A2').why, /same muxponder/);
@@ -2169,4 +2169,15 @@ test('connector reflections: two reflectors with an amplifier between them make 
   const good = M.simulate(S);
   assert.ok(good.gosnr > bad.gosnr, 'the multipath noise costs OSNR');
   assert.ok(good.reflection.x < x - 40 && !good.alarms.some(a => /Reflections between/.test(a.text)));
+});
+
+test('patch cord length: default 3 m, sanitised, and it counts in latency, loss and the OTDR distance', () => {
+  const S = M.sanitize(build('otdr')), cords = S.links.filter(l => l.kind === 'patch');
+  assert.ok(cords.every(l => l.p.len === 3));
+  const odd = clone(S), oc = odd.links.filter(l => l.kind === 'patch'); assert.ok(oc.length >= 1);
+  for (const [v, want] of [[-5, 3], ['x', 3], [true, 3], [99999, 2000], [12, 12]]) { oc[0].p.len = v; assert.equal(M.sanitize(clone(odd)).links.find(l => l.id === oc[0].id).p.len, want, String(v)); }
+  const R = M.sanitize(build('reach')), lat = () => hostPair(R, 'HOST-A1', 'HOST-B1');
+  const l0 = lat().latencyUs; let hit = 0;
+  for (const cord of R.links.filter(l => l.kind === 'patch')) { cord.p.len = 1003; const d = lat().latencyUs - l0; cord.p.len = 3; if (Math.abs(d - 4.9) < 1e-6) hit++; }
+  assert.ok(hit >= 2, 'every cord on the path adds 4.9 us for a kilometre more of glass');
 });
