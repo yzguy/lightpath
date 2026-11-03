@@ -38,16 +38,18 @@ kbd { font-family: var(--f-mono); font-size: 12px; border: 1px solid var(--line)
 .brand h1 { font-weight: 800; font-size: 20px; letter-spacing: -.01em }
 .brand h1 span { color: var(--accent-text) }
 .brand small { color: var(--muted); font-family: var(--f-mono); font-size: 12px; letter-spacing: .04em }
-.globals { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; margin-left: auto }
+.globals { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; justify-content: flex-end; margin-left: auto }
 .g { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600 }
 .g output { font-family: var(--f-mono); color: var(--ink); font-size: 13px; min-width: 3.2em; text-transform: none; letter-spacing: 0 }
-.g input[type=range] { width: 110px; accent-color: var(--accent) }
-select, input[type=number], input:not([type]) { max-width: 100%; background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; min-width: 0 }
+.g input[type=range] { width: 90px; accent-color: var(--accent) }
+select, input[type=number], input[type=search], input:not([type]) { max-width: 100%; background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; min-width: 0 }
 .btn { background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 6px 10px; cursor: pointer; font-weight: 500 }
 .btn:hover { border-color: var(--muted) }
 .btn.danger { color: var(--bad) }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /* the browser's default placeholder grey is too faint on the dark theme */
+.btn:disabled { color: var(--muted); cursor: default } /* a disabled button stays readable in both themes */
 .btn.quiet { background: none; border-color: transparent; color: var(--muted); text-decoration: underline; align-self: start }
-.btn.quiet:hover { color: var(--bad); border-color: transparent }
+.btn.quiet:hover { color: var(--ink); border-color: transparent } .btn.quiet.delbtn:hover { color: var(--bad) } /* only the delete buttons turn red */
 
 /* bench */
 .bench { display: grid; grid-template-columns: 168px minmax(0, 1fr) 270px; gap: 10px; height: min(62vh, 620px); min-height: 440px }
@@ -132,7 +134,7 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .plantbl tr.hirow td { background: color-mix(in srgb, var(--mpi) 16%, transparent) }
 .plantbl tbody tr { cursor: pointer }
 .plantbl tr.editrow { cursor: auto } .plantbl tr.editrow > td { background: var(--raised); white-space: normal }
-.slotfield { display: flex; gap: 8px; align-items: center } .slotfield input { width: 90px; flex: none }
+.slotfield { display: flex; gap: 8px; align-items: center } .slotfield input { width: 130px; flex: none }
 .editgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 14px; padding: 6px 2px }
 .editgrid .fld select, .editgrid .fld input { width: 100% }
 .editgrid .pair input { width: 100% }
@@ -176,8 +178,9 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .kpi.bad .kv { color: var(--bad) }
 #alarms:empty, #diag:empty { display: none }
 #diag > div { padding: 6px 2px; font-size: 13px; border-top: 1px solid var(--line) } /* flat: it already sits in the results panel */
-.planwrap p, .learn p { max-width: 66ch } /* explanatory text keeps a readable measure on a wide screen */
-.labset { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center }
+.planwrap p, .learn p, p.muted.small { max-width: 60ch } /* explanatory text keeps a readable line length */ /* explanatory text keeps a readable measure on a wide screen */
+.labrow { display: flex; flex-wrap: nowrap; gap: 8px 18px; align-items: center } /* the line settings stay together on one row, or drop below the lab menu as a group (a details lays its content out in a block box, so the row is its own element) */
+#preset { width: 270px; text-overflow: ellipsis }
 .labset > summary { display: none; cursor: pointer; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); align-items: center; min-height: 44px; list-style: none }
 .labset > summary::-webkit-details-marker { display: none }
 .labset > summary::before { content: '+'; display: inline-block; width: 18px; font-family: var(--f-mono); font-weight: 700 }
@@ -290,7 +293,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   .canvaswrap { order: -2 } .insp { order: -1 } /* canvas first, then the inspector, then the palette */
   .globals { margin-left: 0; width: 100%; gap: 4px 14px }
   .globals > .g { flex: 1 1 100% }
-  .labset { width: 100%; flex-direction: column; align-items: stretch; gap: 4px } .labset > summary { display: flex } /* the three line settings are one row until opened */
+  .labset { width: 100% } .labrow { flex-direction: column; align-items: stretch; gap: 4px } .labset > summary { display: flex } /* the three line settings are one row until opened */
   .labset .g { width: 100% }
   .g { min-width: 0; max-width: 100% }
   .g select { flex: 1 1 auto; min-width: 0 }
@@ -314,11 +317,11 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div class="globals">
     <label class="g" for="preset">Lab
       <select id="preset"><option value="">Load a scenario…</option><optgroup label="Point-to-point links"><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="dark">Dark fiber: unamplified ZR</option><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="mix">Mixed line: 10G beside 400G</option></optgroup><optgroup label="Clients and traffic"><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="mxp2">Two muxponders per side on passive muxes</option><option value="reach">Hosts reaching each other over a muxponder link</option></optgroup><optgroup label="ROADMs and mesh"><option value="mesh">Mesh: channels on different routes</option><option value="adddrop">ROADM line with add/drop at the middle node</option><option value="roadmports">ROADM ring with transponders on add/drop ports</option></optgroup><optgroup label="Restoration and protection"><option value="ring">ROADM triangle with restoration</option><option value="srlg">Shared duct: two fibers that fail together</option><option value="protect">Protection and converters on a triangle</option><option value="client">Dual-homed transponders with spare modules</option><option value="olp">Optical line protection: splitter, tap and switch</option><option value="cabprot">Protection and a converter on cabled channels</option></optgroup><optgroup label="Passive optics and cabling"><option value="oadm">Passive OADM bus: transponders on add/drop ports</option><option value="ports">Transponders on mux ports: the cabling sets the channels</option><option value="bidi">Single-fiber (BiDi) bus: OADM between two muxes</option><option value="osc">Supervisory channel (1510 nm) and 1310 nm client ports</option><option value="odf">Patch panels: connector loss and a dirty port</option><option value="otdr">OTDR and power meter at a patch panel</option></optgroup></select></label>
-    <details class="labset" id="labset" open><summary id="labsum">Line settings</summary>
+    <details class="labset" id="labset" open><summary id="labsum">Line settings</summary><div class="labrow">
     <label class="g" for="g-nch" title="How many channels are lit in each fiber. Affects amplifier power sharing and nonlinearity.">Channels <input type="range" id="g-nch" min="1" max="96" step="1"><output id="g-nch-v"></output></label>
     <label class="g" for="g-df">Grid <select id="g-df"><option value="50">50 GHz</option><option value="75">75 GHz</option><option value="100">100 GHz</option><option value="150">150 GHz</option></select></label><button class="btn quiet" id="btn-itu" type="button" title="ITU grid and channel numbers: every channel at each spacing">ITU grid</button>
-    <label class="g" for="g-launch" title="Per-channel output target for every amplifier in Auto mode">Launch <input type="range" id="g-launch" min="-6" max="6" step="0.5"><output id="g-launch-v"></output><span style="text-transform:none">dBm/ch</span></label>
-    </details>
+    <label class="g" for="g-launch" title="Per-channel output target for every amplifier in Auto mode">Launch <input type="range" id="g-launch" min="-6" max="6" step="0.5"><output id="g-launch-v"></output></label>
+    </div></details>
   </div>
 </header>
 

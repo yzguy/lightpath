@@ -493,7 +493,9 @@ function renderInspectorBody() {
     const nm = el('input', { value: n.name, id: 'f-name' }); nm.addEventListener('input', () => { n.name = nm.value; renderCanvas(); renderResults(); });
     const p = n.p; p.fail ??= ''; p.degDb ??= 3;
     const head = el('div', { class: 'insp-head' }, [el('h2', { text: TYPES[n.type].label }), field('Name', nm)]); box.append(head); // type, name, condition and delete stay at the top while the fields scroll
-    head.append(field('Condition', selIn(p, 'fail', [['', 'Working'], ['degraded', 'Degraded'], ['dead', 'Failed (no light passes)']])));
+    const condSel = selIn(p, 'fail', [['', 'Working'], ['degraded', 'Degraded'], ['dead', 'Failed (no light passes)']]);
+    condSel.addEventListener('change', () => toast(`${n.name} is ${p.fail === 'dead' ? 'failed' : p.fail === 'degraded' ? 'degraded' : 'working'}`, { label: 'Undo', fn: undo })); // like a cut, it can be undone from the toast
+    head.append(field('Condition', condSel));
     // say what the chosen condition means (and for this kind of device), not all of them at once
     const condText = p.fail === 'dead' ? 'Failed: the device passes no light, so routes avoid it (restoration or protection) and a service through it is LOS.'
       : p.fail === 'degraded' ? `Degraded: ${n.type === 'edfa' ? 'its output falls and its noise figure rises (pump ageing)' : isEnd(n) ? 'its laser gets weaker and its receiver loses SNR' : 'it adds extra loss'}.` : '';
@@ -524,12 +526,12 @@ function renderInspectorBody() {
     if (isEnd(n)) {
       box.append(field(n.type === 'mxp' ? 'Line port mode' : 'Mode', selIn(p, 'mode', Object.entries(PHY.MODES).map(([k, m]) => [k, m.name]))));
       { const slotsN = PHY.cBandSlots(+S.g.df * 1e9), cab = S.links.map(portLink).filter(x => x && x.t === n)[0], autoText = cab && cab.m ? 'Auto: the slot of its port' : 'Auto';
-        // a slot is a number from 1 to 64, with its frequency beside it; blank means Auto
-        const wi = el('input', { type: 'number', id: 'f-slot', step: 1, min: 1, max: slotsN, placeholder: 'Auto', 'aria-label': 'Wavelength slot, blank for Auto' }), ro = el('small', { class: 'muted' });
+        // type a slot number (1 to 64), a channel (CH31), a frequency (193.1 THz) or a wavelength (1552.52 nm); blank is Auto. The channel, frequency and wavelength show beside it.
+        const dfHz = +S.g.df * 1e9, wi = el('input', { type: 'text', id: 'f-slot', placeholder: 'Auto', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Wavelength: a slot (1 to ${slotsN}), a channel like CH31, a frequency like 193.1 THz or a wavelength like 1552.52 nm. Blank for Auto.`, title: 'A slot number, CH31, 193.1 THz or 1552.52 nm' }), ro = el('small', { class: 'muted' });
         const read = v => { ro.textContent = Number.isInteger(v) ? `${chText(v)} (slot ${v + 1})` : autoText; };
-        wi.value = Number.isInteger(p.slot) ? p.slot + 1 : ''; read(Number.isInteger(p.slot) ? p.slot : null);
-        wi.addEventListener('input', () => { const v = Math.round(+wi.value); read(wi.value !== '' && v >= 1 && v <= slotsN ? v - 1 : Number.isInteger(p.slot) ? p.slot : null); });
-        wi.addEventListener('change', () => { if (wi.value === '') { p.slot = null; renderAll(); return; } const v = Math.round(+wi.value); if (isFinite(v) && v >= 1 && v <= slotsN) { p.slot = v - 1; renderAll(); } else { wi.value = Number.isInteger(p.slot) ? p.slot + 1 : ''; read(Number.isInteger(p.slot) ? p.slot : null); toast(`Slots run from 1 to ${slotsN}.`); } });
+        wi.value = Number.isInteger(p.slot) ? String(p.slot + 1) : ''; read(Number.isInteger(p.slot) ? p.slot : null);
+        wi.addEventListener('input', () => { const r = PHY.slotFromText(wi.value, dfHz); if (r.error) ro.textContent = r.error; else read(r.auto ? null : r.slot); });
+        wi.addEventListener('change', () => { const r = PHY.slotFromText(wi.value, dfHz); if (r.auto) { p.slot = null; renderAll(); } else if (r.error) { wi.value = Number.isInteger(p.slot) ? String(p.slot + 1) : ''; read(Number.isInteger(p.slot) ? p.slot : null); toast(r.error); } else { p.slot = r.slot; renderAll(); } });
         box.append(field('Wavelength', el('div', { class: 'slotfield' }, [wi, el('button', { class: 'btn quiet', type: 'button', text: 'Auto', hidden: !Number.isInteger(p.slot), onclick: () => { p.slot = null; renderAll(); } })]), ''));
         box.lastChild.append(ro); box.lastChild.append(el('small', { text: 'A tunable transponder is set to a slot. Plugged into a mux or OADM port it only gets through if it matches that port; Auto follows the port.' }));
         if (cab && cab.m.type !== 'roadm' && cab.m.p.bidi) { // on a single-fiber port it also listens on a slot of its own
@@ -599,7 +601,7 @@ function renderInspectorBody() {
       const di = el('input', { value: Object.entries(p.dirty || {}).map(([k, v]) => `${k}=${v}`).join(', '), id: 'f-dirty', placeholder: 'none' });
       di.addEventListener('input', () => { const d = {}; for (const tok of di.value.split(/[\s,;]+/).filter(Boolean)) { const [k, v] = tok.split('='), i = Math.round(+k), db = v === undefined ? 2 : +v; if (Number.isInteger(i) && i >= 1 && i <= p.ports && isFinite(db) && db > 0) d[i] = Math.min(10, db); } p.dirty = d; recompute(); });
       box.append(field('Dirty connectors', di, 'Port number and the extra loss, for example 1=1.8, 4=3. A dirty or damaged connector costs 1-3 dB (more if it is bad) and raises a warning. Leave empty for a clean panel.'),
-        el('button', { class: 'btn', text: 'Clean every connector', onclick: () => { p.dirty = {}; renderAll(); } }));
+        (() => { const dirtyN = Object.keys(p.dirty || {}).length; return el('button', { class: 'btn', text: dirtyN ? 'Clean every connector' : 'No dirty connectors', disabled: !dirtyN, onclick: () => { p.dirty = {}; checkpoint(); renderAll(); toast('Cleaned every connector', { label: 'Undo', fn: undo }); } }); })());
       box.append(el('p', { class: 'muted small', text: 'Cable a fiber to the rear of a port and a patch cord to its front. Light cannot pass from one port to another.' }));
     } else if (n.type === 'splitter') {
       box.append(field('Split ratio (A / B)', selIn(p, 'ratio', Object.keys(MODEL.SPLIT).map(k => [k, k + (k === '99/1' ? '  (monitor tap)' : '')])), 'Power share to port A (the main branch) and port B. A 99/1 tap costs the main path 0.05 dB and gives the monitor port 1%.'));
@@ -633,13 +635,13 @@ function renderInspectorBody() {
     } else if (n.type === 'voa') {
       box.append(field('Attenuation (dB)', numIn(p, 'att', 0.5, 0, 30)));
     }
-    box.append(el('button', { class: 'btn quiet', text: 'Delete device', onclick: del })); // Undo makes it safe, so it is not the loudest control
+    box.append(el('button', { class: 'btn quiet delbtn', text: 'Delete device', onclick: del })); // Undo makes it safe, so it is not the loudest control
   } else {
     const l = link(sel.id); if (!l) return;
     const seenHints = new Set(), once = (k, t) => (seenHints.has(k) ? undefined : (seenHints.add(k), t)); // the same help text for the cable's two ends is shown once
     // the type, the name and the main actions stay at the top of the panel while its fields scroll
     const head = el('div', { class: 'insp-head' }, [el('h2', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('p', { class: 'muted', text: linkName(l) }),
-      el('div', { class: 'row' }, [el('button', { class: 'btn ' + (l.p.cut ? '' : 'danger'), text: l.p.cut ? 'Splice it back' : l.kind === 'fiber' ? 'Cut this fiber' : 'Cut this cable', onclick: () => { l.p.cut = !l.p.cut; checkpoint(); renderAll(); toast(`${l.p.cut ? 'Cut' : 'Spliced'} ${linkName(l)}`, { label: 'Undo', fn: undo }); } }), el('button', { class: 'btn quiet', text: 'Delete cable', onclick: del })])]);
+      el('div', { class: 'row' }, [el('button', { class: 'btn ' + (l.p.cut ? '' : 'danger'), text: l.p.cut ? 'Splice it back' : l.kind === 'fiber' ? 'Cut this fiber' : 'Cut this cable', onclick: () => { l.p.cut = !l.p.cut; checkpoint(); renderAll(); toast(`${l.p.cut ? 'Cut' : 'Spliced'} ${linkName(l)}`, { label: 'Undo', fn: undo }); } }), el('button', { class: 'btn quiet delbtn', text: 'Delete cable', onclick: del })])]);
     box.append(head);
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
     if (l.p.dir == null) l.p.dir = 'both';
@@ -754,11 +756,11 @@ function bindGlobals() {
   const nch = $('#g-nch'), df = $('#g-df'), la = $('#g-launch');
   nch.value = S.g.nch; df.value = S.g.df; la.value = S.g.launch;
   $('#labsum').textContent = `Line settings · ${S.g.nch} ch · ${S.g.df} GHz · ${S.g.launch > 0 ? '+' : ''}${S.g.launch} dBm`;
-  $('#g-nch-v').textContent = S.g.nch; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch;
+  $('#g-nch-v').textContent = S.g.nch; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch + ' dBm/ch';
 }
 $('#g-nch').addEventListener('input', e => { if (S.g.plan) { S.g.plan = null; toast('Channel plan reset to a uniform line'); } S.g.nch = +e.target.value; $('#g-nch-v').textContent = S.g.nch; renderAll(); });
 $('#g-df').addEventListener('change', e => { const old = +S.g.df; S.g.df = +e.target.value; if (S.g.plan) { S.g.plan = MODEL.remapPlan(S.g.plan, old, S.g.df); if (S.g.plan) S.g.nch = S.g.plan.length; } renderAll(); });
-$('#g-launch').addEventListener('input', e => { S.g.launch = +e.target.value; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch; recompute(); });
+$('#g-launch').addEventListener('input', e => { S.g.launch = +e.target.value; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch + ' dBm/ch'; recompute(); });
 $('#preset').addEventListener('change', e => { if (e.target.value) applyPreset(e.target.value); else syncLab(); });
 $('#btn-fit').addEventListener('click', () => { fitView(); applyView(); });
 $('#btn-itu').addEventListener('click', () => learn('itu'));
@@ -766,7 +768,7 @@ $('#btn-itu').addEventListener('click', () => learn('itu'));
 $('#btn-undo').addEventListener('click', undo); $('#btn-redo').addEventListener('click', redo);
 $('#btn-clear').addEventListener('click', () => {
   const b = $('#btn-clear');
-  if (b.dataset.armed) { S.nodes = []; S.links = []; S.svc = { a: null, z: null }; sel = null; delete b.dataset.armed; b.textContent = 'Clear canvas'; checkpoint(); renderAll(); toast('Cleared the canvas', { label: 'Undo', fn: undo }); }
+  if (b.dataset.armed) { S.nodes = []; S.links = []; S.svc = { a: null, z: null }; labKey = ''; sel = null; delete b.dataset.armed; b.textContent = 'Clear canvas'; checkpoint(); renderAll(); toast('Cleared the canvas', { label: 'Undo', fn: undo }); }
   else { b.dataset.armed = '1'; b.textContent = 'Click again to clear'; setTimeout(() => { delete b.dataset.armed; b.textContent = 'Clear canvas'; }, 2500); }
 });
 $('#btn-export').addEventListener('click', () => { $('#io').hidden = false; $('#io-text').value = JSON.stringify({ nodes: S.nodes, links: S.links, g: S.g, svc: S.svc }, null, 1); });
@@ -1521,7 +1523,7 @@ const LEARN = {
   launch: ['Launch power', `<p>The per-channel power put into each span. Too low: amplifier noise dominates. Too high: nonlinearity dominates. Somewhere in between (often 0 to +2 dBm/ch for 60 GBd on SMF) GSNR peaks. Open the Launch sweep tab to see your link's curve.</p><p><b>Re-optimisation:</b> the optimum is not one number for the whole line. It depends on each span's loss and on how many channels are lit on it, so when channels are added or dropped it moves. Switch "Launch power" to re-optimised in the inspector (nothing selected) and every amplifier with a blank output target sets <code>P = (A / 2η)^(1/3)</code>, the GN optimum for the span after it, where A is the amplifier noise and η the nonlinear coefficient of that span at its current load. The sweep tab shows margin against channels lit for a fixed and a re-optimised line. The total-output limit of the amplifier still applies, and Raman gain is not included in the optimum.</p>`],
 };
 let learnTopic = 'osnr';
-function learn(t) { learnTopic = t; tab = 'learn'; renderTabBody(); $('#tabs').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+function learn(t) { learnTopic = t; tab = 'learn'; renderTabBody(); $('#tabs').scrollIntoView({ behavior: 'smooth', block: 'start' }); } // tabs to the top, so the article under them is what you see
 // The topics in five groups, with a filter box that matches the title or the text of an article
 const LEARN_GROUPS = [['Basics', ['osnr', 'gsnr', 'q', 'ber', 'margin', 'rx', 'span', 'launch', 'aging']], ['Impairments', ['edfa', 'nli', 'cd', 'pmd', 'filter', 'srs', 'xpm', 'raman', 'raman2', 'trans']],
   ['Channels and clients', ['itu', 'plan', 'client', 'ports', 'reach']], ['Cabling and instruments', ['odf', 'olp', 'bidi', 'b1310', 'otdr']], ['Protection and failures', ['resil', 'fail']]];

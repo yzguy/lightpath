@@ -123,6 +123,20 @@ const PHY = (() => {
   // The familiar 100 GHz-grid channel number: CH31 = 193.1 THz, CH21 = 192.1, CH60 = 196.0 (frequency in THz = 190.0 + channel / 10). Other positions are decimals (CH31.5 on a 50 GHz grid).
   const ituChannel = fTHz => +((fTHz - 190) * 10).toFixed(2);
   const wavelengthNm = fTHz => C_LIGHT / (fTHz * 1e12) * 1e9;
+  // A slot typed as a slot number (1 to N), a channel (CH31), a frequency (193.1 THz) or a wavelength (1552.52 nm). Returns {slot}, {auto: true} for blank, or {error}.
+  const slotFromText = (text, dfHz) => {
+    const t = String(text ?? '').trim().toLowerCase().replace(/,/g, '.'), n = cBandSlots(dfHz); if (!t) return { auto: true };
+    let m, f = null;
+    if ((m = /^ch\s*(\d+(?:\.\d+)?)$/.exec(t))) f = 190 + (+m[1]) / 10;
+    else if ((m = /^(\d+(?:\.\d+)?)\s*thz$/.exec(t))) f = +m[1];
+    else if ((m = /^(\d+(?:\.\d+)?)\s*nm$/.exec(t))) f = C_LIGHT / (+m[1] * 1e-9) / 1e12;
+    else if ((m = /^(\d+(?:\.\d+)?)$/.exec(t))) { const x = +m[1]; if (Number.isInteger(x) && x >= 1 && x <= n) return { slot: x - 1 }; if (x > 185 && x < 200) f = x; else if (x > 1500 && x < 1600) f = C_LIGHT / (x * 1e-9) / 1e12; }
+    if (f == null) return { error: `Type a slot number (1 to ${n}), a channel (CH31), a frequency (193.1 THz) or a wavelength (1552.52 nm).` };
+    const step = dfHz / 1e12, k = Math.round((f - slotFreqTHz(0, dfHz)) / step);
+    if (k < 0 || k >= n) return { error: `${f.toFixed(3)} THz is outside the ${n} slots of this ${dfHz / 1e9} GHz grid.` };
+    if (Math.abs(slotFreqTHz(k, dfHz) - f) > 0.001) return { error: `No slot at ${f.toFixed(3)} THz on a ${dfHz / 1e9} GHz grid. The nearest is slot ${k + 1}: ${slotChannel(k, dfHz).text}.`, nearest: k };
+    return { slot: k };
+  };
   const slotChannel = (slot, dfHz) => { const f = slotFreqTHz(slot, dfHz); return { slot, fTHz: f, ch: ituChannel(f), nm: wavelengthNm(f), text: `CH${ituChannel(f)} · ${f.toFixed(3).replace(/0$/, '')} THz · ${wavelengthNm(f).toFixed(2)} nm` }; };
   // Per-channel NLI relative to a reference: the same channel inside a contiguous, identical full band of refN channels at spacing df.
   // Pairwise GN terms: self-channel asinh term plus an XPM log kernel from every other channel (PSD-weighted). chans: [{f (Hz), Rs, P (W)}].
@@ -284,6 +298,6 @@ const PHY = (() => {
     return (lo + hi) / 2;
   }
 
-  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, slotChannel, ituChannel, wavelengthNm, ITU_ANCHOR, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmWalk, xpmSpanPenalty, ramanGainSat, ramanSolve, ramanShape, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
+  return { H, NU, BREF, db, lin, erfc, erfcinv, MODS, FIBERS, MODES, beta2, etaNLI, optLaunch, TRANSIENT, filterPenaltyPerPass, CBAND, cBandSlots, EOL, slotFreqTHz, slotChannel, slotFromText, ituChannel, wavelengthNm, ITU_ANCHOR, nliPlanFactor, RAMAN_PUMPS, ramanRel, drsRatio, NLI_COH_CD, ramanFwdNliFactor, XPM, xpmWalk, xpmSpanPenalty, ramanGainSat, ramanSolve, ramanShape, nliCorrelation, RAMAN, ramanGain, srsTilt, CLIENT_OPTICS, clientBudget, ampNfEff, cdPenalty, qFromBer, effSnr, requiredOsnr, requiredEffSnrDb };
 })();
 if (typeof module !== 'undefined') module.exports = PHY;

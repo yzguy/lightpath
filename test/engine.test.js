@@ -197,3 +197,15 @@ test('slots sit on the ITU grid and are named by their channel number', () => {
   const c = P.slotChannel(17, 100e9); assert.equal(c.ch, 31); assert.match(c.text, /^CH31 · 193\.10 THz · 1552\.52 nm$/);
   assert.match(P.slotChannel(0, 50e9).text, /^CH13\.5 · 191\.35 THz/);
 });
+
+test('a slot can be typed as a slot number, a channel, a frequency or a wavelength', () => {
+  const P = require('../src/engine.js'), d = 75e9;
+  assert.deepEqual(P.slotFromText('', d), { auto: true }); assert.deepEqual(P.slotFromText('  ', d), { auto: true });
+  assert.equal(P.slotFromText('30', d).slot, 29, 'a whole number up to the slot count is a slot');
+  for (const t of ['CH35.5', 'ch 35.5', '193.55', '193.55 THz', '1548.91 nm', '1548.91']) assert.equal(P.slotFromText(t, d).slot, 29, t + ' is slot 30 at 75 GHz');
+  assert.equal(P.slotFromText('CH31', 100e9).slot, 17); assert.equal(P.slotFromText('CH31', 50e9).slot, 35); assert.equal(P.slotFromText('1552.52 nm', 150e9).slot, 11);
+  const off = P.slotFromText('193.2', d); assert.match(off.error, /No slot at 193\.200 THz on a 75 GHz grid.*slot 25.*CH31\.75/); assert.equal(off.nearest, 24);
+  assert.match(P.slotFromText('banana', d).error, /Type a slot number/); assert.match(P.slotFromText('99', d).error, /Type a slot number/);
+  assert.match(P.slotFromText('CH90', d).error, /outside the 64 slots/);
+  for (let k = 0; k < P.cBandSlots(d); k++) assert.equal(P.slotFromText(P.slotChannel(k, d).text.split(' · ')[0], d).slot, k, 'every slot round-trips through its own channel name');
+});
