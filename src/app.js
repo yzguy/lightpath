@@ -2,9 +2,10 @@
 (() => {
 const { db, lin } = PHY;
 const $ = s => document.querySelector(s);
+const BOOL_ATTRS = new Set(['hidden', 'disabled', 'checked', 'selected', 'readonly', 'required', 'open', 'multiple']);
 const el = (tag, attrs = {}, kids = []) => {
   const e = document.createElement(tag);
-  for (const k in attrs) { if (k === 'text') e.textContent = attrs[k]; else if (k === 'html') e.innerHTML = attrs[k]; else if (k.startsWith('on')) e.addEventListener(k.slice(2), attrs[k]); else e.setAttribute(k, attrs[k]); }
+  for (const k in attrs) { if (k === 'text') e.textContent = attrs[k]; else if (k === 'html') e.innerHTML = attrs[k]; else if (k.startsWith('on')) e.addEventListener(k.slice(2), attrs[k]); else if (BOOL_ATTRS.has(k)) { if (attrs[k]) e.setAttribute(k, ''); } else e.setAttribute(k, attrs[k]); } // a boolean attribute is there or not: disabled="false" would still disable
   for (const c of [].concat(kids)) if (c != null) e.append(c);
   return e;
 };
@@ -455,11 +456,12 @@ function selIn(obj, key, opts) {
   const s = el('select', { id: 'f-' + key }); for (const [v, t] of opts) s.append(el('option', { value: v, text: t }));
   s.value = String(obj[key]); s.addEventListener('change', () => { obj[key] = s.value === 'true' ? true : s.value === 'false' ? false : s.value; renderAll(); }); return s;
 }
-let assumeOpen, inspKey, kpiAll = false;
+let assumeOpen, inspKey, kpiAll = false, ramanOpen;
 const narrow = window.matchMedia('(max-width: 900px)');
 // a new selection opens at the top (type, name, actions); an edit to the same selection keeps the scroll position
 function renderInspector() {
   const box = $('#insp'), top = box.scrollTop, key = sel ? sel.kind + ':' + sel.id : '';
+  if (key !== inspKey) ramanOpen = undefined;
   renderInspectorBody(); box.scrollTop = key === inspKey ? top : 0; inspKey = key;
 }
 function renderInspectorBody() {
@@ -519,11 +521,15 @@ function renderInspectorBody() {
     { const d = TYPES[n.type].def(); for (const k in d) if (p[k] === undefined) p[k] = d[k]; } // fields added since this lab was saved
     if (isEnd(n)) {
       box.append(field(n.type === 'mxp' ? 'Line port mode' : 'Mode', selIn(p, 'mode', Object.entries(PHY.MODES).map(([k, m]) => [k, m.name]))));
-      { const ws = el('select', { id: 'f-slot', 'aria-label': 'Wavelength' }), slotsN = PHY.cBandSlots(+S.g.df * 1e9), cab = S.links.map(portLink).filter(x => x && x.t === n)[0];
-        ws.append(el('option', { value: '', text: cab && cab.m ? 'Auto: the slot of its port' : 'Auto' }));
-        for (let k = 0; k < slotsN; k++) ws.append(el('option', { value: String(k), text: `Slot ${k + 1} · ${PHY.slotFreqTHz(k, +S.g.df * 1e9).toFixed(2)} THz` }));
-        ws.value = Number.isInteger(p.slot) ? String(p.slot) : ''; ws.addEventListener('change', () => { p.slot = ws.value === '' ? null : +ws.value; renderAll(); });
-        box.append(field('Wavelength', ws, 'A tunable transponder is set to a slot. Plugged into a mux or OADM port it only gets through if it matches that port; Auto follows the port.'));
+      { const slotsN = PHY.cBandSlots(+S.g.df * 1e9), cab = S.links.map(portLink).filter(x => x && x.t === n)[0], autoText = cab && cab.m ? 'Auto: the slot of its port' : 'Auto';
+        // a slot is a number from 1 to 64, with its frequency beside it; blank means Auto
+        const wi = el('input', { type: 'number', id: 'f-slot', step: 1, min: 1, max: slotsN, placeholder: 'Auto', 'aria-label': 'Wavelength slot, blank for Auto' }), ro = el('small', { class: 'muted' });
+        const read = v => { ro.textContent = Number.isInteger(v) ? `Slot ${v + 1} · ${PHY.slotFreqTHz(v, +S.g.df * 1e9).toFixed(2)} THz` : autoText; };
+        wi.value = Number.isInteger(p.slot) ? p.slot + 1 : ''; read(Number.isInteger(p.slot) ? p.slot : null);
+        wi.addEventListener('input', () => { const v = Math.round(+wi.value); read(wi.value !== '' && v >= 1 && v <= slotsN ? v - 1 : Number.isInteger(p.slot) ? p.slot : null); });
+        wi.addEventListener('change', () => { if (wi.value === '') { p.slot = null; renderAll(); return; } const v = Math.round(+wi.value); if (isFinite(v) && v >= 1 && v <= slotsN) { p.slot = v - 1; renderAll(); } else { wi.value = Number.isInteger(p.slot) ? p.slot + 1 : ''; read(Number.isInteger(p.slot) ? p.slot : null); toast(`Slots run from 1 to ${slotsN}.`); } });
+        box.append(field('Wavelength', el('div', { class: 'slotfield' }, [wi, el('button', { class: 'btn quiet', type: 'button', text: 'Auto', hidden: !Number.isInteger(p.slot), onclick: () => { p.slot = null; renderAll(); } })]), ''));
+        box.lastChild.append(ro); box.lastChild.append(el('small', { text: 'A tunable transponder is set to a slot. Plugged into a mux or OADM port it only gets through if it matches that port; Auto follows the port.' }));
         if (cab && cab.m.type !== 'roadm' && cab.m.p.bidi) { // on a single-fiber port it also listens on a slot of its own
           const rs = el('select', { id: 'f-rxslot', 'aria-label': 'Receive wavelength' }); rs.append(el('option', { value: '', text: 'Auto: what its port delivers' }));
           for (let k = 0; k < slotsN; k++) rs.append(el('option', { value: String(k), text: `Slot ${k + 1} · ${PHY.slotFreqTHz(k, +S.g.df * 1e9).toFixed(2)} THz` }));
@@ -683,15 +689,18 @@ function renderInspectorBody() {
       box.append(field('Same, return direction (dB)', numIn(l.p, 'extraRev', 0.1, 0, 20, true, String(l.p.extra)), 'Z to A. Blank = same as forward. Bidirectional lines have two fibers; a dirty connector on one hurts one direction.'));
       box.append(field('Channels lit on this span', numIn(l.p, 'nch', 1, 1, 96, true, String(S.g.nch)), 'Blank = global. Applies from this span until a mux or ROADM changes it. Fewer neighbours means less nonlinearity.'));
       const fb = PHY.FIBERS[l.p.fiber];
-      box.append(field('Raman pump, backward (mW)', numIn(l.p, 'raman', 50, 0, PHY.RAMAN.maxMw), '0 = off. Distributed gain along the fiber: better OSNR than a lumped amp at the end, but more nonlinearity and a Class 4 laser above ~1 W.'));
-      box.append(field('Raman pump direction', selIn(l.p, 'ramanDir', [['back', 'Backward (from the receive end)'], ['fwd', 'Forward (from the transmit end)'], ['both', 'Both ends, power split']]), 'Backward is quietest. Forward lifts the signal early, which helps ASE but raises nonlinearity and pump noise. Both ends flatten the gain profile.'));
+      // the Raman pump is off on most spans: its settings fold away, and open on their own when a pump is on
+      const rd = el('details', { class: 'raman' }, [el('summary', { text: +l.p.raman > 0 || +l.p.ramanRev > 0 ? `Raman pump · ${l.p.raman} mW${l.p.ramanDir === 'fwd' ? ' forward' : l.p.ramanDir === 'both' ? ' both ends' : ' backward'}` : 'Raman pump · off' })]);
+      rd.open = ramanOpen ?? (+l.p.raman > 0 || +l.p.ramanRev > 0); rd.addEventListener('toggle', () => { ramanOpen = rd.open; }); box.append(rd);
+      rd.append(field('Raman pump, backward (mW)', numIn(l.p, 'raman', 50, 0, PHY.RAMAN.maxMw), '0 = off. Distributed gain along the fiber: better OSNR than a lumped amp at the end, but more nonlinearity and a Class 4 laser above ~1 W.'));
+      rd.append(field('Raman pump direction', selIn(l.p, 'ramanDir', [['back', 'Backward (from the receive end)'], ['fwd', 'Forward (from the transmit end)'], ['both', 'Both ends, power split']]), 'Backward is quietest. Forward lifts the signal early, which helps ASE but raises nonlinearity and pump noise. Both ends flatten the gain profile.'));
       l.p.ramanFull ??= false;
-      box.append(field('Raman model', selIn(l.p, 'ramanFull', [['false', 'Closed-form approximation'], ['true', 'Coupled-wave solver']]), 'The solver integrates the power equations of every channel and pump wavelength along the span: pump-to-pump transfer, depletion by the signals, the real gain spectrum, forward and backward pumping together. The Raman tab shows the result.'));
-      box.append(field('Raman pumps (wavelengths)', selIn(l.p, 'ramanPumps', [['1', '1 pump: gain ripple across the band'], ['2', '2 pumps'], ['3', '3 pumps: flat gain']]), 'More pump wavelengths flatten the gain across C-band, which shows up as less tilt. Total pump power is shared.'));
-      box.append(field('Raman pump, return direction (mW)', numIn(l.p, 'ramanRev', 50, 0, PHY.RAMAN.maxMw, true, String(l.p.raman)), 'Blank = same as forward.'));
+      rd.append(field('Raman model', selIn(l.p, 'ramanFull', [['false', 'Closed-form approximation'], ['true', 'Coupled-wave solver']]), 'The solver integrates the power equations of every channel and pump wavelength along the span: pump-to-pump transfer, depletion by the signals, the real gain spectrum, forward and backward pumping together. The Raman tab shows the result.'));
+      rd.append(field('Raman pumps (wavelengths)', selIn(l.p, 'ramanPumps', [['1', '1 pump: gain ripple across the band'], ['2', '2 pumps'], ['3', '3 pumps: flat gain']]), 'More pump wavelengths flatten the gain across C-band, which shows up as less tilt. Total pump power is shared.'));
+      rd.append(field('Raman pump, return direction (mW)', numIn(l.p, 'ramanRev', 50, 0, PHY.RAMAN.maxMw, true, String(l.p.raman)), 'Blank = same as forward.'));
       const rn = el('p', { class: 'muted small' });
       const upd = () => { const gr = PHY.ramanGain(fb, +l.p.len, Math.min(PHY.RAMAN.maxMw, +l.p.raman || 0)); rn.textContent = gr > 0 ? `On-off Raman gain about ${f1(gr)} dB, net span loss ${f1(fb.att * l.p.len + +l.p.extra - gr)} dB.` : ''; rn.hidden = !(gr > 0); };
-      box.querySelector('#f-raman').addEventListener('input', upd); upd(); box.append(rn);
+      box.querySelector('#f-raman').addEventListener('input', upd); upd(); rd.append(rn);
       box.append(el('div', { class: 'spec' }, [specRow('Attenuation', `${fb.att} dB/km`), specRow('Span loss', `${f1(fb.att * l.p.len + +l.p.extra)} dB`), specRow('Dispersion', `${fb.D} ps/nm/km → ${Math.round(fb.D * l.p.len)} ps/nm`), specRow('PMD', `${fb.pmd} ps/√km`), specRow('Nonlinear γ', `${fb.gamma} /W/km`)]));
     } else {
       if (l.p.il == null) l.p.il = linkDefaults('patch').il;
@@ -1509,11 +1518,37 @@ const LEARN = {
 };
 let learnTopic = 'osnr';
 function learn(t) { learnTopic = t; tab = 'learn'; renderTabBody(); $('#tabs').scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+// The topics in five groups, with a filter box that matches the title or the text of an article
+const LEARN_GROUPS = [['Basics', ['osnr', 'gsnr', 'q', 'ber', 'margin', 'rx', 'span', 'launch', 'aging']], ['Impairments', ['edfa', 'nli', 'cd', 'pmd', 'filter', 'srs', 'xpm', 'raman', 'raman2', 'trans']],
+  ['Channels and clients', ['plan', 'client', 'ports', 'reach']], ['Cabling and instruments', ['odf', 'olp', 'bidi', 'b1310', 'otdr']], ['Protection and failures', ['resil', 'fail']]];
+let learnFilter = '';
 function learnView() {
-  const nav = el('nav', { class: 'lnav' });
-  for (const k in LEARN) nav.append(el('button', { class: 'chip', 'aria-pressed': k === learnTopic, text: LEARN[k][0], onclick: () => { learnTopic = k; renderTabBody(); } }));
-  const pick = el('select', { class: 'lpick', 'aria-label': 'Learn topic' }); for (const k in LEARN) pick.append(el('option', { value: k, text: LEARN[k][0] })); pick.value = learnTopic;
-  pick.addEventListener('change', () => { learnTopic = pick.value; renderTabBody(); }); // a phone gets a picker instead of a list of 30 chips
+  const keys = Object.keys(LEARN), grouped = new Set(LEARN_GROUPS.flatMap(g => g[1])), groups = [...LEARN_GROUPS.map(([n, ks]) => [n, ks.filter(k => LEARN[k])]), ['More', keys.filter(k => !grouped.has(k))]].filter(g => g[1].length);
+  const text = {}; for (const k of keys) text[k] = (LEARN[k][0] + ' ' + LEARN[k][1].replace(/<[^>]+>/g, ' ')).toLowerCase();
+  const nav = el('nav', { class: 'lnav', 'aria-label': 'Learn topics' }), chips = [];
+  const find = el('input', { type: 'search', class: 'lfind', placeholder: 'Filter topics', 'aria-label': 'Filter the Learn topics', value: learnFilter });
+  const none = el('p', { class: 'muted small', text: 'No topic matches.', hidden: true });
+  nav.append(find);
+  for (const [gname, ks] of groups) {
+    const head = el('div', { class: 'lgroup', text: gname }), body = [];
+    nav.append(head);
+    for (const k of ks) {
+      const chip = el('button', { class: 'chip', 'aria-pressed': k === learnTopic, onclick: () => { learnTopic = k; renderTabBody(); } }, [LEARN[k][0], k === 'osnr' ? el('small', { class: 'muted', text: ' · start here' }) : null]);
+      nav.append(chip); body.push(chip); chips.push([k, chip, head, body]);
+    }
+  }
+  nav.append(none);
+  const apply = () => { // hide the topics that do not match, and a group with none left
+    const q = learnFilter.trim().toLowerCase(), shown = new Map();
+    for (const [k, chip, head] of chips) { const ok = !q || text[k].includes(q); chip.hidden = !ok; shown.set(head, (shown.get(head) || 0) + (ok ? 1 : 0)); }
+    for (const [head, n] of shown) head.hidden = n === 0;
+    none.hidden = !q || [...shown.values()].some(n => n > 0);
+  };
+  find.addEventListener('input', () => { learnFilter = find.value; apply(); }); apply();
+  const pick = el('select', { class: 'lpick', 'aria-label': 'Learn topic' });
+  for (const [gname, ks] of groups) { const og = el('optgroup', { label: gname }); for (const k of ks) og.append(el('option', { value: k, text: LEARN[k][0] })); pick.append(og); }
+  pick.value = learnTopic;
+  pick.addEventListener('change', () => { learnTopic = pick.value; renderTabBody(); });
   return el('div', { class: 'learn' }, [pick, nav, el('article', {}, [el('h3', { text: LEARN[learnTopic][0] }), el('div', { html: LEARN[learnTopic][1] })])]);
 }
 

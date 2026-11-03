@@ -58,6 +58,7 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .paldet > summary::-webkit-details-marker { display: none }
 .paldet > summary::before { content: '+'; display: inline-block; width: 22px; font-family: var(--f-mono); font-weight: 700 }
 .paldet[open] > summary::before { content: '\2212' }
+.raman { display: grid; gap: 10px } .raman > summary { cursor: pointer; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: 4px 2px; min-height: 24px }
 .assume > summary { cursor: pointer; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: 8px 2px; min-height: 24px }
 .assume > summary + * { margin-top: 4px }
 .assume { display: grid; gap: 10px }
@@ -92,7 +93,7 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .node .glyph.small { font-size: 10px }
 .node .nlabel { font-family: var(--f-mono); font-size: calc(11.5px * var(--lf1, 1)); fill: var(--muted); font-weight: 500 }
 .node .endtag { font-family: var(--f-ui); font-size: calc(10px * var(--lf3, 1)); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; fill: var(--accent-text) }
-.node.sel .body { stroke: var(--accent); stroke-width: 3 }
+.node.sel .body, .node.faulty.sel .body { stroke: var(--ink); stroke-width: 3; filter: drop-shadow(0 0 3px var(--ink)) } /* selection is ink, not amber: amber is fibers and warnings */
 .node.sel .nlabel { fill: var(--ink) }
 .t-roadm .body, .t-oadm .body { fill: var(--raised) }
 .t-host .body, .t-panel .body { fill: var(--raised); stroke-dasharray: 0 }
@@ -113,7 +114,7 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .link .hit { stroke: transparent; stroke-width: 16; cursor: pointer }
 .link .wire { stroke: var(--jacket); stroke-width: 4; stroke-linecap: round; pointer-events: none }
 .link.k-patch .wire { stroke: var(--muted); stroke-width: 2; stroke-dasharray: 5 4 }
-.link.sel .wire { stroke: var(--accent); stroke-width: 6; filter: drop-shadow(0 0 3px var(--accent)) }
+.link.sel .wire { stroke-width: 6 } .link.sel .hit { stroke: var(--ink); stroke-opacity: .2 }
 .link.cut .wire { stroke: var(--bad); stroke-dasharray: 2 6 }
 .llabel { font-family: var(--f-mono); font-size: calc(11px * var(--lf2, 1)); fill: var(--ink); paint-order: stroke; stroke: var(--panel); stroke-width: calc(4px * var(--lf2, 1)); pointer-events: none }
 .cutmark { font-size: 20px; fill: var(--bad); font-weight: 700 }
@@ -131,6 +132,7 @@ select, input[type=number], input:not([type]) { max-width: 100%; background: var
 .plantbl tr.hirow td { background: color-mix(in srgb, var(--mpi) 16%, transparent) }
 .plantbl tbody tr { cursor: pointer }
 .plantbl tr.editrow { cursor: auto } .plantbl tr.editrow > td { background: var(--raised); white-space: normal }
+.slotfield { display: flex; gap: 8px; align-items: center } .slotfield input { width: 90px; flex: none }
 .editgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 14px; padding: 6px 2px }
 .editgrid .fld select, .editgrid .fld input { width: 100% }
 .editgrid .pair input { width: 100% }
@@ -237,6 +239,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 .constinfo { display: grid; gap: 4px; max-width: 46ch } .constinfo div { display: flex; justify-content: space-between } .constinfo span { color: var(--muted) } .constinfo b { font-family: var(--f-mono); font-weight: 500 }
 .learn { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 20px; padding-top: 8px }
 .lnav { display: flex; flex-direction: column; gap: 3px }
+.lfind { width: 100%; margin-bottom: 6px } .lgroup { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin: 10px 2px 2px } .lgroup:first-of-type { margin-top: 0 }
 .lpick { display: none; width: 100%; margin-bottom: 4px }
 #dirsw { display: inline-flex; gap: 2px }
 .chip { text-align: left; background: none; border: 1px solid transparent; border-radius: 5px; padding: 5px 8px; cursor: pointer; color: var(--muted) }
