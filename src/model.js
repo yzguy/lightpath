@@ -17,7 +17,7 @@ const MODEL = (() => {
     panel: { label: 'Patch panel / ODF', hint: 'Fiber panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, rl: 50, dirty: {} }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24, bidi: false, role: 'low' }) },
     oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, osc: false, p1310: false, o1310: '10g-lr', bidi: false, eRole: 'low', wRole: 'high' }) },
-    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pinMax: 10, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
+    edfa: { label: 'EDFA', hint: 'Booster, in-line or preamp', maxLinks: 2, def: () => ({ bidi: false, bidiLoss: 1.2, ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pinMax: 10, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5, degrees: 4, ports: 16, first: 24, colorless: true, directionless: true, contentionless: true }) },
     dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, cdRev: '', il: 7, ilRev: '' }) },
     voa: { label: 'VOA / pad', hint: 'Fixed attenuator', maxLinks: 2, def: () => ({ att: 5 }) },
@@ -245,6 +245,17 @@ const MODEL = (() => {
         return { nodes: [...a, ...b, z, ma, ob, mz], links, g: { nch: 3, df: 75, launch: 0 }, svc: { a: a[0].id, z: b[0].id } };
       }
     },
+    bidiamp: {
+      name: 'Single-fiber (BiDi) bus with a BiDi amplifier', build() {
+        // The bus above with a 60 km first span cut in two by an amplifier. It has to pass both directions down the one glass, so it is a BiDi amplifier
+        // (circulators and band filters around two amplifier paths). Set it to one-way and the reverse direction is lost.
+        const p = PRESETS.bidi.build(), f = p.links.find(l => l.kind === 'fiber'), ob = p.nodes.find(n => n.name === 'OADM-B');
+        const amp = N('edfa', 'BIDI-AMP', 475, 300, { bidi: true, gmin: 5 });
+        const tail = L(amp, ob, 'fiber', { len: 30, single: true, sb: 'w' });
+        f.b = amp.id; f.p.len = 30; f.p.sb = '';
+        return { ...p, nodes: [...p.nodes, amp], links: [...p.links, tail] };
+      }
+    },
     olp: {
       name: 'Optical line protection: splitter, tap and switch', build() {
         const ta = N('trx', 'TRX-A', 50, 200, { mode: 'zrp400' }), tz = N('trx', 'TRX-Z', 1370, 200, { mode: 'zrp400' });
@@ -465,6 +476,7 @@ const MODEL = (() => {
       if (isEnd(n)) p.spare = ['switch', 'ycable'].includes(n.p && n.p.spare) ? n.p.spare : '';
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
+      if (n.type === 'edfa') { p.bidi = p.bidi === true; p.bidiLoss = Number.isFinite(+p.bidiLoss) && p.bidiLoss !== '' && p.bidiLoss !== null && typeof p.bidiLoss !== 'boolean' ? Math.min(6, Math.max(0, +p.bidiLoss)) : 1.2; }
       if (n.type === 'edfa') p.pinMax = Number.isFinite(+p.pinMax) && p.pinMax !== null && typeof p.pinMax !== 'boolean' ? Math.min(20, Math.max(-10, +p.pinMax)) : 10;
       if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev', 'nfRev', 'gminRev', 'gmaxRev', 'pmaxRev', 'agcUs']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
       if (n.type === 'dcm') for (const k of ['cdRev', 'ilRev']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
@@ -1026,6 +1038,7 @@ const MODEL = (() => {
   const fixWork = n => ({ type: 'work', id: n.id, label: `Set ${n.name} back to Working` });
   // where an amplifier helps most: the longest fiber span on the route
   const ampSpot = (S, path) => (path ? path.links.map(id => S.links.find(l => l.id === id)).filter(l => l && l.kind === 'fiber').sort((a, b) => +b.p.len - +a.p.len)[0] : null);
+  const fixBidi = n => ({ type: 'makeBidi', id: n.id, label: `Make ${n.name} a bidirectional (BiDi) amplifier` });
   const fixAmp = (S, l) => ({ type: 'insertAmp', id: l.id, label: `Add an amplifier halfway along ${S.nodes.find(n => n.id === l.a).name}–${S.nodes.find(n => n.id === l.b).name}` });
   const fixRepairPort = (n, slot) => ({ type: 'repairPort', id: n.id, slot, label: `Replace ${n.name} port for slot ${slot + 1}` });
   const fixClean = (n, port) => ({ type: 'clean', id: n.id, port, label: `Clean ${n.name} port ${port}` });
@@ -1037,11 +1050,12 @@ const MODEL = (() => {
     if (f.type === 'splice') { const l = link(f.id); if (l && l.p.cut) { l.p.cut = false; return 'Spliced the fiber back'; } }
     else if (f.type === 'work') { const n = node(f.id); if (n && n.p.fail) { n.p.fail = ''; return `${n.name} is working again`; } }
     else if (f.type === 'clean') { const n = node(f.id); if (n && n.p.dirty && n.p.dirty[f.port] != null) { delete n.p.dirty[f.port]; return `Cleaned ${n.name} port ${f.port}`; } }
+    else if (f.type === 'makeBidi') { const n = node(f.id); if (n && n.type === 'edfa') { n.p.bidi = true; return `${n.name} is now a BiDi amplifier`; } }
     else if (f.type === 'repairPort') { const n = node(f.id); if (n && n.p.degPorts && n.p.degPorts[f.slot] != null) { delete n.p.degPorts[f.slot]; return `Replaced the ${n.name} port for slot ${f.slot + 1}`; } }
     else if (f.type === 'insertAmp') { // split a fiber span in two with an amplifier in the middle
       const l = link(f.id), a = l && node(l.a), b = l && node(l.b); if (!l || l.kind !== 'fiber' || !a || !b) return '';
       let name = `${PREFIX.edfa}-${S.nodes.filter(n => n.type === 'edfa').length + 1}`; while (S.nodes.some(n => n.name === name)) name += "'";
-      const amp = { id: uid('n'), type: 'edfa', name, x: Math.round((a.x + b.x) / 20) * 10, y: Math.round((a.y + b.y) / 20) * 10, p: TYPES.edfa.def() }, half = +(+l.p.len / 2).toFixed(2);
+      const amp = { id: uid('n'), type: 'edfa', name, x: Math.round((a.x + b.x) / 20) * 10, y: Math.round((a.y + b.y) / 20) * 10, p: { ...TYPES.edfa.def(), bidi: !!l.p.single } }, half = +(+l.p.len / 2).toFixed(2); // on a single fiber the amplifier has to pass both directions
       const tail = { id: uid('l'), a: amp.id, b: b.id, kind: 'fiber', p: { ...l.p, len: half, sa: '', sb: l.p.sb ?? '', cut: false } };
       l.b = amp.id; l.p = { ...l.p, len: half, sb: '' }; S.nodes.push(amp); S.links.push(tail);
       return `Added ${name} halfway along ${a.name}–${b.name}`;
@@ -1719,6 +1733,11 @@ const MODEL = (() => {
       if (i + 1 === path.links.length) break;
       if (isDead(nxt)) { losAt = { node: nxt }; hops.push({ name: nxt.name, kind: 'cut', in: snap(), out: { sig: -99, ase: -99, nli: -99 }, km, nch, note: 'Device failed' }); break; }
       const t = nxt.type, nnext = node(path.nodes[i + 2]);
+      // an EDFA next to a single fiber (both directions in one glass): a one-way amplifier has isolators, so only the direction it faces gets through;
+      // a BiDi one has band filters and circulators around two amplifier paths, which cost a little loss in each direction
+      const onSingle = t === 'edfa' && [path.links[i], path.links[i + 1]].some(id => { const q = link(id); return q && q.kind === 'fiber' && q.p.single; });
+      if (onSingle && rv && !nxt.p.bidi) { losAt = { node: nxt, oneWay: true }; hops.push({ name: nxt.name, kind: 'cut', in: snap(), out: { sig: -99, ase: -99, nli: -99 }, km, nch, note: 'One-way amplifier on a single fiber' }); break; }
+      if (onSingle && nxt.p.bidi) { const lo = +nxt.p.bidiLoss || 0; if (lo > 0) { const b0 = snap(); loss(lo); rec(nxt.name + ' band filters', 'bidi', b0, { gain: -lo, note: `BiDi amplifier: circulators and band filters, ${f1(lo)} dB each way` }); } }
       const tv = pd(nxt.p, 'target'), target = tv === '' || tv == null ? +g.launch : +tv;
       if (t === 'mux') {
         const joins = isEnd(prv), drops = isEnd(nnext);
@@ -1828,7 +1847,8 @@ const MODEL = (() => {
     if (losAt) {
       res.status = 'los'; res.prx = -Infinity;
       // say what is wrong and what to do about it, in the headline and as an alarm (the KPIs are empty when there is no light)
-      if (losAt.node) { res.headline = `LOS at ${Z.name}: ${losAt.node.name} has failed. Replace it, or give the service a route around it.`; if (!W) { res.headlineFix = fixWork(losAt.node); alarms.push({ sev: 'bad', text: `${losAt.node.name} has failed and passes no light, so nothing reaches ${Z.name}. Set it back to Working, or add a route that avoids it.`, fix: fixWork(losAt.node) }); } }
+      if (losAt.oneWay) { res.headline = `LOS at ${Z.name}: ${losAt.node.name} is a one-way amplifier on a single fiber, so the reverse direction cannot pass it. Make it a BiDi amplifier.`; if (!W) { res.headlineFix = fixBidi(losAt.node); alarms.push({ sev: 'bad', text: `${losAt.node.name} sits on a single fiber but amplifies one direction only (its isolators block the other). A single fiber carries both directions, so the reverse path is lost: use a bidirectional (BiDi) amplifier, which has circulators and band filters around two amplifier paths.`, fix: fixBidi(losAt.node) }); } }
+      else if (losAt.node) { res.headline = `LOS at ${Z.name}: ${losAt.node.name} has failed. Replace it, or give the service a route around it.`; if (!W) { res.headlineFix = fixWork(losAt.node); alarms.push({ sev: 'bad', text: `${losAt.node.name} has failed and passes no light, so nothing reaches ${Z.name}. Set it back to Working, or add a route that avoids it.`, fix: fixWork(losAt.node) }); } }
       else { res.headline = `LOS at ${Z.name}: fiber cut on ${linkName(losAt)}. Splice it back, or add a second route.`; if (!W) { res.headlineFix = fixSplice(losAt); alarms.push({ sev: 'bad', text: `${linkName(losAt)} is cut, so no light reaches ${Z.name}. Splice it back, or give the service a second fiber route (Protect, in the Channels tab).`, fix: fixSplice(losAt) }); } }
       return res;
     }
@@ -2059,8 +2079,8 @@ const MODEL = (() => {
       else if (r2.mode) {
         const seen = new Set(res.alarms.map(a => a.text));
         r2.alarms.filter(a => a.sev !== 'info' && !seen.has(a.text)).forEach(a => res.alarms.push({ ...a, text: `${Z.name} to ${A.name}: ${a.text}` }));
-        if ((STATUS_RANK[r2.status] ?? 0) > (STATUS_RANK[res.status] ?? 0)) { res.status = r2.status; res.headline = `${Z.name} to ${A.name}: ${r2.headline}`; }
-        else if (res.status === 'up' && r2.status === 'degraded') { res.status = 'degraded'; res.headline = `${Z.name} to ${A.name}: ${r2.headline}`; }
+        if ((STATUS_RANK[r2.status] ?? 0) > (STATUS_RANK[res.status] ?? 0)) { res.status = r2.status; res.headline = `${Z.name} to ${A.name}: ${r2.headline}`;  res.headlineFix = r2.headlineFix || null; }
+        else if (res.status === 'up' && r2.status === 'degraded') { res.status = 'degraded'; res.headline = `${Z.name} to ${A.name}: ${r2.headline}`;  res.headlineFix = r2.headlineFix || null; }
       }
     }
     res.reverse = rv;

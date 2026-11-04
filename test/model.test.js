@@ -1800,6 +1800,7 @@ test('single fiber: both ends on the same band, or a wrong receive slot, is dark
 
 test('single fiber: a channel needs a different slot each way, and no other channel may use either', () => {
   const S = M.sanitize(build('dci')), fib = S.links.find(l => l.kind === 'fiber'); fib.p.single = true;
+  S.nodes.forEach(n => { if (n.type === 'edfa') n.p.bidi = true; }); // the line's amplifiers have to pass both directions on a single fiber
   S.g.plan = M.planFromUniform(S.g, 'zrp400'); S.g.nch = S.g.plan.length;
   let r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /single fiber: each direction needs its own wavelength/);
   const plan = S.g.plan.map((c, i) => ({ ...c, slotRev: c.slot + 20 })); S.g.plan = plan; // another slot each way
@@ -2275,4 +2276,28 @@ test('per-channel transients: a cut loses its channels, survivors get an excursi
     T.tiltPerDb = 0; const flat = M.channelTransients(S).rows.filter(x => sig(x) === sig(r[0]) && x.hits.length);
     assert.ok(Math.max(...flat.map(x => x.surgeDb)) - Math.min(...flat.map(x => x.surgeDb)) < 1e-9, 'without tilt or hole burning every survivor on the route gets the same');
   } finally { [T.shb, T.tiltPerDb] = old; }
+});
+
+test('BiDi amplifier: a one-way EDFA on a single fiber loses the reverse direction, a BiDi one passes both for a filter loss', () => {
+  const S = M.sanitize(build('bidi')), fiber = S.links.find(l => l.kind === 'fiber' && l.p.single), base = M.simulate(S);
+  assert.equal(base.status, 'up');
+  M.applyFix(S, { type: 'insertAmp', id: fiber.id });
+  const amp = S.nodes.find(n => n.type === 'edfa');
+  assert.equal(amp.p.bidi, true, 'an amplifier inserted on a single fiber is BiDi');
+  const ok = M.simulate(S);
+  assert.ok(['up', 'degraded'].includes(ok.status), ok.headline); assert.ok(['up', 'degraded'].includes(ok.rev.status), 'both directions pass: ' + ok.rev.headline);
+  assert.ok(ok.hops.some(h => h.kind === 'bidi' && /band filters/.test(h.name)), 'the filter hop is in the table');
+  const loss = ok.hops.find(h => h.kind === 'bidi'); assert.ok(Math.abs(loss.gain + 1.2) < 1e-9);
+  amp.p.bidiLoss = 0; assert.ok(!M.simulate(S).hops.some(h => h.kind === 'bidi'), 'no filter loss, no hop');
+  amp.p.bidiLoss = 1.2; amp.p.bidi = false; // a one-way amplifier
+  const bad = M.simulate(S);
+  assert.equal(bad.rev.status, 'los'); assert.match(bad.rev.headline, /one-way amplifier on a single fiber/);
+  assert.ok(bad.rev.alarms.some(a => a.fix && a.fix.type === 'makeBidi'), 'an alarm offers the fix');
+  const fix = bad.rev.headlineFix; assert.equal(fix.type, 'makeBidi'); assert.equal(bad.headlineFix && bad.headlineFix.type, 'makeBidi', 'the headline button carries the reverse direction\'s fix');
+  M.applyFix(S, fix); assert.equal(amp.p.bidi, true); assert.ok(['up', 'degraded'].includes(M.simulate(S).rev.status));
+  // a two-fiber line is untouched: a one-way amplifier is normal there
+  const D = M.sanitize(build('dci')); assert.ok(D.nodes.filter(n => n.type === 'edfa').every(n => n.p.bidi === false));
+  assert.equal(M.simulate(D).status, 'up'); assert.equal(M.simulate(D).rev.status, 'up');
+  assert.equal(M.sanitize({ ...clone(S), nodes: S.nodes.map(n => (n === amp ? { ...n, p: { ...n.p, bidi: 'yes', bidiLoss: 99 } } : n)) }).nodes.find(n => n.id === amp.id).p.bidi, false);
+  assert.equal(M.sanitize({ ...clone(S), nodes: S.nodes.map(n => (n === amp ? { ...n, p: { ...n.p, bidiLoss: 99 } } : n)) }).nodes.find(n => n.id === amp.id).p.bidiLoss, 6);
 });
