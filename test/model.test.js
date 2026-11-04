@@ -2339,6 +2339,16 @@ test('challenges: each starts unsolved, a known fix solves it, and a shortcut do
   // eol: re-splice the span (or amplify); today's margin alone is not enough
   S = fresh('eol'); assert.equal(state('eol', S).goals[0].ok, false); S.links.find(l => l.kind === 'fiber').p.extra = 1; assert.equal(state('eol', S).done, true);
   S = fresh('eol'); M.applyFix(S, { type: 'insertAmp', id: S.links.find(l => l.kind === 'fiber').id }); assert.equal(state('eol', S).done, true, 'an amplifier also works');
+  // tilt: gain-tilt control on
+  S = fresh('tilt'); assert.equal(state('tilt', S).goals[2].ok, false); S.nodes.forEach(n => { if (n.type === 'edfa') n.p.tiltCtl = true; }); assert.equal(state('tilt', S).done, true);
+  // duct: move one fiber into its own duct; or leave it and add a route that avoids the duct
+  S = fresh('duct'); assert.equal(state('duct', S).done, false); S.links.forEach(l => { if (l.p.srlg && +l.p.len === 80) l.p.srlg = ''; }); assert.equal(state('duct', S).done, true, M.simulate(S).headline);
+  S = fresh('duct'); S.links.forEach(l => { l.p.srlg = ''; }); assert.equal(state('duct', S).done, true, 'with no shared duct either route survives');
+  // bench: three amplifiers split 210 km into four spans; one amplifier is not enough, and a shorter fiber is not the same job
+  S = fresh('bench'); M.applyFix(S, { type: 'insertAmp', id: S.links[0].id }); assert.equal(state('bench', S).done, false, 'one amplifier is not enough');
+  for (let k = 0; k < 2; k++) for (const l of S.links.filter(x => x.kind === 'fiber' && +x.p.len > 100)) M.applyFix(S, { type: 'insertAmp', id: l.id });
+  assert.equal(S.nodes.filter(n => n.type === 'edfa').length, 3); assert.equal(state('bench', S).done, true, M.simulate(S).headline);
+  S = fresh('bench'); S.links[0].p.len = 60; assert.equal(state('bench', S).goals[2].ok, false, 'shortening the fiber is a shortcut');
   // monday: two faults, one after the other
   S = fresh('monday'); const r1 = M.simulate(S); assert.equal(r1.headlineFix.type, 'work'); M.applyFix(S, r1.headlineFix);
   assert.equal(state('monday', S).done, false, 'the second fault is still there'); const r2 = M.simulate(S); assert.equal(r2.headlineFix.type, 'clean'); M.applyFix(S, r2.headlineFix);
