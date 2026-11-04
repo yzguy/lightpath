@@ -2349,6 +2349,14 @@ test('challenges: each starts unsolved, a known fix solves it, and a shortcut do
   for (let k = 0; k < 2; k++) for (const l of S.links.filter(x => x.kind === 'fiber' && +x.p.len > 100)) M.applyFix(S, { type: 'insertAmp', id: l.id });
   assert.equal(S.nodes.filter(n => n.type === 'edfa').length, 3); assert.equal(state('bench', S).done, true, M.simulate(S).headline);
   S = fresh('bench'); S.links[0].p.len = 60; assert.equal(state('bench', S).goals[2].ok, false, 'shortening the fiber is a shortcut');
+  // raman: a backward pump; one that is too weak, or an amplifier in the span, does not satisfy the brief
+  S = fresh('raman'); const sp = S.links.find(l => l.kind === 'fiber'); sp.p.raman = 300; assert.equal(state('raman', S).done, false, 'a weak pump is not enough');
+  sp.p.raman = 1000; assert.equal(state('raman', S).done, true, M.simulate(S).headline);
+  S = fresh('raman'); M.applyFix(S, { type: 'insertAmp', id: S.links.find(l => l.kind === 'fiber').id }); assert.equal(state('raman', S).goals[2].ok, false, 'a mid-span amplifier is not allowed');
+  // filters: swap the pass-through ROADMs for amplifiers; a wider grid alone is not enough
+  S = fresh('filters'); S.g.df = 100; assert.equal(state('filters', S).done, false, 'a 100 GHz grid alone leaves too little margin');
+  S = fresh('filters'); for (const n of S.nodes) if (n.type === 'roadm' && !['ROADM-1', 'ROADM-12'].includes(n.name)) { n.type = 'edfa'; n.p = M.TYPES.edfa.def(); }
+  assert.equal(state('filters', M.sanitize(S)).done, true, M.simulate(M.sanitize(S)).headline);
   // monday: two faults, one after the other
   S = fresh('monday'); const r1 = M.simulate(S); assert.equal(r1.headlineFix.type, 'work'); M.applyFix(S, r1.headlineFix);
   assert.equal(state('monday', S).done, false, 'the second fault is still there'); const r2 = M.simulate(S); assert.equal(r2.headlineFix.type, 'clean'); M.applyFix(S, r2.headlineFix);
