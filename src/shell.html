@@ -165,6 +165,17 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .results { margin-top: 10px; padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px }
 .svcbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center }
 .svcbar label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--muted); display: flex; gap: 6px; align-items: center }
+.chbar { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 5px; background: var(--raised); padding: 10px 12px; display: grid; gap: 7px; font-size: 13px }
+.chbar.solved { border-left-color: var(--good) }
+.chbar .chkick { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--accent-text) } .chbar.solved .chkick { color: var(--good) }
+.chbar .chhead { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; justify-content: space-between } .chbar h3 { margin: 0; font-size: 15px }
+.chbar p { margin: 0 } .chbar ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px }
+.chgoal::before { content: "○ "; color: var(--muted) } .chgoal.ok { color: var(--good) } .chgoal.ok::before { content: "✓ "; color: var(--good) }
+.chbar .chrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center } .chbar .chhint { padding-left: 10px; border-left: 2px solid var(--line) }
+.chlist h3 { margin: 18px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted) }
+.chcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px }
+.chcard { border: 1px solid var(--line); border-radius: 6px; background: var(--raised); padding: 10px 12px; display: grid; gap: 6px; align-content: start } .chcard.on { border-color: var(--accent) }
+.chcard h4 { margin: 0; font-size: 14px } .chcard p { margin: 0; font-size: 13px; color: var(--muted) } .chcard .chdone { color: var(--good); font-weight: 700 }
 .status { font-family: var(--f-mono); font-weight: 600; font-size: 13px; padding: 4px 10px; border-radius: 4px; letter-spacing: .06em; border: 1.5px solid currentColor }
 .s-up { color: var(--good) } .s-degraded { color: var(--warn) } .s-down, .s-los, .s-nopath { color: var(--bad) } .s-none { color: var(--muted) }
 #headline { font-weight: 600; font-size: 15px; flex: 1 1 280px; min-width: 0 }
@@ -362,6 +373,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 
 <section class="panel results" id="results" aria-label="Service results">
   <h2 class="sr-only">Service results</h2>
+  <div class="chbar" id="challenge" hidden></div>
   <div class="svcbar">
     <label for="svc-a">Service A <select id="svc-a"></select></label>
     <button class="btn" id="svc-swap" title="Swap direction">⇄</button>
@@ -390,6 +402,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <button class="tab" data-tab="resil" role="tab">Resilience</button>
     <button class="tab" data-tab="trans" role="tab">Transients</button>
     <span class="tabsep" role="presentation"></span>
+    <button class="tab" data-tab="challenges" role="tab">Challenges</button>
     <button class="tab" data-tab="learn" role="tab">Learn</button>
   </div>
   <div id="tabbody"></div>

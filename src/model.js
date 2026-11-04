@@ -315,6 +315,69 @@ const MODEL = (() => {
     },
   };
 
+  // ---------- challenges ----------
+  // A challenge is a broken lab, a goal the simulator can check, and some help. `goals` are re-checked after every change; the lab counts as solved when all
+  // pass. They look at what the simulator reports (and at a few things that must not be cheated), never at which fix the player chose.
+  const goalUp = (min = 0) => ({ text: min ? `The service is Up with at least ${min} dB of Q margin` : 'The service is Up, with no warnings', ok: (S, r) => r.status === 'up' && !(r.qMargin < min) });
+  const goalKeep = (mode, text) => ({ text: text || `Both service ends stay ${PHY_.MODES[mode].name.split(' (')[0]}`, ok: S => [S.svc && S.svc.a, S.svc && S.svc.z].every(id => { const n = S.nodes.find(x => x.id === id); return !!n && isEnd(n) && n.p.mode === mode; }) });
+  const goalCut = { text: 'The service survives a cut of any one fiber', ok: S => {
+    const fibers = S.links.filter(l => l.kind === 'fiber'); if (!fibers.length) return false;
+    return fibers.every(f => { const c = JSON.parse(JSON.stringify(S)); c.links.find(l => l.id === f.id).p.cut = true; const r = simulate(c); return r.status === 'up' || r.status === 'degraded'; }); // a restored service counts
+  } };
+  const withNode = (p, name, fn) => { fn(p.nodes.find(n => n.name === name)); return p; };
+  const CHALLENGES = [
+    { id: 'dirty', level: 1, title: 'The warning that will not clear', topic: 'odf',
+      story: 'A 60 km link carries traffic, but its alarm has been up since the last maintenance visit and nobody knows why. The amplifiers hide the loss in the Q margin, so the warning is the only clue.',
+      goals: [goalUp(), goalKeep('zrp400')],
+      hints: ['Read the headline above the tabs: it names the first problem it found.', 'Open the Hop-by-hop PM tab and look for a hop that loses far more than its neighbours.', 'Patch panels list their connectors in the inspector. A dirty one adds loss to its port.'],
+      answer: 'ODF-B port 1 had a dirty connector (4.5 dB extra). Cleaning it clears the alarm. The pre-amplifier re-levelled the signal, so the cost never showed as lost margin: in an amplified line a bad connector shows up in the alarms and in the OSNR of the following span, not in the power at the receiver.',
+      build() { return withNode(PRESETS.odf.build(), 'ODF-B', n => { n.p.dirty = { 1: 4.5 }; }); } },
+    { id: 'hot', level: 1, title: 'Too much light', topic: 'rx',
+      story: 'Two sites 1 km apart are joined by one fiber. Someone raised the transmitters to +3 dBm "to be safe", and the receiver has been complaining ever since.',
+      goals: [goalUp(), goalKeep('zr400')],
+      hints: ['Look at the received power in the KPI row and the alarm next to it.', 'A receiver has an overload point as well as a sensitivity floor. Too much light is also a fault.', 'Two ways in: take the power down at the transmitter, or add loss on the path (a VOA, or extra loss on the span).'],
+      answer: 'The receiver overloads above 0 dBm. Lower the transmit power, or put a fixed attenuator (a VOA, from the palette) in the path. On short links with no amplifier the span loss is tiny, so a transmitter at full power has to be padded down.',
+      build() { const a = N('trx', 'TRX-A', 150, 220, { tx: 3 }), z = N('trx', 'TRX-Z', 800, 220, { tx: 3 }); return { nodes: [a, z], links: [L(a, z, 'fiber', { len: 1, extra: 0 })], g: { nch: 1, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } }; } },
+    { id: 'far', level: 2, title: 'One span too many kilometres', topic: 'span',
+      story: 'The customer wants 400 Gb/s over 170 km on a single span. The booster and pre-amplifier are in place; the link will not come up.',
+      goals: [goalUp(1.5), goalKeep('zrp400')],
+      hints: ['What does the headline say is wrong: noise, or something else?', 'Check the span loss against what the amplifiers can make up. Noise adds up with loss.', 'Halving a span cuts its loss by half in dB, which is worth far more than the extra amplifier\'s noise costs.'],
+      answer: 'A 170 km span loses about 34 dB, so the signal reaches the pre-amplifier near its noise floor. An amplifier halfway splits it into two 85 km spans: two 17 dB spans give a much better OSNR than one 34 dB span, because each amplifier restarts the signal at a high level.',
+      build() { const p = PRESETS.dci.build(); p.nodes.filter(n => n.type === 'trx').forEach(n => { n.p.mode = 'zrp400'; }); p.links.find(l => l.kind === 'fiber').p.len = 170; return p; } },
+    { id: 'onefiber', level: 2, title: 'Only one way', topic: 'bidi',
+      story: 'A single fiber carries both directions between two sites, and an amplifier sits in the middle. Traffic works one way and the other direction is dark.',
+      goals: [goalUp(2), goalKeep('dwdm10f')],
+      hints: ['The service bar shows the forward direction; the return direction can fail alone. Look at the headline.', 'Amplifiers normally have isolators that stop light going backwards.', 'A single fiber needs an amplifier built for both directions.'],
+      answer: 'An ordinary EDFA is one-way: its isolators block the reverse run, which on a single fiber is the other direction of the service. A BiDi amplifier has circulators and band filters around two amplifier paths and passes both, for about 1.2 dB of filter loss each way.',
+      build() { return withNode(PRESETS.bidiamp.build(), 'BIDI-AMP', n => { n.p.bidi = false; }); } },
+    { id: 'dispersion', level: 2, title: 'The pulses smear', topic: 'cd',
+      story: 'Ten-gigabit DWDM optics between two switches, 120 km apart. The power is fine and there is plenty of OSNR, yet the link is down.',
+      goals: [goalUp(), goalKeep('dwdm10f')],
+      hints: ['Read the headline: it is not about power or noise.', 'A 10G receiver tolerates only a small amount of accumulated dispersion; 120 km of fiber has far more.', 'Something in the palette cancels dispersion. It costs loss, so think about where in the line it can go.'],
+      answer: 'About 2040 ps/nm of dispersion accumulates over 120 km, against a tolerance near 1600 ps/nm. A dispersion compensating module (DCF or a fibre Bragg grating) cancels it. Put it before the receiver, after the pre-amplifier, so its 7 dB of loss does not hurt the span.',
+      build() { const p = PRESETS.sfp10dcm.build(), d = p.nodes.find(n => n.type === 'dcm'), pb = p.nodes.find(n => n.name === 'PRE-B'), mb = p.nodes.find(n => n.name === 'MUX-B');
+        p.nodes = p.nodes.filter(n => n !== d); p.links = p.links.filter(l => l.a !== d.id && l.b !== d.id); p.links.push(L(pb, mb, 'patch')); return p; } },
+    { id: 'cut', level: 3, title: 'One backhoe away from an outage', topic: 'resil',
+      story: 'Three ROADM sites, but only two fibers join them in a chain. Everything works today. The network team wants the service A–C to survive any single fiber cut.',
+      goals: [goalUp(), goalCut],
+      hints: ['Try it: select a fiber, set it to Cut, and see what happens. Then splice it again.', 'To survive a cut a service needs a second route that shares no fiber with the first.', 'Close the triangle. The restoration tab in the Resilience view shows what the new route is worth.'],
+      answer: 'With a chain A–B–C, a cut anywhere splits it. A third fiber from A to C closes the triangle, so each cut leaves a route over the other two. The restored route is longer, so its Q margin is lower: check it, because a route that exists but fails its margin does not protect anything.',
+      build() { const p = PRESETS.ring.build(), tb = p.nodes.find(n => n.name === 'TRX-B'), ra = p.nodes.find(n => n.name === 'ROADM-A'), rc = p.nodes.find(n => n.name === 'ROADM-C');
+        p.nodes = p.nodes.filter(n => n !== tb); p.links = p.links.filter(l => l.a !== tb.id && l.b !== tb.id && !(l.a === ra.id && l.b === rc.id)); return p; } }, // a chain A–B–C: the direct A–C fiber is missing
+    { id: 'monday', level: 3, title: 'Monday morning', topic: 'fail',
+      story: 'The overnight alert says the A–Z service is down. Operations replaced the cable, but the link is still not right. There may be more than one thing wrong.',
+      goals: [goalUp(), goalKeep('zrp400')],
+      hints: ['Fix what the headline names first, then look again: the next fault only shows once the first is gone.', 'A failed device passes no light. After it is back, check the alarms for anything still reducing the margin.', 'Walk the hop table from the transmitter, watching the power at each device.'],
+      answer: 'The booster had failed (Set it back to Working) and ODF-B port 1 still held a dirty connector (clean it). Faults hide behind each other: a dead amplifier gives a LOS that says nothing about the connector, so after each repair the diagnosis starts again from the headline.',
+      build() { const p = PRESETS.odf.build(); withNode(p, 'ODF-B', n => { n.p.dirty = { 1: 4.5 }; }); withNode(p, 'BST-A', n => { n.p.fail = 'dead'; }); return p; } },
+  ];
+  // The challenge as the player sees it: the goals with their pass flags, from a simulation of S (or the one passed in).
+  function challengeStatus(ch, S, res) {
+    S = effective(S); res = res || simulate(S);
+    const goals = ch.goals.map(g => ({ text: g.text, ok: !!g.ok(S, res) }));
+    return { goals, done: goals.every(g => g.ok) };
+  }
+
   // ---------- span list import ----------
   // Builds a point-to-point line from CSV rows "km[, fiber[, extra_dB[, label]]]": TRX - MUX - booster - (ILA between spans) - preamp - MUX - TRX.
   // Blank lines, # comments and a header row are skipped. Returns { topo, errors, spans }; topo is null if no span parsed.
@@ -2087,6 +2150,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, applyFix, PRESETS, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, applyFix, PRESETS, CHALLENGES, challengeStatus, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

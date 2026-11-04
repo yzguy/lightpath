@@ -68,7 +68,7 @@ const redo = () => { if (stepHistory(1)) toast('Redone', { label: 'Undo', fn: un
 function applyPreset(k, quiet) {
   const p = MODEL.sanitize(PRESETS[k].build());
   S = { ...p, view: { x: -40, y: -60, k: 1 } }; // everything the scenario defines, its traffic flows included
-  labKey = k; labHash = null; sel = null; if (!quiet) { fitView(true); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
+  labKey = k; labHash = null; sel = null; if (chal.active) { chal.active = ''; saveChal(); } if (!quiet) { fitView(true); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
 }
 const node = id => S.nodes.find(n => n.id === id);
 const link = id => S.links.find(l => l.id === id);
@@ -920,6 +920,7 @@ function renderTabBody() {
   const b = $('#tabbody'); b.innerHTML = ''; b.setAttribute('role', 'tabpanel'); b.setAttribute('aria-labelledby', 'tab-' + tab);
   const r = view();
   if (tab === 'learn') return b.append(learnView());
+  if (tab === 'challenges') return b.append(challengesView());
   if (tab === 'plan') return b.append(planView(r));
   if (tab === 'resil') return b.append(resilView());
   if (tab === 'planner') return b.append(plannerView());
@@ -1535,6 +1536,57 @@ function loadChart(r) {
   return wrap;
 }
 
+// ---------- challenges ----------
+// A broken lab with a goal. The bar above the results shows the story, the goals (re-checked after every change) and the help; progress is kept in the browser.
+const CH_KEY = 'lightpath-challenges';
+const chal = { done: {}, active: '', hints: 0, shown: false };
+try { const c = JSON.parse(localStorage.getItem(CH_KEY)); if (c && typeof c === 'object') { chal.done = c.done && typeof c.done === 'object' ? c.done : {}; chal.active = MODEL.CHALLENGES.some(x => x.id === c.active) ? c.active : ''; chal.hints = Math.max(0, Math.min(3, Math.floor(+c.hints) || 0)); chal.shown = c.shown === true; } } catch (e) {}
+function saveChal() { try { localStorage.setItem(CH_KEY, JSON.stringify(chal)); } catch (e) {} }
+const chById = id => MODEL.CHALLENGES.find(c => c.id === id);
+function startChallenge(id) {
+  const c = chById(id); if (!c) return;
+  S = { ...MODEL.sanitize(c.build()), view: { x: -40, y: -60, k: 1 } };
+  labKey = ''; labHash = null; sel = null; chal.active = id; chal.hints = 0; chal.shown = false; saveChal();
+  if (tab === 'challenges') tab = 'hops';
+  fitView(true); checkpoint(); renderAll(); renderTabBody(); toast('Challenge: ' + c.title);
+}
+function renderChallenge() {
+  const box = $('#challenge'), c = chal.active && chById(chal.active);
+  if (!c) { box.hidden = true; box.replaceChildren(); return; }
+  const st = MODEL.challengeStatus(c, S, lastRes);
+  if (st.done && !chal.done[c.id]) { chal.done[c.id] = true; saveChal(); toast('Solved: ' + c.title); if (tab === 'challenges') renderTabBody(); }
+  const next = MODEL.CHALLENGES.find(x => !chal.done[x.id] && x.id !== c.id), reveal = st.done || chal.shown;
+  box.hidden = false; box.className = 'chbar' + (st.done ? ' solved' : '');
+  box.replaceChildren(...[
+    el('div', { class: 'chhead' }, [
+      el('div', {}, [el('div', { class: 'chkick', text: (st.done ? 'Solved · ' : 'Challenge · ') + ['Warm-up', 'Troubleshooting', 'Hard'][c.level - 1] }), el('h3', { text: c.title })]),
+      el('div', { class: 'chrow' }, [
+        el('button', { class: 'btn quiet', text: 'Restart', title: 'Load this lab again, broken', onclick: () => startChallenge(c.id) }),
+        el('button', { class: 'btn quiet', text: 'Close', title: 'Leave the challenge; the lab stays as it is', onclick: () => { chal.active = ''; saveChal(); renderChallenge(); } })])]),
+    el('p', { text: c.story }),
+    el('ul', {}, st.goals.map(g => el('li', { class: 'chgoal' + (g.ok ? ' ok' : ''), text: g.text }))),
+    ...c.hints.slice(0, st.done ? 0 : chal.hints).map((h, i) => el('p', { class: 'chhint muted', text: `Hint ${i + 1}: ${h}` })),
+    reveal ? el('p', { html: `<b>${st.done ? 'What was wrong' : 'Answer'}:</b> ` + c.answer.replace(/&/g, '&amp;').replace(/</g, '&lt;') }) : null,
+    el('div', { class: 'chrow' }, [
+      st.done ? null : el('button', { class: 'btn', text: chal.hints < c.hints.length ? `Hint (${chal.hints}/${c.hints.length})` : 'No more hints', disabled: chal.hints >= c.hints.length, onclick: () => { chal.hints++; saveChal(); renderChallenge(); } }),
+      st.done || chal.shown ? null : el('button', { class: 'btn quiet', text: 'Show the answer', onclick: () => { chal.shown = true; saveChal(); renderChallenge(); } }),
+      el('button', { class: 'btn quiet', text: 'Read about it', title: 'Open the Learn topic', onclick: () => learn(c.topic) }),
+      st.done && next ? el('button', { class: 'btn', text: 'Next: ' + next.title, onclick: () => startChallenge(next.id) }) : null])
+  ].filter(Boolean));
+}
+function challengesView() {
+  const wrap = el('div', { class: 'chlist pad' }), all = MODEL.CHALLENGES, nd = all.filter(c => chal.done[c.id]).length;
+  wrap.append(el('p', { class: 'muted', text: `Each challenge loads a broken lab with a goal. Fix it any way you like: the check looks at what the simulator reports, not at which button you used. ${nd} of ${all.length} solved.` }));
+  for (const [lvl, name] of [[1, 'Warm-up'], [2, 'Troubleshooting'], [3, 'Hard']]) {
+    const list = all.filter(c => c.level === lvl); if (!list.length) continue;
+    wrap.append(el('h3', { text: name }), el('div', { class: 'chcards' }, list.map(c => el('div', { class: 'chcard' + (chal.active === c.id ? ' on' : '') }, [
+      el('h4', {}, [c.title, chal.done[c.id] ? el('span', { class: 'chdone', text: '  ✓ solved' }) : null]), el('p', { text: c.story }),
+      el('div', {}, [el('button', { class: 'btn', text: chal.active === c.id ? 'Restart' : chal.done[c.id] ? 'Try again' : 'Start', onclick: () => startChallenge(c.id) })])]))));
+  }
+  if (nd) wrap.append(el('p', {}, [el('button', { class: 'btn quiet', text: 'Reset progress', onclick: () => { chal.done = {}; saveChal(); renderTabBody(); } })]));
+  return wrap;
+}
+
 // ---------- learn ----------
 const LEARN = {
   osnr: ['OSNR', `<p><b>Optical signal-to-noise ratio</b> is signal power divided by the ASE noise power that sits in a 0.1 nm (12.5 GHz) slice next to it. It is what an optical spectrum analyzer or an OPM with OSNR shows.</p><p>Every amplifier adds noise. A useful rule of thumb for one EDFA, per channel: <code>OSNR ≈ 58 + P<sub>in</sub> − NF</code> (dB, P<sub>in</sub> in dBm per channel at the amp input). That is why a span with high loss hurts: the next amp sees a low input power. Noise from several amps adds in linear terms, so 10 identical amps cost 10 dB of OSNR versus one.</p><p>The 0.1 nm bandwidth is a convention, not the signal width. A 60 GBd signal is about 4.8× wider, so its in-band SNR is ~6.8 dB lower than its OSNR.</p>`],
@@ -1637,7 +1689,7 @@ function settleSwitches() {
   for (const f of moved) lastRes.alarms.unshift({ sev: 'info', text: `${f.name} moved from port ${f.from.toUpperCase()} to port ${f.to.toUpperCase()} and stays there (non-revertive): port ${f.from.toUpperCase()} is the standby once it is repaired.` });
 }
 function recompute() { MODEL.assignSides(S); lastRes = simulate(); settleSwitches(); refreshHostFaults(); renderCanvas(); renderResults(); save(); }
-function renderAll() { MODEL.assignSides(S); lastRes = simulate(); settleSwitches(); refreshHostFaults(); bindGlobals(); renderCanvas(); renderInspector(); renderResults(); save(); }
+function renderAll() { MODEL.assignSides(S); lastRes = simulate(); settleSwitches(); refreshHostFaults(); bindGlobals(); renderCanvas(); renderInspector(); renderResults(); renderChallenge(); save(); }
 window.addEventListener('resize', applyView);
 
 load();

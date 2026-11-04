@@ -16,7 +16,7 @@ Lightpath is an interactive physical-layer simulator for DWDM links. It lets som
 An interactive, dependency-free physical-layer lab that runs from a single HTML page: build and break a topology and see the physics and its explanation update at once. It is a design and learning tool, complementary to (not a recreation of) SDN emulation platforms such as Mininet-Optical.
 
 ## Operating Context
-The user works at a canvas of devices and cables, with an inspector for the selected device or cable and tabs for the results (power map, hop-by-hop table, clients, channels, reachability, OTDR, spectrum, constellation, planner, launch sweep, Raman, resilience, transients, and Learn). Scenarios are loaded from a dropdown and labs can be exported and imported as JSON. The page is published at https://yzguy.dev/lightpath/ through GitHub Pages.
+The user works at a canvas of devices and cables, with an inspector for the selected device or cable and tabs for the results (power map, hop-by-hop table, clients, channels, reachability, OTDR, spectrum, constellation, planner, launch sweep, Raman, resilience, transients, challenges, and Learn). Scenarios are loaded from a dropdown and labs can be exported and imported as JSON. The page is published at https://yzguy.dev/lightpath/ through GitHub Pages.
 
 ## Capabilities and Constraints
 - Models transponders and muxponders, amplifiers (including Raman), ROADMs and passive OADMs with numbered ports, muxes, patch panels, splitters and optical switches, hosts and reachability, single-fiber (BiDi) links, a 1510 nm supervisory channel and 1310 nm client ports, protection and wavelength converters, device and port failures, overloads, and a power meter and OTDR.

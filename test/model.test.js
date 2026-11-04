@@ -2301,3 +2301,39 @@ test('BiDi amplifier: a one-way EDFA on a single fiber loses the reverse directi
   assert.equal(M.sanitize({ ...clone(S), nodes: S.nodes.map(n => (n === amp ? { ...n, p: { ...n.p, bidi: 'yes', bidiLoss: 99 } } : n)) }).nodes.find(n => n.id === amp.id).p.bidi, false);
   assert.equal(M.sanitize({ ...clone(S), nodes: S.nodes.map(n => (n === amp ? { ...n, p: { ...n.p, bidiLoss: 99 } } : n)) }).nodes.find(n => n.id === amp.id).p.bidiLoss, 6);
 });
+
+test('challenges: each starts unsolved, a known fix solves it, and a shortcut does not', () => {
+  assert.equal(M.CHALLENGES.length, new Set(M.CHALLENGES.map(c => c.id)).size, 'ids are unique');
+  const by = id => M.CHALLENGES.find(c => c.id === id), fresh = id => M.sanitize(by(id).build());
+  const state = (id, S) => M.challengeStatus(by(id), S);
+  const named = (S, n) => S.nodes.find(x => x.name === n);
+  for (const c of M.CHALLENGES) {
+    assert.ok(c.title && c.story && c.answer && c.hints.length >= 2 && c.goals.length >= 1, c.id + ' is complete');
+    const S = fresh(c.id), st = state(c.id, S);
+    assert.equal(st.done, false, c.id + ' starts broken');
+    assert.deepEqual(M.sanitize(c.build()).nodes.length, c.build().nodes.length, c.id + ' survives sanitize');
+  }
+  // dirty: clean the connector
+  let S = fresh('dirty'); M.applyFix(S, M.simulate(S).headlineFix); assert.equal(state('dirty', S).done, true);
+  // hot: lower the transmit power (or pad the path)
+  S = fresh('hot'); S.nodes.forEach(n => { if (n.type === 'trx') n.p.tx = -8; }); assert.equal(state('hot', S).done, true);
+  S = fresh('hot'); S.links[0].p.extra = 8; assert.equal(state('hot', S).done, true, 'extra loss also works');
+  // far: an amplifier halfway
+  S = fresh('far'); assert.equal(M.simulate(S).headlineFix, undefined, 'no remedy button: the player has to work it out'); M.applyFix(S, { type: 'insertAmp', id: S.links.find(l => l.kind === 'fiber').id }); assert.equal(state('far', S).done, true, M.simulate(S).headline);
+  // shortcut: a weaker mode is not the same service
+  S = fresh('far'); S.nodes.forEach(n => { if (n.type === 'trx') n.p.mode = 'zr400'; }); assert.equal(state('far', S).goals[1].ok, false, 'changing the mode fails the keep-the-mode goal');
+  // onefiber: BiDi amplifier
+  S = fresh('onefiber'); M.applyFix(S, M.simulate(S).headlineFix); assert.equal(state('onefiber', S).done, true, M.simulate(S).headline);
+  // dispersion: a DCM before the multiplexer
+  S = fresh('dispersion'); const pb = named(S, 'PRE-B'), mb = named(S, 'MUX-B'); const dcm = { id: 'dcmx', type: 'dcm', name: 'DCM-B', x: 780, y: 220, p: M.TYPES.dcm.def() };
+  const lk = S.links.find(l => l.a === pb.id && l.b === mb.id); S.nodes.push(dcm); lk.b = dcm.id; S.links.push({ id: 'dcml', a: dcm.id, b: mb.id, kind: 'patch', p: { ...lk.p } });
+  assert.equal(state('dispersion', S).done, true, M.simulate(S).headline);
+  // cut: close the triangle; the same fiber back in place of a cut does not count as a second route
+  S = fresh('cut'); const a = named(S, 'ROADM-A'), cc = named(S, 'ROADM-C'); const l0 = S.links.find(l => l.kind === 'fiber');
+  assert.equal(state('cut', S).goals[1].ok, false, 'a chain does not survive a cut');
+  S.links.push({ id: 'closer', a: a.id, b: cc.id, kind: 'fiber', p: { ...l0.p, len: 70 } }); assert.equal(state('cut', S).done, true);
+  // monday: two faults, one after the other
+  S = fresh('monday'); const r1 = M.simulate(S); assert.equal(r1.headlineFix.type, 'work'); M.applyFix(S, r1.headlineFix);
+  assert.equal(state('monday', S).done, false, 'the second fault is still there'); const r2 = M.simulate(S); assert.equal(r2.headlineFix.type, 'clean'); M.applyFix(S, r2.headlineFix);
+  assert.equal(state('monday', S).done, true);
+});
