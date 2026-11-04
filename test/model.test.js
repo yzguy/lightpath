@@ -2332,6 +2332,13 @@ test('challenges: each starts unsolved, a known fix solves it, and a shortcut do
   S = fresh('cut'); const a = named(S, 'ROADM-A'), cc = named(S, 'ROADM-C'); const l0 = S.links.find(l => l.kind === 'fiber');
   assert.equal(state('cut', S).goals[1].ok, false, 'a chain does not survive a cut');
   S.links.push({ id: 'closer', a: a.id, b: cc.id, kind: 'fiber', p: { ...l0.p, len: 70 } }); assert.equal(state('cut', S).done, true);
+  // port: replace the degraded port
+  S = fresh('port'); M.applyFix(S, M.simulate(S).headlineFix); assert.equal(state('port', S).done, true);
+  // launch: back off, but not to nothing-to-gain extremes: 2 dBm works, 5 does not
+  S = fresh('launch'); S.g.launch = 2; assert.equal(state('launch', S).done, true); S.g.launch = 5; assert.equal(state('launch', S).done, false);
+  // eol: re-splice the span (or amplify); today's margin alone is not enough
+  S = fresh('eol'); assert.equal(state('eol', S).goals[0].ok, false); S.links.find(l => l.kind === 'fiber').p.extra = 1; assert.equal(state('eol', S).done, true);
+  S = fresh('eol'); M.applyFix(S, { type: 'insertAmp', id: S.links.find(l => l.kind === 'fiber').id }); assert.equal(state('eol', S).done, true, 'an amplifier also works');
   // monday: two faults, one after the other
   S = fresh('monday'); const r1 = M.simulate(S); assert.equal(r1.headlineFix.type, 'work'); M.applyFix(S, r1.headlineFix);
   assert.equal(state('monday', S).done, false, 'the second fault is still there'); const r2 = M.simulate(S); assert.equal(r2.headlineFix.type, 'clean'); M.applyFix(S, r2.headlineFix);
