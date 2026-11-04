@@ -2251,3 +2251,28 @@ test('planner: a target availability decides the protection, and reports a targe
   assert.equal(M.sanitize({ ...clone(S), demands: [{ a: ra, z: rb, mode: 'zrp400', count: 1, target: 99.99 }] }).demands[0].target, 99.99);
   for (const bad of [50, 100, 'x', true, -1, null]) assert.equal(M.sanitize({ ...clone(S), demands: [{ a: ra, z: rb, mode: 'zrp400', count: 1, target: bad }] }).demands[0].target, '', String(bad));
 });
+
+test('per-channel transients: a cut loses its channels, survivors get an excursion that adds up amplifier by amplifier, bluer channels more', () => {
+  const S = M.sanitize(build('mesh')), t = M.channelTransients(S);
+  assert.ok(t.cut && t.cutName && t.fibers.length >= 3);
+  assert.ok(t.lost.length > 0 && t.rows.length > 0);
+  assert.ok(t.rows.every(x => !t.lost.includes(x.slot) || x.svc !== undefined), 'rows are the survivors');
+  for (const x of t.rows) assert.ok(Math.abs(x.surgeDb - x.hits.reduce((a, h) => a + h.peakDb, 0)) < 1e-9, 'the excursion is the sum over the amplifiers on its route');
+  assert.ok(t.rows.some(x => x.surgeDb > 0.05) && t.rows.every(x => x.prxSurge >= x.prx));
+  assert.equal(t.worst.surgeDb, Math.max(...t.rows.map(x => x.surgeDb)));
+  // choosing another fiber changes who is lost
+  const other = t.fibers.find(f => f.id !== t.cut), t2 = M.channelTransients(S, { cut: other.id });
+  assert.equal(t2.cut, other.id); assert.notEqual(t2.cutName, t.cutName); assert.equal(t2.rows.length + t2.lost.length, t.rows.length + t.lost.length, 'the same channels, split differently');
+  // a control loop that holds the amplifier completely removes the surge
+  const fast = M.sanitize(build('mesh')); fast.g.agcUs = 0; fast.nodes.forEach(n => { if (n.p.agcUs !== undefined) n.p.agcUs = 0; });
+  assert.ok(M.channelTransients(fast).rows.every(x => x.surgeDb < 1e-9), 'agc 0 us lets nothing through');
+  // tilt: with hole burning off, among channels that see the same amplifiers the bluer one is lifted more
+  const T = PHY.TRANSIENT, old = [T.shb, T.tiltPerDb]; T.shb = 0; T.tiltPerDb = 0.5;
+  try {
+    const r = M.channelTransients(S).rows, sig = x => x.hits.map(h => h.name + h.lost + '/' + h.n).join();
+    const grp = r.filter(x => sig(x) === sig(r[0]) && x.hits.length), lo = grp.reduce((a, b) => (a.fTHz < b.fTHz ? a : b)), hi = grp.reduce((a, b) => (a.fTHz > b.fTHz ? a : b));
+    assert.ok(grp.length >= 2 && hi.fTHz > lo.fTHz && hi.surgeDb > lo.surgeDb, 'blue end lifted more');
+    T.tiltPerDb = 0; const flat = M.channelTransients(S).rows.filter(x => sig(x) === sig(r[0]) && x.hits.length);
+    assert.ok(Math.max(...flat.map(x => x.surgeDb)) - Math.min(...flat.map(x => x.surgeDb)) < 1e-9, 'without tilt or hole burning every survivor on the route gets the same');
+  } finally { [T.shb, T.tiltPerDb] = old; }
+});

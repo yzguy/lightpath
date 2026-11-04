@@ -100,7 +100,7 @@ const PHY = (() => {
   const EOL = { spanLoss: 1.0, trxPen: 0.5 };
   // Power transients: after channels vanish, the surviving channels of a gain-controlled EDFA rise toward the uncontrolled surge with this time
   // constant (hundreds of microseconds); a control loop that reacts within a fraction of it holds most of the surge off. Representative.
-  const TRANSIENT = { tauUs: 200, lossPct: 50, agcUs: 20 };
+  const TRANSIENT = { tauUs: 200, lossPct: 50, agcUs: 20, tiltPerDb: 0.25, shb: 0.2 }; // time constant, share lost, control response; tilt and hole-burning shares (representative)
   // Stimulated Raman scattering tilt. Power moves from high- to low-frequency channels. Returns dB between the
   // lowest and highest channel added by one span (Zirngibl-style approximation: tilt ~ 4.34 * slope * Ptot * Leff * bandwidth).
   // Raman gain slope ~0.028 /W/km/THz on SMF at 80 um^2; scaled by gamma as a stand-in for 1/Aeff.

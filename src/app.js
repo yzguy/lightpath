@@ -1060,9 +1060,29 @@ function traceChart(r) {
   return el('div', { class: 'chartwrap' }, [el('h3', { text: 'Receiver power through the event' }), s, el('div', { class: 'legend' }, [lg('l-sig', `Channels vanish: peak +${f1(tr.peakDb)} dB`), lg('l-nli', `Channels return${t.rampF < 1 ? ` over ${tr.rampMs} ms` : ' at once'}: dip −${f1(-Math.min(...tr.dip))} dB`), el('span', { class: 'muted', text: 'A surviving channel at the receiver. All amplifiers\' excursions line up in time (the event travels with the signal) and add; each is pulled back once its control loop engages.' })])]);
 }
 // what happens to the surviving channels when many vanish at once
+// per channel: cut a fiber and see what every surviving channel gets (plan mode)
+let transCut = null;
+function chanTransients() {
+  if (!Array.isArray(S.g.plan) || S.g.plan.length < 2) return null;
+  const ct = MODEL.channelTransients(S, { cut: transCut });
+  if (!ct.cut) return null;
+  const box = el('div', { class: 'transchan', style: 'margin-top:20px' }), sel = el('select', { 'aria-label': 'Fiber to cut' });
+  ct.fibers.forEach(f => sel.append(el('option', { value: f.id, text: `${f.name} (${f.n} channel${f.n === 1 ? '' : 's'})` }))); sel.value = ct.cut;
+  sel.addEventListener('change', () => { transCut = sel.value; renderTabBody(); });
+  box.append(el('h3', { text: 'Per channel' }), el('div', { class: 'planbar' }, [el('span', { text: 'Cut' }), sel]));
+  if (!ct.rows.length) return (box.append(el('p', { class: 'muted', text: `Every channel crosses ${ct.cutName}, so nobody survives to be surged.` })), box);
+  const worst = ct.worst, top = Math.max(0.1, worst.surgeDb), over = ct.rows.filter(x => x.overloadDb > 0).length;
+  box.append(el('p', { html: `Cutting <b>${ct.cutName}</b> loses ${ct.lost.length} channel${ct.lost.length === 1 ? '' : 's'}. The other ${ct.rows.length} are lifted by up to <b>${f1(worst.surgeDb)} dB</b> (${chText(worst.slot, true)}), ${over ? `<b class="st-down">${over}</b> past the receiver overload point` : 'none past the receiver overload point'}.` }));
+  const tbl = el('table', { class: 'tbl' }), th = el('tr'); ['Channel', 'Mode', 'Rx dBm', 'Lifted by', 'Rx at the surge', 'Amplifiers', ''].forEach(h => th.append(el('th', { text: h }))); tbl.append(el('thead', {}, [th]));
+  const tb = el('tbody');
+  for (const x of ct.rows) tb.append(el('tr', {}, [chText(x.slot, true) + (x.svc ? ' (service)' : ''), x.modeShort, f1(x.prx), `${f1(x.surgeDb)} dB`, el('span', { class: x.overloadDb > 0 ? 'st-down' : '', text: `${f1(x.prxSurge)} dBm${x.overloadDb > 0 ? ' OVERLOAD' : ''}` }), x.hits.length ? x.hits.map(h => h.name).join(', ') : 'none affected', el('span', { class: 'transbar', style: `width:${Math.max(2, 100 * x.surgeDb / top)}px` })].map(v => (v instanceof Node ? el('td', {}, [v]) : el('td', { text: String(v) })))));
+  tbl.append(tb);
+  box.append(el('div', { style: 'overflow:auto;max-height:300px' }, [tbl]), el('p', { class: 'muted small', text: `Only the channels whose route crossed the cut are lost; at each amplifier on a survivor's route the lost channels upstream stop loading it, and the survivors are lifted by 10·log10(channels / survivors) less what the control loop holds off. Two spectral terms are added, representative figures: gain tilt (the blue end of the band is lifted about ${Math.round(100 * PHY.TRANSIENT.tiltPerDb)}% more at the band edge than the middle) and spectral hole burning (up to ${Math.round(100 * PHY.TRANSIENT.shb)}% more for a channel within three slots of a lost one). An amplifier is an EDFA or a ROADM with its preamp and booster.` }));
+  return box;
+}
 function transView(r) {
-  const wrap = el('div', { class: 'planwrap pad' }), t = r.transient;
-  if (!t) return el('p', { class: 'muted pad', text: 'Needs at least two channels on an amplifier: with a single channel there is nothing that can surge.' });
+  const wrap = el('div', { class: 'planwrap pad' }), t = r.transient, cs = chanTransients();
+  if (!t) return cs ? (wrap.append(el('p', { class: 'muted', text: 'The service has no amplifier shared with other channels, so it has nothing to surge. The other channels may:' }), cs), wrap) : el('p', { class: 'muted pad', text: 'Needs at least two channels on an amplifier: with a single channel there is nothing that can surge.' });
   const tbl = el('table', { class: 'tbl' }), th = el('tr'); ['Amplifier', 'Channels', 'Lost', 'Surge if uncontrolled', 'Control µs', 'Lets through', 'Accumulated', ''].forEach(h => th.append(el('th', { text: h })));
   tbl.append(el('thead', {}, [th]));
   const tb = el('tbody'), top = Math.max(0.1, t.surgeDb);
@@ -1076,7 +1096,7 @@ function transView(r) {
       el('span', {}, ['Q margin during the surge: ', el('b', { class: ok(t.qMarginSurge), text: `${f1(t.qMarginSurge)} dB` })]),
       el('span', {}, ['Rx power when they return: ', el('b', { text: `${f1(t.prxDip)} dBm` }), ` (sensitivity ${mode.rxMin} dBm)`]),
       el('span', {}, ['Q margin during that dip: ', el('b', { class: ok(t.qMarginDip), text: `${f1(t.qMarginDip)} dB` })])]),
-    traceChart(r),
+    traceChart(r), ...(cs ? [cs] : []),
     el('p', { class: 'muted small', text: `A gain-controlled EDFA would raise the survivors by 10·log10(channels / survivors) if it did not react; its control loop holds off all but a fraction 1 − exp(−response / ${t.tauUs} µs) of that. The excursions of a cascade add. Raman pumps and ROADM wavelength blockers are not modelled. The event size and amplifier response are in the inspector (nothing selected); an amplifier can override the response.` }));
   return wrap;
 }
