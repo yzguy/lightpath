@@ -2362,3 +2362,29 @@ test('challenges: each starts unsolved, a known fix solves it, and a shortcut do
   assert.equal(state('monday', S).done, false, 'the second fault is still there'); const r2 = M.simulate(S); assert.equal(r2.headlineFix.type, 'clean'); M.applyFix(S, r2.headlineFix);
   assert.equal(state('monday', S).done, true);
 });
+
+test('copy and paste: devices and the cables between them are cloned, with new names and ids', () => {
+  const S = M.sanitize(build('protect')), names = new Set(S.nodes.map(n => n.name)), before = JSON.stringify(S);
+  const ids = S.nodes.filter(n => ['ROADM-A', 'ROADM-B', 'TRX-A'].includes(n.name)).map(n => n.id);
+  const clip = M.copySelection(S, ids);
+  assert.equal(clip.nodes.length, 3);
+  assert.equal(clip.links.length, S.links.filter(l => ids.includes(l.a) && ids.includes(l.b)).length, 'only cables with both ends in the selection');
+  assert.ok(clip.links.length >= 2 && clip.links.length < S.links.length, 'the cable to ROADM-C is left behind');
+  assert.equal(JSON.stringify(S), before, 'copying changes nothing');
+  const r = M.pasteSelection(S, clip, 40, 40);
+  assert.equal(r.nodeIds.length, 3); assert.equal(r.linkIds.length, clip.links.length);
+  const fresh = S.nodes.filter(n => r.nodeIds.includes(n.id));
+  assert.ok(fresh.every(n => !names.has(n.name)), 'names are new'); assert.equal(new Set(S.nodes.map(n => n.name)).size, S.nodes.length, 'names stay unique');
+  assert.equal(new Set(S.nodes.map(n => n.id)).size, S.nodes.length, 'ids stay unique');
+  const src = S.nodes.find(n => n.name === 'ROADM-A'), cp = fresh.find(n => n.type === 'roadm' && n.x === src.x + 40 && n.y === src.y + 40); assert.ok(cp, 'offset by 40');
+  for (const l of S.links.filter(x => r.linkIds.includes(x.id))) assert.ok(r.nodeIds.includes(l.a) && r.nodeIds.includes(l.b), 'copied cables join copied devices only');
+  assert.ok(!S.nodes.filter(n => r.nodeIds.includes(n.id)).some(n => n.id === S.svc.a || n.id === S.svc.z), 'a copy is never a service end');
+  assert.equal(M.sanitize(clone(S)).nodes.length, S.nodes.length, 'the result is a valid lab');
+  // mutating a copy leaves the original alone
+  fresh.find(n => n.type === 'roadm').p.wss = 99; assert.notEqual(src.p.wss, 99);
+  // transponder links follow the copies, and point nowhere outside them
+  const T = M.sanitize(build('client')), tx = T.nodes.filter(n => n.p && n.p.peer);
+  if (tx.length >= 2) { const pair = tx.slice(0, 2).map(n => n.id), c2 = M.copySelection(T, pair), r2 = M.pasteSelection(T, c2); const p2 = T.nodes.filter(n => r2.nodeIds.includes(n.id)); for (const n of p2) assert.ok(!n.p.peer || r2.nodeIds.includes(n.p.peer), 'peer is a copy or empty'); }
+  // removing devices removes their cables and clears a service end
+  const a = S.svc.a; M.removeNodes(S, [a, ...r.nodeIds]); assert.equal(S.svc.a, null); assert.ok(S.links.every(l => S.nodes.some(n => n.id === l.a) && S.nodes.some(n => n.id === l.b)), 'no dangling cable');
+});

@@ -97,6 +97,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .node .endtag { font-family: var(--f-ui); font-size: calc(10px * var(--lf3, 1)); font-weight: 800; letter-spacing: .1em; text-transform: uppercase; fill: var(--accent-text) }
 .node.sel .body, .node.faulty.sel .body { stroke: var(--ink); stroke-width: 3; filter: drop-shadow(0 0 3px var(--ink)) } /* selection is ink, not amber: amber is fibers and warnings */
 .node.sel .nlabel { fill: var(--ink) }
+#cv { user-select: none; -webkit-user-select: none }
+.marq { fill: var(--gap); stroke: var(--sig); stroke-width: 1.5; stroke-dasharray: 5 4; pointer-events: none }
 .t-roadm .body, .t-oadm .body { fill: var(--raised) }
 .t-host .body, .t-panel .body { fill: var(--raised); stroke-dasharray: 0 }
 .node .pport { fill: var(--muted); opacity: .7 }

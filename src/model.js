@@ -1177,6 +1177,31 @@ const MODEL = (() => {
     return '';
   }
 
+  // ---------- copy and paste ----------
+  // A selection of devices is copied with the cables that join two of them (a cable to a device outside the selection is left behind). Pasting makes new
+  // devices with new names and ids, moved a little so they do not sit on the originals; links between transponders (peer, converter) follow the copies.
+  function copySelection(S, ids) {
+    const set = new Set(ids), copy = o => JSON.parse(JSON.stringify(o));
+    return { nodes: S.nodes.filter(n => set.has(n.id)).map(copy), links: S.links.filter(l => set.has(l.a) && set.has(l.b)).map(copy) };
+  }
+  function pasteSelection(S, clip, dx = 40, dy = 40) {
+    const map = {}, snap = v => Math.round(v / 10) * 10, copy = o => JSON.parse(JSON.stringify(o)), nodes = [], links = [];
+    for (const n of clip.nodes) {
+      const type = TYPES[n.type] ? n.type : null; if (!type) continue;
+      let name = `${PREFIX[type]}-${S.nodes.filter(x => x.type === type).length + nodes.filter(x => x.type === type).length + 1}`;
+      while (S.nodes.some(x => x.name === name) || nodes.some(x => x.name === name)) name += "'";
+      const c = { id: uid('n'), type, name, x: snap(n.x + dx), y: snap(n.y + dy), p: copy(n.p || {}) }; map[n.id] = c.id; nodes.push(c);
+    }
+    for (const c of nodes) for (const k of ['peer', 'conv']) if (typeof c.p[k] === 'string' && c.p[k]) c.p[k] = map[c.p[k]] || '';
+    for (const l of clip.links) if (map[l.a] && map[l.b]) links.push({ id: uid('l'), a: map[l.a], b: map[l.b], kind: l.kind, p: copy(l.p || {}) });
+    S.nodes.push(...nodes); S.links.push(...links);
+    return { nodeIds: nodes.map(n => n.id), linkIds: links.map(l => l.id) };
+  }
+  function removeNodes(S, ids) {
+    const set = new Set(ids); S.nodes = S.nodes.filter(n => !set.has(n.id)); S.links = S.links.filter(l => !set.has(l.a) && !set.has(l.b));
+    for (const k of ['a', 'z']) if (S.svc && set.has(S.svc[k])) S.svc[k] = null;
+  }
+
   // ---------- simulation ----------
   const reqCache = {};
   const reqOsnr = k => (reqCache[k] ??= PHY_.requiredOsnr(PHY_.MODES[k]));
@@ -2201,6 +2226,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, applyFix, PRESETS, CHALLENGES, challengeStatus, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

@@ -17,6 +17,8 @@ const { TYPES, PREFIX, PRESETS, uid, linkDefaults, isEnd } = MODEL;
 // ---------- state ----------
 let S;
 let sel = null, tool = 'select';
+const group = new Set(); // several devices selected at once (Shift-click, Shift-drag a box, Ctrl+A); a single selection is `sel`
+let clip = null, pasteN = 0; // the copied devices and cables, and how many times they have been pasted since
 const KEY = 'lightpath-v1', OLD_KEY = 'optical-lab-v1'; // the app was called Optical Line Lab: still read its saved lab
 function load() {
   try {
@@ -123,7 +125,7 @@ function faultBadge(n, body) {
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 const weakPorts = n => !!n.p && !!n.p.degPorts && Object.values(n.p.degPorts).some(v => +v > 0);
 function nodeShape(n) {
-  const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || weakPorts(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === n.id ? 'true' : 'false',
+  const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || weakPorts(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : group.has(n.id) ? ' sel msel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': (sel && sel.id === n.id) || group.has(n.id) ? 'true' : 'false',
     'aria-label': `${n.name}, ${(TYPES[n.type] || {}).label || n.type}${S.svc && S.svc.a === n.id ? ', service A end' : S.svc && S.svc.z === n.id ? ', service Z end' : ''}${n.p && n.p.fail === 'dead' ? ', failed' : n.p && n.p.fail === 'degraded' ? ', degraded' : ''}${panelDirty(n) ? ', dirty connector on port ' + Object.entries(n.p.dirty).filter(([, v]) => +v > 0.3).map(([k]) => k).join(', ') : ''}` });
   if (n.type === 'trx') {
     g.append(sv('rect', { x: -46, y: -22, width: 92, height: 44, rx: 4, class: 'body' }));
@@ -277,8 +279,14 @@ svg.addEventListener('pointerdown', e => {
   if (nEl) {
     const n = node(nEl.dataset.id);
     if (tool === 'patch' || tool === 'fiber') { drag = { kind: 'cable', from: n, moved: false }; const rb = $('#rubber'); rb.setAttribute('x1', n.x); rb.setAttribute('y1', n.y); rb.setAttribute('x2', w.x); rb.setAttribute('y2', w.y); rb.setAttribute('visibility', 'visible'); rb.setAttribute('class', 'rubber ' + tool); }
-    else { drag = { kind: 'node', n, dx: w.x - n.x, dy: w.y - n.y, moved: false }; select({ kind: 'node', id: n.id }); }
+    else if (e.shiftKey || e.ctrlKey || e.metaKey) { toggleGroup(n.id); drag = null; }
+    else {
+      const all = group.has(n.id) ? [...group].map(id => node(id)).filter(Boolean).map(m => ({ n: m, ox: m.x, oy: m.y })) : null; // dragging a member moves the whole selection
+      drag = { kind: 'node', n, dx: w.x - n.x, dy: w.y - n.y, moved: false, all, sx: n.x, sy: n.y };
+      if (!all) select({ kind: 'node', id: n.id });
+    }
   } else if (lEl) { select({ kind: 'link', id: lEl.dataset.id }); drag = null; }
+  else if (e.shiftKey) { drag = { kind: 'marquee', x0: w.x, y0: w.y, moved: false }; }
   else { drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: S.view.x, vy: S.view.y, moved: false }; }
   svg.setPointerCapture(e.pointerId);
 });
@@ -291,14 +299,22 @@ svg.addEventListener('pointermove', e => {
   if (!drag) return;
   const w = toWorld(e.clientX, e.clientY);
   drag.moved = true;
-  if (drag.kind === 'node') { drag.n.x = Math.round((w.x - drag.dx) / 10) * 10; drag.n.y = Math.round((w.y - drag.dy) / 10) * 10; renderCanvas(); }
+  if (drag.kind === 'node') {
+    const nx = Math.round((w.x - drag.dx) / 10) * 10, ny = Math.round((w.y - drag.dy) / 10) * 10;
+    if (drag.all) for (const m of drag.all) { m.n.x = m.ox + nx - drag.sx; m.n.y = m.oy + ny - drag.sy; } else { drag.n.x = nx; drag.n.y = ny; }
+    renderCanvas();
+  }
+  else if (drag.kind === 'marquee') {
+    let r = gRoot.querySelector('#marq'); if (!r) { r = sv('rect', { id: 'marq', class: 'marq' }); gRoot.append(r); }
+    r.setAttribute('x', Math.min(drag.x0, w.x)); r.setAttribute('y', Math.min(drag.y0, w.y)); r.setAttribute('width', Math.abs(w.x - drag.x0)); r.setAttribute('height', Math.abs(w.y - drag.y0));
+  }
   else if (drag.kind === 'pan') { S.view.x = drag.vx - (e.clientX - drag.sx) / S.view.k; S.view.y = drag.vy - (e.clientY - drag.sy) / S.view.k; applyView(); }
   else if (drag.kind === 'cable') { const rb = $('#rubber'); rb.setAttribute('x2', w.x); rb.setAttribute('y2', w.y); }
 });
 const endPointer = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; };
 // A drag that is cancelled (the browser takes the gesture to scroll), loses its capture, or is interrupted by switching windows ends cleanly: the node stays
 // where it was dropped and the change is saved (so it can be undone), and the next tap or drag works without a reload.
-function abortDrag(e) { if (e) endPointer(e); else { ptrs.clear(); pinch = null; } const d = drag; drag = null; $('#rubber').setAttribute('visibility', 'hidden'); if (d && d.kind === 'node' && d.moved) save(); }
+function abortDrag(e) { if (e) endPointer(e); else { ptrs.clear(); pinch = null; } const d = drag; drag = null; $('#rubber').setAttribute('visibility', 'hidden'); const m = gRoot.querySelector('#marq'); if (m) m.remove(); if (d && d.kind === 'node' && d.moved) save(); }
 svg.addEventListener('pointercancel', abortDrag);
 svg.addEventListener('lostpointercapture', e => { if (drag) abortDrag(e); });
 window.addEventListener('blur', () => abortDrag(null));
@@ -313,6 +329,11 @@ svg.addEventListener('pointerup', e => {
     if (nEl && nEl.dataset.id !== d.from.id) { pendingCable = null; connect(d.from, node(nEl.dataset.id), tool); }
     else if (!d.moved || !nEl) { if (!pendingCable) { pendingCable = d.from; toast(`Now click the second device to connect ${d.from.name}`); } else { const a = pendingCable; pendingCable = null; if (a.id !== d.from.id) connect(a, d.from, tool); } }
   } else if (d.kind === 'pan' && !d.moved) select(null);
+  else if (d.kind === 'marquee') {
+    const m = gRoot.querySelector('#marq'); if (m) m.remove();
+    if (!d.moved) select(null); else { const w = toWorld(e.clientX, e.clientY), x0 = Math.min(d.x0, w.x), x1 = Math.max(d.x0, w.x), y0 = Math.min(d.y0, w.y), y1 = Math.max(d.y0, w.y); setGroup(S.nodes.filter(n => n.x >= x0 && n.x <= x1 && n.y >= y0 && n.y <= y1).map(n => n.id)); }
+  }
+  else if (d.kind === 'node' && !d.moved && d.all) select({ kind: 'node', id: d.n.id }); // a click on one member of a selection narrows it to that device
   else if (d.kind === 'node' && d.moved) { save(); }
 });
 let pendingCable = null;
@@ -427,6 +448,7 @@ function addNode(type, x, y) {
   select({ kind: 'node', id: n.id });
 }
 function del() {
+  if (group.size > 1) { const k = group.size; MODEL.removeNodes(S, [...group]); group.clear(); sel = null; checkpoint(); renderAll(); toast(`Deleted ${k} devices`, { label: 'Undo', fn: undo }); return; }
   if (!sel) return;
   const node0 = sel.kind === 'node' ? node(sel.id) : null;
   if (sel.kind === 'node') { S.nodes = S.nodes.filter(n => n.id !== sel.id); S.links = S.links.filter(l => l.a !== sel.id && l.b !== sel.id); }
@@ -453,7 +475,15 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !$('#toast').hidden) $('#toast').hidden = true; // a toast can be dismissed, so it never stays over what you are reading
   if (e.target.closest('input,select,textarea')) return; // a field keeps its own undo
   if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'z' || e.key === 'Z' || e.key === 'y')) { e.preventDefault(); (e.key === 'y' || e.shiftKey ? redo : undo)(); return; }
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+    const k = e.key.toLowerCase();
+    if (k === 'c' && selIds().length && !String(window.getSelection())) { copySel(); e.preventDefault(); return; }
+    if (k === 'v' && clip) { pasteClip(); e.preventDefault(); return; }
+    if (k === 'd' && selIds().length) { copySel(); pasteClip(); e.preventDefault(); return; }
+    if (k === 'a' && S.nodes.length) { setGroup(S.nodes.map(n => n.id)); e.preventDefault(); return; }
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === 'Escape' && group.size) { setGroup([]); return; }
   if (e.key === 'Delete' || e.key === 'Backspace') { del(); e.preventDefault(); }
   else if (e.key === 'v' || e.key === 'Escape') setTool('select');
   else if (e.key === 'p') setTool('patch');
@@ -461,7 +491,21 @@ document.addEventListener('keydown', e => {
 });
 
 // ---------- inspector ----------
-function select(s) { sel = s; renderAll(); }
+function select(s) { group.clear(); sel = s; renderAll(); }
+// Selecting several devices: Shift-click toggles one, Shift-drag on empty space boxes them, Ctrl+A takes all. Copy, paste and duplicate work on the selection.
+function setGroup(ids) { group.clear(); if (ids.length === 1) { select({ kind: 'node', id: ids[0] }); return; } ids.forEach(id => group.add(id)); sel = null; renderAll(); }
+function toggleGroup(id) {
+  const cur = group.size ? [...group] : sel && sel.kind === 'node' ? [sel.id] : [], i = cur.indexOf(id);
+  if (i >= 0) cur.splice(i, 1); else cur.push(id);
+  setGroup(cur);
+}
+const selIds = () => (group.size > 1 ? [...group] : sel && sel.kind === 'node' && node(sel.id) ? [sel.id] : []);
+function copySel() { const ids = selIds(); if (!ids.length) return false; clip = MODEL.copySelection(S, ids); pasteN = 0; toast(`Copied ${ids.length} device${ids.length > 1 ? 's' : ''}. Ctrl+V pastes.`); return true; }
+function pasteClip() {
+  if (!clip || !clip.nodes.length) { toast('Nothing copied yet: select devices and press Ctrl+C'); return; }
+  pasteN++; const r = MODEL.pasteSelection(S, clip, 60 * pasteN, 60 * pasteN), k = r.nodeIds.length; checkpoint();
+  setGroup(r.nodeIds); toast(`Pasted ${k} device${k > 1 ? 's' : ''}`, { label: 'Undo', fn: undo });
+}
 function field(label, input, hint) { return el('label', { class: 'fld' }, [el('span', { text: label }), input, hint ? el('small', { text: hint }) : null]); }
 function numIn(obj, key, step = 0.5, min, max, allowBlank, placeholder) {
   const i = el('input', { type: 'number', step, value: obj[key], id: 'f-' + key }); if (min != null) i.min = min; if (max != null) i.max = max; if (placeholder) i.placeholder = placeholder;
@@ -482,6 +526,14 @@ function renderInspector() {
 }
 function renderInspectorBody() {
   const box = $('#insp'); box.innerHTML = '';
+  if (group.size > 1) {
+    const ns = [...group].map(id => node(id)).filter(Boolean), cables = S.links.filter(l => group.has(l.a) && group.has(l.b)).length;
+    box.append(el('h2', { text: `${ns.length} devices selected` }),
+      el('p', { class: 'muted', text: `${cables} cable${cables === 1 ? '' : 's'} between them. Drag one of them to move all, Shift-click to add or remove one, Esc to clear.` }),
+      el('div', { class: 'row' }, [el('button', { class: 'btn', text: 'Copy', title: 'Ctrl+C', onclick: copySel }), el('button', { class: 'btn', text: 'Duplicate', title: 'Ctrl+D', onclick: () => { copySel(); pasteClip(); } }), el('button', { class: 'btn quiet', text: 'Delete', title: 'Del', onclick: del }), el('button', { class: 'btn quiet', text: 'Clear selection', onclick: () => setGroup([]) })]),
+      el('ul', { class: 'muted small' }, ns.map(n => el('li', { text: `${n.name} · ${TYPES[n.type].label}` }))));
+    return;
+  }
   if (!sel) {
     box.append(el('h2', { text: 'Inspector' }), el('p', { class: 'muted', html: 'Select a device or a cable to edit it. Try cutting a fiber: select a span, then choose <b>Cut this fiber</b>. <b>Double-click</b> a transponder to make it an end of the service under test.' }));
     S.g.eolSpan ??= PHY.EOL.spanLoss; S.g.eolTrx ??= PHY.EOL.trxPen;
@@ -501,7 +553,7 @@ function renderInspectorBody() {
       field('Loss detection (ms)', numIn(S.g, 'detectMs', 1, 0, 1000)), field('1+1 switch time (ms)', numIn(S.g, 'switchMs', 5, 0, 10000)), field('Shared protection turn-up (s)', numIn(S.g, 'sharedSec', 0.5, 0, 600), 'Extra time to light a dark protection route: laser turn-up, WSS configuration and amplifier settling.'), field('Restoration time (s)', numIn(S.g, 'restoreSec', 5, 0, 3600), 'How long an unprotected channel takes to re-route over another path.'), field('Device failures per year', numIn(S.g, 'devRate', 0.01, 0, 5), 'Per amplifier or ROADM on a route. A failed ROADM at the end of a channel keeps it down until repaired; one in the middle is bypassed by protection or restoration if another route avoids it.'),
       el('p', { class: 'muted small', text: 'Expectations for the Resilience tab. Typical terrestrial fiber sees 2 to 4 cuts per 1000 km per year.' }));
     box.append(det);
-    box.append(el('div', { class: 'keys' }, [el('div', { html: '<kbd>V</kbd> select / move' }), el('div', { html: '<kbd>P</kbd> patch cord' }), el('div', { html: '<kbd>F</kbd> fiber span' }), el('div', { html: '<kbd>Del</kbd> delete' }), el('div', { html: '<kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Shift</kbd> to redo' }), el('div', { html: 'Drag empty space to pan, scroll to zoom' })]));
+    box.append(el('div', { class: 'keys' }, [el('div', { html: '<kbd>V</kbd> select / move' }), el('div', { html: '<kbd>P</kbd> patch cord' }), el('div', { html: '<kbd>F</kbd> fiber span' }), el('div', { html: '<kbd>Del</kbd> delete' }), el('div', { html: '<kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Shift</kbd> to redo' }), el('div', { html: '<kbd>Shift</kbd>-click or drag a box to select several' }), el('div', { html: '<kbd>Ctrl</kbd>+<kbd>C</kbd> copy, <kbd>V</kbd> paste, <kbd>D</kbd> duplicate' }), el('div', { html: 'Drag empty space to pan, scroll to zoom' })]));
     return;
   }
   if (sel.kind === 'node') {
@@ -1689,7 +1741,7 @@ function settleSwitches() {
   for (const f of moved) lastRes.alarms.unshift({ sev: 'info', text: `${f.name} moved from port ${f.from.toUpperCase()} to port ${f.to.toUpperCase()} and stays there (non-revertive): port ${f.from.toUpperCase()} is the standby once it is repaired.` });
 }
 function recompute() { MODEL.assignSides(S); lastRes = simulate(); settleSwitches(); refreshHostFaults(); renderCanvas(); renderResults(); save(); }
-function renderAll() { MODEL.assignSides(S); lastRes = simulate(); settleSwitches(); refreshHostFaults(); bindGlobals(); renderCanvas(); renderInspector(); renderResults(); renderChallenge(); save(); }
+function renderAll() { for (const id of [...group]) if (!node(id)) group.delete(id); if (group.size < 2) { if (group.size === 1) sel = { kind: 'node', id: [...group][0] }; group.clear(); } MODEL.assignSides(S); lastRes = simulate(); settleSwitches(); refreshHostFaults(); bindGlobals(); renderCanvas(); renderInspector(); renderResults(); renderChallenge(); save(); }
 window.addEventListener('resize', applyView);
 
 load();
