@@ -1202,6 +1202,21 @@ const MODEL = (() => {
     for (const k of ['a', 'z']) if (S.svc && set.has(S.svc[k])) S.svc[k] = null;
   }
 
+  // Line up or space out a set of devices by position. mode: left|center|right|top|middle|bottom align to the
+  // extreme or the middle; hspace|vspace spread the devices so the gaps between neighbours are equal (3 or more).
+  function alignNodes(S, ids, mode) {
+    const ns = ids.map(id => S.nodes.find(n => n.id === id)).filter(Boolean);
+    if (ns.length < 2) return 0;
+    const ax = ['left', 'center', 'right', 'hspace'].includes(mode) ? 'x' : ['top', 'middle', 'bottom', 'vspace'].includes(mode) ? 'y' : null;
+    if (!ax) return 0;
+    const v = ns.map(n => n[ax]), lo = Math.min(...v), hi = Math.max(...v);
+    if (mode === 'left' || mode === 'top') ns.forEach(n => { n[ax] = lo; });
+    else if (mode === 'right' || mode === 'bottom') ns.forEach(n => { n[ax] = hi; });
+    else if (mode === 'center' || mode === 'middle') ns.forEach(n => { n[ax] = Math.round((lo + hi) / 2); });
+    else { if (ns.length < 3) return 0; const o = [...ns].sort((a, b) => a[ax] - b[ax]); o.forEach((n, i) => { n[ax] = Math.round(lo + (hi - lo) * i / (o.length - 1)); }); }
+    return ns.length;
+  }
+
   // ---------- simulation ----------
   const reqCache = {};
   const reqOsnr = k => (reqCache[k] ??= PHY_.requiredOsnr(PHY_.MODES[k]));
@@ -2226,6 +2241,6 @@ const MODEL = (() => {
     return res;
   }
 
-  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

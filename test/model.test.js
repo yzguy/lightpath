@@ -2388,3 +2388,17 @@ test('copy and paste: devices and the cables between them are cloned, with new n
   // removing devices removes their cables and clears a service end
   const a = S.svc.a; M.removeNodes(S, [a, ...r.nodeIds]); assert.equal(S.svc.a, null); assert.ok(S.links.every(l => S.nodes.some(n => n.id === l.a) && S.nodes.some(n => n.id === l.b)), 'no dangling cable');
 });
+
+test('align and distribute: edges line up, spacing is even, and fewer than three cannot be spaced', () => {
+  const S = { nodes: [{ id: 'a', x: 10, y: 50 }, { id: 'b', x: 100, y: 20 }, { id: 'c', x: 400, y: 90 }, { id: 'd', x: 40, y: 0 }] };
+  const xs = () => S.nodes.map(n => n.x), ys = () => S.nodes.map(n => n.y);
+  assert.equal(M.alignNodes(S, ['a', 'b', 'c'], 'left'), 3); assert.deepEqual(xs(), [10, 10, 10, 40]);
+  S.nodes[1].x = 100; S.nodes[2].x = 400;
+  M.alignNodes(S, ['a', 'b', 'c'], 'right'); assert.deepEqual(xs(), [400, 400, 400, 40]);
+  M.alignNodes(S, ['a', 'b', 'c'], 'top'); assert.deepEqual(ys(), [20, 20, 20, 0]);
+  S.nodes[0].x = 10; S.nodes[1].x = 300; S.nodes[2].x = 400;
+  M.alignNodes(S, ['a', 'b', 'c'], 'hspace'); assert.deepEqual(xs().slice(0, 3), [10, 205, 400]);
+  assert.equal(M.alignNodes(S, ['a', 'b'], 'hspace'), 0);
+  assert.equal(M.alignNodes(S, ['a'], 'left'), 0);
+  assert.equal(M.alignNodes(S, ['a', 'b'], 'nonsense'), 0);
+});

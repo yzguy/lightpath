@@ -478,6 +478,7 @@ document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
     const k = e.key.toLowerCase();
     if (k === 'c' && selIds().length && !String(window.getSelection())) { copySel(); e.preventDefault(); return; }
+    if (k === 'x' && selIds().length && !String(window.getSelection())) { cutSel(); e.preventDefault(); return; }
     if (k === 'v' && clip) { pasteClip(); e.preventDefault(); return; }
     if (k === 'd' && selIds().length) { copySel(); pasteClip(); e.preventDefault(); return; }
     if (k === 'a' && S.nodes.length) { setGroup(S.nodes.map(n => n.id)); e.preventDefault(); return; }
@@ -500,6 +501,8 @@ function toggleGroup(id) {
   setGroup(cur);
 }
 const selIds = () => (group.size > 1 ? [...group] : sel && sel.kind === 'node' && node(sel.id) ? [sel.id] : []);
+function alignSel(mode) { if (MODEL.alignNodes(S, [...group], mode)) { checkpoint(); renderAll(); } }
+function cutSel() { if (!copySel()) return; del(); }
 function copySel() { const ids = selIds(); if (!ids.length) return false; clip = MODEL.copySelection(S, ids); pasteN = 0; toast(`Copied ${ids.length} device${ids.length > 1 ? 's' : ''}. Ctrl+V pastes.`); return true; }
 function pasteClip() {
   if (!clip || !clip.nodes.length) { toast('Nothing copied yet: select devices and press Ctrl+C'); return; }
@@ -530,7 +533,9 @@ function renderInspectorBody() {
     const ns = [...group].map(id => node(id)).filter(Boolean), cables = S.links.filter(l => group.has(l.a) && group.has(l.b)).length;
     box.append(el('h2', { text: `${ns.length} devices selected` }),
       el('p', { class: 'muted', text: `${cables} cable${cables === 1 ? '' : 's'} between them. Drag one of them to move all, Shift-click to add or remove one, Esc to clear.` }),
-      el('div', { class: 'row' }, [el('button', { class: 'btn', text: 'Copy', title: 'Ctrl+C', onclick: copySel }), el('button', { class: 'btn', text: 'Duplicate', title: 'Ctrl+D', onclick: () => { copySel(); pasteClip(); } }), el('button', { class: 'btn quiet', text: 'Delete', title: 'Del', onclick: del }), el('button', { class: 'btn quiet', text: 'Clear selection', onclick: () => setGroup([]) })]),
+      el('div', { class: 'row' }, [el('button', { class: 'btn', text: 'Cut', title: 'Ctrl+X', onclick: cutSel }), el('button', { class: 'btn', text: 'Copy', title: 'Ctrl+C', onclick: copySel }), el('button', { class: 'btn', text: 'Duplicate', title: 'Ctrl+D', onclick: () => { copySel(); pasteClip(); } }), el('button', { class: 'btn quiet', text: 'Delete', title: 'Del', onclick: del }), el('button', { class: 'btn quiet', text: 'Clear selection', onclick: () => setGroup([]) })]),
+      el('div', { class: 'row' }, [['left', 'Align left'], ['center', 'Align centres'], ['right', 'Align right'], ['top', 'Align top'], ['middle', 'Align middles'], ['bottom', 'Align bottom'], ['hspace', 'Space evenly across'], ['vspace', 'Space evenly down']]
+        .map(([m, t]) => el('button', { class: 'btn quiet', text: t, disabled: (m === 'hspace' || m === 'vspace') && ns.length < 3, onclick: () => alignSel(m) }))),
       el('ul', { class: 'muted small' }, ns.map(n => el('li', { text: `${n.name} · ${TYPES[n.type].label}` }))));
     return;
   }
