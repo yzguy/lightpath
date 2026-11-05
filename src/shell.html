@@ -155,7 +155,10 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .insp-head .row { gap: 8px } .insp-head .btn { align-self: start }
 .fld { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 500 }
 .fld input, .fld select { color: var(--ink); font-size: 13px; width: 100% }
-.fld small { font-size: 12px }
+.fld small { font-size: 12px; display: none } .fld.open small, .insp.showhelp .fld small, .fld small.ro { display: block }
+.flab { display: flex; justify-content: space-between; align-items: center; gap: 6px }
+.qhelp { flex: none; width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: none; color: var(--muted); font: 600 11px/1 var(--f-ui); cursor: help } .qhelp:hover, .fld.open .qhelp { color: var(--ink); border-color: var(--muted) }
+.helpsw { justify-self: start; font-size: 12px; padding: 2px 8px; margin: -2px 0 6px }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px }
 .row { display: flex; flex-wrap: wrap; gap: 6px }
 .spec { display: grid; gap: 3px; font-size: 12px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 8px 0 }
@@ -182,10 +185,10 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .s-up { color: var(--good) } .s-degraded { color: var(--warn) } .s-down, .s-los, .s-nopath { color: var(--bad) } .s-none { color: var(--muted) }
 #headline { font-weight: 600; font-size: 15px; flex: 1 1 280px; min-width: 0 }
 .kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px }
-.kpi { display: grid; grid-template-rows: 1fr auto; gap: 2px; text-align: left; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; cursor: help; border-left: 3px solid var(--line) }
+.kpi { display: grid; grid-template-rows: 1fr auto; gap: 0; text-align: left; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: help; border-left: 3px solid var(--line) }
 .kpi:hover { border-color: var(--muted) }
 .kpi .kl { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .02em }
-.kpi .kv { font-family: var(--f-mono); font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums }
+.kpi .kv { font-family: var(--f-mono); font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums }
 .kpi .kv small { font-size: 12px; color: var(--muted); font-weight: 400 }
 .kpi.good { border-left-color: var(--good) } .kpi.warn { border-left-color: var(--warn) } .kpi.bad { border-left-color: var(--bad) }
 .kpi.bad .kv { color: var(--bad) }
@@ -201,7 +204,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .kgroup { grid-column: 1 / -1; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin-top: 4px } .kgroup:first-child { margin-top: 0 }
 .tabsep { align-self: stretch; width: 1px; margin: 8px 6px; background: var(--line); flex: none }
 #headfix { align-self: center } #alarms .alfix { margin-left: 10px; padding: 2px 10px; min-height: 0 }
-.kpi.lead { grid-column: span 2 } .kpi.lead .kv { font-size: 22px }
+.kpi.lead { grid-column: span 2 } .kpi.lead .kv { font-size: 20px }
 #alarms { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px }
 #alarms li { padding: 7px 10px; border-radius: 5px; font-size: 13px; background: var(--raised); border: 1px solid var(--line); border-left: 3px solid var(--muted) }
 #alarms .al-bad { border-left-color: var(--bad) } #alarms .al-warn { border-left-color: var(--warn) } #alarms .al-info { border-left-color: var(--sig) }
@@ -214,6 +217,10 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--line) }
 .tab { background: none; border: 0; padding: 8px 12px; cursor: pointer; font-weight: 600; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px }
 .tab[aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent) }
+.tgroups { display: inline-flex; gap: 2px; padding: 4px 0; align-self: center }
+.tgroup { background: none; border: 1px solid transparent; border-radius: 999px; padding: 4px 12px; cursor: pointer; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted) }
+.tgroup:hover { color: var(--ink) } .tgroup[aria-pressed=true] { background: var(--ink); color: var(--bg); border-color: var(--ink) }
+.tab[hidden] { display: none }
 .chartwrap { overflow-x: auto }
 .chart { width: 100%; min-width: 560px; max-width: 960px; height: auto; display: block } /* drawn on a 900-unit canvas: stretched wider, the text and the height grow with it */
 .chart .grid { stroke: var(--grid); stroke-width: 1 }
@@ -388,24 +395,22 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div class="kpis" id="kpis"></div>
   <div id="diag"></div>
   <div class="tabs" id="tabs" role="tablist">
-    <button class="tab" data-tab="power" role="tab">Power map</button>
-    <button class="tab" data-tab="hops" role="tab">Hop-by-hop PM</button>
-    <button class="tab" data-tab="clients" role="tab">Clients</button>
-    <button class="tab" data-tab="plan" role="tab">Channels</button>
-    <button class="tab" data-tab="reach" role="tab">Reachability</button>
-    <span class="tabsep" role="presentation"></span>
-    <button class="tab" data-tab="otdr" role="tab">OTDR</button>
-    <button class="tab" data-tab="spectrum" role="tab">Spectrum</button>
-    <button class="tab" data-tab="const" role="tab">Constellation</button>
-    <span class="tabsep" role="presentation"></span>
-    <button class="tab" data-tab="planner" role="tab">Planner</button>
-    <button class="tab" data-tab="sweep" role="tab">Launch sweep</button>
-    <button class="tab" data-tab="raman" role="tab">Raman</button>
-    <button class="tab" data-tab="resil" role="tab">Resilience</button>
-    <button class="tab" data-tab="trans" role="tab">Transients</button>
-    <span class="tabsep" role="presentation"></span>
-    <button class="tab" data-tab="challenges" role="tab">Challenges</button>
-    <button class="tab" data-tab="learn" role="tab">Learn</button>
+    <span class="tgroups" id="tgroups" role="presentation"></span><span class="tabsep" role="presentation"></span>
+    <button class="tab" data-tab="power" data-group="res" role="tab">Power map</button>
+    <button class="tab" data-tab="hops" data-group="res" role="tab">Hop-by-hop PM</button>
+    <button class="tab" data-tab="clients" data-group="res" role="tab">Clients</button>
+    <button class="tab" data-tab="plan" data-group="res" role="tab">Channels</button>
+    <button class="tab" data-tab="reach" data-group="res" role="tab">Reachability</button>
+    <button class="tab" data-tab="otdr" data-group="ins" role="tab">OTDR</button>
+    <button class="tab" data-tab="spectrum" data-group="ins" role="tab">Spectrum</button>
+    <button class="tab" data-tab="const" data-group="ins" role="tab">Constellation</button>
+    <button class="tab" data-tab="planner" data-group="ana" role="tab">Planner</button>
+    <button class="tab" data-tab="sweep" data-group="ana" role="tab">Launch sweep</button>
+    <button class="tab" data-tab="raman" data-group="ana" role="tab">Raman</button>
+    <button class="tab" data-tab="resil" data-group="ana" role="tab">Resilience</button>
+    <button class="tab" data-tab="trans" data-group="ana" role="tab">Transients</button>
+    <button class="tab" data-tab="challenges" data-group="learn" role="tab">Challenges</button>
+    <button class="tab" data-tab="learn" data-group="learn" role="tab">Learn</button>
   </div>
   <div id="tabbody"></div>
 </section>

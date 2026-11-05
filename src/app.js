@@ -509,7 +509,12 @@ function pasteClip() {
   pasteN++; const r = MODEL.pasteSelection(S, clip, 60 * pasteN, 60 * pasteN), k = r.nodeIds.length; checkpoint();
   setGroup(r.nodeIds); toast(`Pasted ${k} device${k > 1 ? 's' : ''}`, { label: 'Undo', fn: undo });
 }
-function field(label, input, hint) { return el('label', { class: 'fld' }, [el('span', { text: label }), input, hint ? el('small', { text: hint }) : null]); }
+// the explanation under a field is one click away (the ? beside the label, or hover it); 'Show help text' in the inspector opens them all
+function field(label, input, hint) {
+  const lab = el('label', { class: 'fld' }), q = hint ? el('button', { type: 'button', class: 'qhelp', text: '?', title: hint, 'aria-label': 'What is ' + label + '?', onclick: e => { e.preventDefault(); e.stopPropagation(); lab.classList.toggle('open'); } }) : null;
+  lab.append(el('span', { class: 'flab' }, [label, q].filter(Boolean)), input); if (hint) lab.append(el('small', { text: hint })); return lab;
+}
+let helpAll = false; try { helpAll = localStorage.getItem('lightpath-help') === '1'; } catch (e) { /* no storage */ }
 function numIn(obj, key, step = 0.5, min, max, allowBlank, placeholder) {
   const i = el('input', { type: 'number', step, value: obj[key], id: 'f-' + key }); if (min != null) i.min = min; if (max != null) i.max = max; if (placeholder) i.placeholder = placeholder;
   i.addEventListener('input', () => { if (i.value === '' && allowBlank) obj[key] = ''; else if (i.value !== '' && isFinite(+i.value)) obj[key] = +i.value; else return; recompute(); });
@@ -526,6 +531,9 @@ function renderInspector() {
   const box = $('#insp'), top = box.scrollTop, key = sel ? sel.kind + ':' + sel.id : '';
   if (key !== inspKey) ramanOpen = undefined;
   renderInspectorBody(); box.scrollTop = key === inspKey ? top : 0; inspKey = key;
+  box.classList.toggle('showhelp', helpAll);
+  const h = box.querySelector('h2');
+  if (h && box.querySelector('.qhelp')) h.after(el('button', { type: 'button', class: 'btn quiet helpsw', text: helpAll ? 'Hide help text' : 'Show help text', onclick: () => { helpAll = !helpAll; try { localStorage.setItem('lightpath-help', helpAll ? '1' : '0'); } catch (e) { /* no storage */ } renderInspector(); } }));
 }
 function renderInspectorBody() {
   const box = $('#insp'); box.innerHTML = '';
@@ -604,13 +612,13 @@ function renderInspectorBody() {
       box.append(field(n.type === 'mxp' ? 'Line port mode' : 'Mode', selIn(p, 'mode', Object.entries(PHY.MODES).map(([k, m]) => [k, m.name]))));
       { const slotsN = PHY.cBandSlots(+S.g.df * 1e9), cab = S.links.map(portLink).filter(x => x && x.t === n)[0], autoText = cab && cab.m ? 'Auto: the slot of its port' : 'Auto';
         // type a slot number (1 to 64), a channel (CH31), a frequency (193.1 THz) or a wavelength (1552.52 nm); blank is Auto. The channel, frequency and wavelength show beside it.
-        const dfHz = +S.g.df * 1e9, wi = el('input', { type: 'text', id: 'f-slot', placeholder: 'Auto', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Wavelength: a slot (1 to ${slotsN}), a channel like CH31, a frequency like 193.1 THz or a wavelength like 1552.52 nm. Blank for Auto.`, title: 'A slot number, CH31, 193.1 THz or 1552.52 nm' }), ro = el('small', { class: 'muted' });
+        const dfHz = +S.g.df * 1e9, wi = el('input', { type: 'text', id: 'f-slot', placeholder: 'Auto', autocomplete: 'off', spellcheck: 'false', 'aria-label': `Wavelength: a slot (1 to ${slotsN}), a channel like CH31, a frequency like 193.1 THz or a wavelength like 1552.52 nm. Blank for Auto.`, title: 'A slot number, CH31, 193.1 THz or 1552.52 nm' }), ro = el('small', { class: 'muted ro' });
         const read = v => { ro.textContent = Number.isInteger(v) ? `${chText(v)} (slot ${v + 1})` : autoText; };
         wi.value = Number.isInteger(p.slot) ? String(p.slot + 1) : ''; read(Number.isInteger(p.slot) ? p.slot : null);
         wi.addEventListener('input', () => { const r = PHY.slotFromText(wi.value, dfHz); if (r.error) ro.textContent = r.error; else read(r.auto ? null : r.slot); });
         wi.addEventListener('change', () => { const r = PHY.slotFromText(wi.value, dfHz); if (r.auto) { p.slot = null; renderAll(); } else if (r.error) { wi.value = Number.isInteger(p.slot) ? String(p.slot + 1) : ''; read(Number.isInteger(p.slot) ? p.slot : null); toast(r.error); } else { p.slot = r.slot; renderAll(); } });
-        box.append(field('Wavelength', el('div', { class: 'slotfield' }, [wi, el('button', { class: 'btn quiet', type: 'button', text: 'Auto', hidden: !Number.isInteger(p.slot), onclick: () => { p.slot = null; renderAll(); } })]), ''));
-        box.lastChild.append(ro); box.lastChild.append(el('small', { text: 'A tunable transponder is set to a slot. Plugged into a mux or OADM port it only gets through if it matches that port; Auto follows the port.' }));
+        box.append(field('Wavelength', el('div', { class: 'slotfield' }, [wi, el('button', { class: 'btn quiet', type: 'button', text: 'Auto', hidden: !Number.isInteger(p.slot), onclick: () => { p.slot = null; renderAll(); } })]), 'A tunable transponder is set to a slot. Plugged into a mux or OADM port it only gets through if it matches that port; Auto follows the port.'));
+        box.lastChild.querySelector('small').before(ro);
         if (cab && cab.m.type !== 'roadm' && cab.m.p.bidi) { // on a single-fiber port it also listens on a slot of its own
           const rs = el('select', { id: 'f-rxslot', 'aria-label': 'Receive wavelength' }); rs.append(el('option', { value: '', text: 'Auto: what its port delivers' }));
           for (let k = 0; k < slotsN; k++) rs.append(el('option', { value: String(k), text: `Slot ${k + 1} · ${chText(k)}` }));
@@ -962,9 +970,15 @@ function diagnose(r) {
 }
 // bring a tab into view by moving the strip sideways only: scrollIntoView would also scroll the page (and a render must never move the page)
 const revealTab = t => { const c = $('#tabs'); if (c.scrollWidth > c.clientWidth) c.scrollLeft = t.offsetLeft - (c.clientWidth - t.offsetWidth) / 2; };
-document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => { tab = t.dataset.tab; renderTabBody(); revealTab(t); }));
+// the tabs come in four groups: a pill per group, and only the active group's tabs beside them, so the strip stays on one row
+const TGROUPS = [['res', 'Results'], ['ins', 'Instruments'], ['ana', 'Analysis'], ['learn', 'Learn']], lastTab = {};
+const tabEls = () => [...document.querySelectorAll('.tab')], groupOf = k => (tabEls().find(t => t.dataset.tab === k) || {}).dataset?.group || 'res';
+const visTabs = () => tabEls().filter(t => !t.hidden);
+for (const [g, label] of TGROUPS) $('#tgroups').append(el('button', { class: 'tgroup', type: 'button', text: label, 'data-group': g, onclick: () => { tab = lastTab[g] || tabEls().find(t => t.dataset.group === g).dataset.tab; renderTabBody(); } }));
+tabEls().forEach(t => t.addEventListener('click', () => { tab = t.dataset.tab; renderTabBody(); revealTab(t); }));
 $('#tabs').addEventListener('keydown', e => { // arrow keys move between tabs (only the selected one is a Tab stop)
-  const all = [...document.querySelectorAll('.tab')], i = all.findIndex(t => t.dataset.tab === tab);
+  if (!e.target.classList.contains('tab')) return;
+  const all = visTabs(), i = all.findIndex(t => t.dataset.tab === tab);
   const j = e.key === 'ArrowRight' ? (i + 1) % all.length : e.key === 'ArrowLeft' ? (i + all.length - 1) % all.length : e.key === 'Home' ? 0 : e.key === 'End' ? all.length - 1 : -1;
   if (j < 0) return; e.preventDefault(); tab = all[j].dataset.tab; renderTabBody(); all[j].focus({ preventScroll: true }); revealTab(all[j]);
 });
@@ -973,7 +987,9 @@ $('#svc-z').addEventListener('change', e => { S.svc.z = e.target.value || null; 
 $('#svc-swap').addEventListener('click', () => { [S.svc.a, S.svc.z] = [S.svc.z, S.svc.a]; renderAll(); });
 
 function renderTabBody() {
-  document.querySelectorAll('.tab').forEach(t => { const on = t.dataset.tab === tab; t.setAttribute('aria-selected', on); t.id = 'tab-' + t.dataset.tab; t.setAttribute('aria-controls', 'tabbody'); t.tabIndex = on ? 0 : -1; });
+  const grp = groupOf(tab); lastTab[grp] = tab;
+  document.querySelectorAll('.tgroup').forEach(g => g.setAttribute('aria-pressed', g.dataset.group === grp));
+  document.querySelectorAll('.tab').forEach(t => { t.hidden = t.dataset.group !== grp; const on = t.dataset.tab === tab; t.setAttribute('aria-selected', on); t.id = 'tab-' + t.dataset.tab; t.setAttribute('aria-controls', 'tabbody'); t.tabIndex = on ? 0 : -1; });
   const b = $('#tabbody'); b.innerHTML = ''; b.setAttribute('role', 'tabpanel'); b.setAttribute('aria-labelledby', 'tab-' + tab);
   const r = view();
   if (tab === 'learn') return b.append(learnView());
