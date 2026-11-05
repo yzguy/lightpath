@@ -382,6 +382,14 @@ const MODEL = (() => {
       answer: 'With a chain A–B–C, a cut anywhere splits it. A third fiber from A to C closes the triangle, so each cut leaves a route over the other two. The restored route is longer, so its Q margin is lower: check it, because a route that exists but fails its margin does not protect anything.',
       build() { const p = PRESETS.ring.build(), tb = p.nodes.find(n => n.name === 'TRX-B'), ra = p.nodes.find(n => n.name === 'ROADM-A'), rc = p.nodes.find(n => n.name === 'ROADM-C');
         p.nodes = p.nodes.filter(n => n !== tb); p.links = p.links.filter(l => l.a !== tb.id && l.b !== tb.id && !(l.a === ra.id && l.b === rc.id)); return p; } }, // a chain A–B–C: the direct A–C fiber is missing
+    { id: 'convert', level: 2, title: 'Two slots, one channel', topic: 'ports',
+      story: 'Site C\u2019s mux plan puts TRX-C2 on slot 31, and site B\u2019s port for TRX-B2 is on slot 32. Both are named as each other\u2019s partner, but the pair stays dark because they are not tuned the same. Neither site can be retuned. The A\u2013C service has to keep running.',
+      goals: [{ text: 'TRX-C2 and TRX-B2 carry a channel that is Up', ok: (S, r) => r.channels.some(c => c.status === 'up' && [c.fromName, c.toName].sort().join() === 'TRX-B2,TRX-C2') },
+        { text: 'TRX-C2 stays on slot 31 and TRX-B2 on slot 32', ok: S => { const t = n => S.nodes.find(x => x.name === n); return !!t('TRX-C2') && !!t('TRX-B2') && t('TRX-C2').p.slot === 31 && t('TRX-B2').p.slot === 32; } },
+        goalUp()],
+      hints: ['Select TRX-C2 and look at its channel settings: a channel can change wavelength part way along its route.', 'A wavelength converter works at a ROADM, so pick one that is not at either end of the channel.', 'Set \u2018Convert at\u2019 on TRX-C2 (or TRX-B2) to ROADM-A. The pair already names each other, so nothing else is needed.'],
+      answer: 'Set Convert at to ROADM-A on TRX-C2. The channel is received at ROADM-A, regenerated and sent on in slot 32, so each half uses a slot that is free on its own fibers. The service channel cannot be converted, and the converter must sit at a ROADM that is neither end, which is why it has to be ROADM-A. A converter regenerates the signal, which is also why a channel judged by its worst half can still be fine over a long route.',
+      build() { const p = PRESETS.roadmports.build(); withNode(p, 'TRX-C2', n => { n.p.slot = 31; }); withNode(p, 'TRX-B2', n => { n.p.slot = 32; }); return p; } },
     { id: 'tilt', level: 2, title: 'The edge of the band', topic: 'srs',
       story: 'A 64-channel line passes its margin test, but the customer on the highest-frequency channel keeps losing frames and the middle channels never do. The amplifiers were reconfigured last month.',
       goals: [goalUp(), goalKeep('zrp400'), { text: 'Every channel keeps at least 1 dB of margin', ok: (S, r) => r.worstQMargin >= 1 }],

@@ -2341,6 +2341,9 @@ test('challenges: each starts unsolved, a known fix solves it, and a shortcut do
   S = fresh('eol'); M.applyFix(S, { type: 'insertAmp', id: S.links.find(l => l.kind === 'fiber').id }); assert.equal(state('eol', S).done, true, 'an amplifier also works');
   // tilt: gain-tilt control on
   S = fresh('tilt'); assert.equal(state('tilt', S).goals[2].ok, false); S.nodes.forEach(n => { if (n.type === 'edfa') n.p.tiltCtl = true; }); assert.equal(state('tilt', S).done, true);
+  // convert: a converter at ROADM-A joins slots 31 and 32; retuning one end is a shortcut that fails the slot goal
+  S = fresh('convert'); assert.equal(state('convert', S).goals[0].ok, false); named(S, 'TRX-C2').p.conv = named(S, 'ROADM-A').id; assert.equal(state('convert', S).done, true, M.simulate(S).headline);
+  S = fresh('convert'); named(S, 'TRX-B2').p.slot = 31; assert.equal(state('convert', S).goals[0].ok, true); assert.equal(state('convert', S).goals[1].ok, false, 'retuning is a shortcut');
   // duct: move one fiber into its own duct; or leave it and add a route that avoids the duct
   S = fresh('duct'); assert.equal(state('duct', S).done, false); S.links.forEach(l => { if (l.p.srlg && +l.p.len === 80) l.p.srlg = ''; }); assert.equal(state('duct', S).done, true, M.simulate(S).headline);
   S = fresh('duct'); S.links.forEach(l => { l.p.srlg = ''; }); assert.equal(state('duct', S).done, true, 'with no shared duct either route survives');
