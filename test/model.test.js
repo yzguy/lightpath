@@ -2344,6 +2344,14 @@ test('challenges: each starts unsolved, a known fix solves it, and a shortcut do
   // convert: a converter at ROADM-A joins slots 31 and 32; retuning one end is a shortcut that fails the slot goal
   S = fresh('convert'); assert.equal(state('convert', S).goals[0].ok, false); named(S, 'TRX-C2').p.conv = named(S, 'ROADM-A').id; assert.equal(state('convert', S).done, true, M.simulate(S).headline);
   S = fresh('convert'); named(S, 'TRX-B2').p.slot = 31; assert.equal(state('convert', S).goals[0].ok, true); assert.equal(state('convert', S).goals[1].ok, false, 'retuning is a shortcut');
+  // repack: first fit clears the clashes and keeps all eight channels; dropping the blocked ones does not count
+  S = fresh('repack'); assert.equal(state('repack', S).goals[0].ok, false); S.g.plan = M.assignSlots(S); S.g.nch = S.g.plan.length; assert.equal(state('repack', M.sanitize(S)).done, true, M.simulate(M.sanitize(S)).headline);
+  S = fresh('repack'); S.g.plan = S.g.plan.filter((c, i) => ![3, 5].includes(i)); assert.equal(state('repack', M.sanitize(S)).goals[1].ok, false, 'deleting channels is a shortcut');
+  // size: both ROADMs need more ports and contentionless add/drop; ports alone leave a clash, retuning breaks the slot goal
+  S = fresh('size'); assert.equal(state('size', S).goals[0].ok, false);
+  for (const n of ['ROADM-A', 'ROADM-C']) named(S, n).p.ports = 4; assert.equal(state('size', S).done, false, 'ports alone are not enough: slot 30 still collides');
+  for (const n of ['ROADM-A', 'ROADM-C']) named(S, n).p.contentionless = true; assert.equal(state('size', S).done, true, M.simulate(S).headline);
+  S = fresh('size'); for (const n of ['ROADM-A', 'ROADM-C']) named(S, n).p.ports = 4; named(S, 'TRX-A3').p.slot = 31; named(S, 'TRX-C3').p.slot = 31; assert.equal(state('size', S).goals[1].ok, false, 'retuning is a shortcut');
   // duct: move one fiber into its own duct; or leave it and add a route that avoids the duct
   S = fresh('duct'); assert.equal(state('duct', S).done, false); S.links.forEach(l => { if (l.p.srlg && +l.p.len === 80) l.p.srlg = ''; }); assert.equal(state('duct', S).done, true, M.simulate(S).headline);
   S = fresh('duct'); S.links.forEach(l => { l.p.srlg = ''; }); assert.equal(state('duct', S).done, true, 'with no shared duct either route survives');
