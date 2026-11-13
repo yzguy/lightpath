@@ -29,7 +29,7 @@ The user works at a canvas of devices and cables, with an inspector for the sele
 The product is named Lightpath. No logo, voice guide or other identity assets have been established.
 
 ## Evidence on Hand
-- README.md (feature descriptions and a backlog of ideas).
+- README.md (a short guide) and docs/REFERENCE.md (what each model does, its limits, and a backlog of ideas).
 - In-app Learn topics and a library of scenarios that demonstrate each feature.
 - An automated test suite for the physics and the model.
 - No testimonials, customer lists, benchmarks against real equipment, or usage data exist; future work must not invent them.

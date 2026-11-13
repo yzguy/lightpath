@@ -41,11 +41,27 @@ kbd { font-family: var(--f-mono); font-size: 12px; border: 1px solid var(--line)
 .globals { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; justify-content: flex-end; margin-left: auto }
 .g { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600 }
 .g output { font-family: var(--f-mono); color: var(--ink); font-size: 13px; min-width: 3.2em; text-transform: none; letter-spacing: 0 }
-.g input[type=range] { width: 90px; accent-color: var(--accent) }
+.g input[type=range] { width: 80px; accent-color: var(--accent) }
 select, input[type=number], input[type=search], input:not([type]) { max-width: 100%; background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; min-width: 0 }
 .btn { background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 6px 10px; cursor: pointer; font-weight: 500 }
 .btn:hover { border-color: var(--muted) }
 .btn.danger { color: var(--bad) }
+body:not(.expert) .adv { display: none }
+#hovtip { position: absolute; z-index: 4; pointer-events: none; max-width: 300px; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font-size: 12px; line-height: 1.45; box-shadow: 0 4px 14px rgba(0,0,0,.12) }
+#hovtip b { font-weight: 700 } #hovtip .hv { font-family: var(--f-mono); font-variant-numeric: tabular-nums } #hovtip .muted { display: block }
+.chandle { opacity: 0; cursor: crosshair; transition: opacity .12s } .chandle circle { fill: var(--jacket); stroke: var(--ink); stroke-width: 1.2 } .chandle path { stroke: var(--ink); stroke-width: 1.6; pointer-events: none }
+.node:hover .chandle, .node.sel .chandle, .chandle:focus { opacity: 1 }
+@media (pointer: coarse) { .chandle { opacity: .8 } }
+.headbtns { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px } .headbtns .btn { align-self: center; padding: 4px 10px; font-size: 13px }
+#welcome { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 32px)); padding: 18px 20px; display: grid; gap: 10px; z-index: 6; background: var(--raised); box-shadow: 0 10px 40px rgba(0,0,0,.18) }
+#welcome h2 { font-size: 18px } #welcome p { margin: 0; line-height: 1.5 }
+.wbtns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
+.btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink) } .btn.primary:hover { opacity: .9 }
+#tour { position: fixed; z-index: 40; width: 320px; padding: 14px 16px; display: grid; gap: 8px; background: var(--raised); box-shadow: 0 10px 40px rgba(0,0,0,.22); font-size: 13px; line-height: 1.5 }
+#tour h3 { font-size: 14px; margin: 0 } #tour p { margin: 0 } #tour .row { justify-content: space-between; align-items: center }
+.tour-hi { outline: 3px solid var(--accent) !important; outline-offset: 3px; border-radius: 8px; position: relative; z-index: 35 }
+#btn-expert[aria-pressed=true] { color: var(--ink); text-decoration: none; border-color: var(--line); background: var(--raised) }
+input[aria-invalid=true] { border-color: var(--bad); outline-color: var(--bad) }
 input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /* the browser's default placeholder grey is too faint on the dark theme */
 .btn:disabled { color: var(--muted); cursor: default } /* a disabled button stays readable in both themes */
 .btn.quiet { background: none; border-color: transparent; color: var(--muted); text-decoration: underline; align-self: start }
@@ -196,7 +212,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 #diag > div { padding: 6px 2px; font-size: 13px; border-top: 1px solid var(--line) } /* flat: it already sits in the results panel */
 .planwrap p, .learn p, p.muted.small { max-width: 60ch } /* explanatory text keeps a readable line length */ /* explanatory text keeps a readable measure on a wide screen */
 .labrow { display: flex; flex-wrap: nowrap; gap: 8px 18px; align-items: center } /* the line settings stay together on one row, or drop below the lab menu as a group (a details lays its content out in a block box, so the row is its own element) */
-#preset { width: 270px; text-overflow: ellipsis }
+#preset { width: 230px; text-overflow: ellipsis }
 .labset > summary { display: none; cursor: pointer; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); align-items: center; min-height: 44px; list-style: none }
 .labset > summary::-webkit-details-marker { display: none }
 .labset > summary::before { content: '+'; display: inline-block; width: 18px; font-family: var(--f-mono); font-weight: 700 }
@@ -333,14 +349,15 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 
 <a class="skip" href="#cv">Skip to canvas</a>
 <header class="top">
-  <div class="brand"><h1>Light<span>path</span></h1><small>C-band · GN-model physics</small></div>
+  <div class="brand"><h1 title="A DWDM lab: C-band, GN-model physics">Light<span>path</span></h1>
+    <span class="headbtns"><button class="btn" id="btn-chal" type="button" title="Broken labs to fix, from warm-up to hard">Challenges</button><button class="btn quiet" id="btn-tour" type="button" title="A short walk around the screen">Tour</button><button class="btn quiet" id="btn-expert" type="button" aria-pressed="false" title="Show the advanced settings and the Planner, Resilience, Transients and Raman tabs">Expert mode</button></span></div>
   <div class="globals">
     <label class="g" for="preset">Lab
       <select id="preset"><option value="">Load a scenario…</option><optgroup label="Point-to-point links"><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="dark">Dark fiber: unamplified ZR</option><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="mix">Mixed line: 10G beside 400G</option></optgroup><optgroup label="Clients and traffic"><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="mxp2">Two muxponders per side on passive muxes</option><option value="reach">Hosts reaching each other over a muxponder link</option></optgroup><optgroup label="ROADMs and mesh"><option value="mesh">Mesh: channels on different routes</option><option value="adddrop">ROADM line with add/drop at the middle node</option><option value="roadmports">ROADM ring with transponders on add/drop ports</option></optgroup><optgroup label="Restoration and protection"><option value="ring">ROADM triangle with restoration</option><option value="srlg">Shared duct: two fibers that fail together</option><option value="protect">Protection and converters on a triangle</option><option value="client">Dual-homed transponders with spare modules</option><option value="olp">Optical line protection: splitter, tap and switch</option><option value="cabprot">Protection and a converter on cabled channels</option></optgroup><optgroup label="Passive optics and cabling"><option value="oadm">Passive OADM bus: transponders on add/drop ports</option><option value="ports">Transponders on mux ports: the cabling sets the channels</option><option value="bidi">Single-fiber (BiDi) bus: OADM between two muxes</option><option value="bidiamp">Single-fiber (BiDi) bus with a BiDi amplifier</option><option value="osc">Supervisory channel (1510 nm) and 1310 nm client ports</option><option value="odf">Patch panels: connector loss and a dirty port</option><option value="otdr">OTDR and power meter at a patch panel</option></optgroup></select></label>
     <details class="labset" id="labset" open><summary id="labsum">Line settings</summary><div class="labrow">
-    <label class="g" for="g-nch" title="How many channels are lit in each fiber. Affects amplifier power sharing and nonlinearity.">Channels <input type="range" id="g-nch" min="1" max="96" step="1"><output id="g-nch-v"></output></label>
+    <label class="g" for="g-nch" id="g-nch-l">Line load <input type="range" id="g-nch" min="1" max="96" step="1"><output id="g-nch-v"></output></label>
     <label class="g" for="g-df">Grid <select id="g-df"><option value="50">50 GHz</option><option value="75">75 GHz</option><option value="100">100 GHz</option><option value="150">150 GHz</option></select></label><button class="btn quiet" id="btn-itu" type="button" title="ITU grid and channel numbers: every channel at each spacing">ITU grid</button>
-    <label class="g" for="g-launch" title="Per-channel output target for every amplifier in Auto mode">Launch <input type="range" id="g-launch" min="-6" max="6" step="0.5"><output id="g-launch-v"></output></label>
+    <label class="g" for="g-launch" title="The power per channel every amplifier puts out, unless it has its own output target. A transponder's own Tx power is set on the transponder.">Amp output <input type="range" id="g-launch" min="-6" max="6" step="0.5"><output id="g-launch-v"></output></label>
     </div></details>
   </div>
 </header>
@@ -369,12 +386,24 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
       <button class="tool" data-tool="patch"><i class="patch"></i>Patch cord<kbd>P</kbd></button>
       <button class="tool" data-tool="fiber"><i></i>Fiber span<kbd>F</kbd></button>
     </div>
-    <p class="muted small" style="margin:6px 2px 0">Drag devices onto the bench (or click to add). Pick a cable, then drag from one device to another.</p>
+    <p class="muted small" style="margin:6px 2px 0">Drag devices onto the bench (or click to add). To cable two devices, drag the <b>+</b> beside one onto the other: the cable type is chosen for you. The tools above force a patch cord or a fiber.</p>
     </details>
   </aside>
   <div class="panel canvaswrap">
     <svg id="cv" tabindex="-1" role="group" aria-label="Topology canvas: devices and cables, Enter selects"><g id="world"></g></svg>
     <div id="emptyhint">Empty bench. Add a transponder from the palette, or load a scenario.</div>
+    <div id="hovtip" role="tooltip" hidden></div>
+    <div id="welcome" class="panel" role="dialog" aria-labelledby="welcome-h" hidden>
+      <h2 id="welcome-h">Welcome to Lightpath</h2>
+      <p>A lab bench for DWDM optics. Place transponders, amplifiers and ROADMs, cable them, then break things (cut a fiber, dirty a connector, push the power too high) and see why the light still gets through, or why it doesn't.</p>
+      <div class="wbtns">
+        <button class="btn primary" id="w-tour" type="button">Take the 1-minute tour</button>
+        <button class="btn" id="w-chal" type="button">Try a challenge</button>
+        <button class="btn" id="w-explore" type="button">Explore this example</button>
+        <button class="btn quiet" id="w-blank" type="button">Start with a blank bench</button>
+      </div>
+      <p class="muted small">The physics uses representative values, not datasheet figures: it's good for trends and intuition, not for planning real links.</p>
+    </div>
     <div class="canvas-tools"><button class="btn" id="btn-undo" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo" disabled>Undo</button><button class="btn" id="btn-redo" title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo" disabled>Redo</button><button class="btn" id="btn-fit">Fit</button><button class="btn" id="btn-export">Export / import</button><button class="btn" id="btn-clear">Clear canvas</button></div>
   </div>
   <aside class="panel insp" id="insp" aria-label="Inspector"></aside>
@@ -417,6 +446,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 
 <button id="statusbar" type="button" aria-label="Service status. Jump to the results"><span class="status" id="sb-status"></span><span class="sbtext" id="sb-text"></span><span class="sbgo" aria-hidden="true">Details ↓</span></button>
 <div id="toast" role="status" aria-live="polite" hidden></div>
+<div id="tour" class="panel" role="dialog" aria-live="polite" hidden></div>
 <div id="sr-live" class="sr-only" role="status" aria-live="polite"></div>
 <div id="io" hidden><div class="panel"><h2>Export / import topology</h2><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" aria-label="Topology JSON" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div>
 <h2>Build a line from a span list</h2><p class="muted small">One span per line: <code>km, fiber, extra loss dB</code> (fiber: smf, leaf, ull, legacy; the last two columns are optional). Replaces the canvas with TRX, mux, booster, an ILA between spans, preamp, mux, TRX.</p><textarea id="csv-text" class="csv" aria-label="Span list, one span per line" spellcheck="false" placeholder="km,fiber,extra_db\n80,smf,1.5\n95,smf,2\n70,ull,1"></textarea><div class="row"><select id="csv-mode"></select><button class="btn" id="csv-build">Build line</button></div></div></div>
