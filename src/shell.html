@@ -44,8 +44,9 @@ select, input[type=number], input[type=search], input:not([type]) { max-width: 1
 .btn:hover { border-color: var(--muted) }
 .btn.danger { color: var(--bad) }
 body:not(.expert) .adv { display: none }
-#hovtip { position: absolute; z-index: 4; pointer-events: none; max-width: 300px; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font-size: 12px; line-height: 1.45; box-shadow: 0 4px 14px rgba(0,0,0,.12) }
-#hovtip b { font-weight: 700 } #hovtip .hv { font-family: var(--f-mono); font-variant-numeric: tabular-nums } #hovtip .muted { display: block }
+#hovtip { position: absolute; z-index: 4; pointer-events: none; max-width: 360px; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font-size: 12px; line-height: 1.45; box-shadow: 0 4px 14px rgba(0,0,0,.12) }
+#hovtip b { font-weight: 700 } #hovtip .tsub { color: var(--muted) } #hovtip .muted { display: block; margin-top: 4px }
+#hovtip .tgrid { display: grid; grid-template-columns: auto auto; gap: 2px 18px; margin-top: 5px } #hovtip .tk { color: var(--muted); white-space: nowrap } #hovtip .hv { font-family: var(--f-mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap } #hovtip .hv.words { font-family: var(--f-ui) }
 .chandle { opacity: 0; cursor: crosshair; transition: opacity .12s } .chandle circle { fill: var(--jacket); stroke: var(--ink); stroke-width: 1.2 } .chandle path { stroke: var(--ink); stroke-width: 1.6; pointer-events: none }
 .node:hover .chandle, .node.sel .chandle, .chandle:focus { opacity: 1 }
 .headbtns { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px } .headbtns .btn { align-self: center; padding: 4px 10px; font-size: 13px }
@@ -58,6 +59,11 @@ body:not(.expert) .adv { display: none }
 .menu { position: fixed; z-index: 45; min-width: 200px; padding: 4px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.18); display: grid }
 .menu .mhead { padding: 6px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: nowrap }
 .menu .mi { text-align: left; background: none; border: 0; border-radius: 5px; padding: 6px 10px; font-size: 13px; cursor: pointer } .menu .mi:hover, .menu .mi:focus-visible { background: var(--panel); outline: none } .menu .mi.danger { color: var(--bad) }
+.ptable { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 4px }
+.ptable table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums }
+.ptable th { position: sticky; top: 0; background: var(--panel); text-align: left; font-weight: 600; color: var(--muted); padding: 4px 6px; white-space: nowrap }
+.ptable td { padding: 3px 6px; white-space: nowrap; border-top: 1px solid var(--line) } .ptable td:last-child { color: var(--muted); max-width: 80px; overflow: hidden; text-overflow: ellipsis }
+.ptable tr.on { cursor: pointer } .ptable tr.on td:last-child { color: var(--ink); font-weight: 600 } .ptable tr.on:hover td { background: var(--raised) }
 #portpick { width: 300px; gap: 6px; padding: 6px 8px 8px } .pp-row { display: grid; gap: 3px; font-size: 12px; color: var(--muted) } .pp-row select { width: 100%; color: var(--ink) } .pp-btns { gap: 8px; margin-top: 2px }
 .menu .msep { height: 1px; margin: 4px 6px; background: var(--line) }
 .tour-hi { outline: 3px solid var(--accent) !important; outline-offset: 3px; border-radius: 8px; position: relative; z-index: 35 }
@@ -166,6 +172,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .rubber.patch { stroke: var(--muted); stroke-width: 2 }
 
 .insp { padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 10px }
+.insp > * { flex-shrink: 0 } /* the panel scrolls, its contents never squash: a scroll box inside would otherwise shrink to a sliver */
 .insp h2, .insp h3 { margin: 0 }
 .insp-head { position: sticky; top: -12px; z-index: 2; display: grid; gap: 6px; background: var(--panel); margin: -12px -12px 0; padding: 12px 12px 8px; border-bottom: 1px solid var(--line) }
 .insp-head .row { gap: 8px } .insp-head .btn { align-self: start }

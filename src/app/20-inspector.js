@@ -44,6 +44,19 @@ function selIn(obj, key, opts) {
   s.value = String(obj[key]); s.addEventListener('change', () => { obj[key] = s.value === 'true' ? true : s.value === 'false' ? false : s.value; renderAll(); }); return s;
 }
 let assumeOpen, inspKey, kpiAll = false, ramanOpen;
+// The add/drop ports of a mux, OADM or ROADM, one row each: what it passes and what is plugged in. Hover a channel for the full detail; click a used row to select its transponder.
+function portTable(n) {
+  const used = portsUsed(n), tb = el('tbody'), ch = s => PHY.slotChannel(s, +S.g.df * 1e9).ch;
+  for (const sd of deviceSides(n)) for (let k = 0; k < Math.min(64, portCount(n, sd)); k++) {
+    const t = used.get(sd + '|' + k), b = portSlots(n, k, sd);
+    const name = n.type === 'oadm' ? `${sd.toUpperCase()}${k + 1}` : n.type === 'roadm' && sd ? `D${sd}·P${k + 1}` : `P${k + 1}`;
+    const pass = colorless(n) ? 'any slot' : b ? `CH${ch(b.tx)} / CH${ch(b.rx)}` : chText(sideRange(n, sd)[0] + k, true);
+    tb.append(el('tr', t ? { class: 'on', title: `Select ${t.name}`, onclick: () => select({ kind: 'node', id: t.id }) } : {}, [el('td', { text: name }), el('td', { text: pass, title: portSlotText(n, k, sd) }), el('td', { text: t ? t.name : 'free' })]));
+  }
+  if (!tb.children.length) return el('p', { class: 'muted small', text: 'No ports.' });
+  return el('div', { class: 'ptable' }, [el('table', {}, [el('thead', {}, [el('tr', {}, [el('th', { text: 'Port' }), el('th', { text: b0(n) }), el('th', { text: 'Plugged in' })])]), tb])]);
+}
+const b0 = n => (colorless(n) ? 'Passes' : (n.type !== 'roadm' && n.p.bidi) ? 'Tx / Rx channel' : 'Channel · THz');
 // The ports a cable's two ends use, one select per choice. Shared by the cable inspector and the picker that opens when a new cable has a port to choose.
 // A change applies at once, then after() runs. An option in use by another cable is marked (data-used) so the picker can refuse it.
 function portControls(l, after = renderAll) {
@@ -164,8 +177,7 @@ function renderInspectorBody() {
         if (p.p1310) box.append(field('1310 nm client', selIn(p, 'o1310', Object.entries(PHY.CLIENT_OPTICS).filter(([, o]) => o.nm === 1310).map(([k, o]) => [k, o.name])), 'The grey optic on this port. It travels only over fiber and patch panels to the next OADM with a 1310 nm port, which must have the same optic; amplifiers, ROADMs and muxes block it.'));
         box.append(field('1310 nm port', selIn(p, 'p1310', [['false', 'No'], ['true', 'Yes: a 1310 nm coupler on the line']]), `A coupler for 1310 nm light (a legacy grey client) sits on the line path and costs 0.6 dB.`),
           field('Pass-through loss (dB)', numIn(p, 'thru', 0.1, 0, 10)), field('Add/drop loss (dB)', numIn(p, 'ad', 0.1, 0, 10)), field('Local transmitter power (dBm)', numIn(p, 'tx', 0.5, -20, 10), 'For channels a plan adds here without a transponder: they leave at this power less the add loss, with no equalisation.'));
-        { const used = portsUsed(n), rows = []; for (const sd of p.sides.split('')) { for (let k = 0; k < portCount(n, sd); k++) rows.push(`${portSlotText(n, k, sd)}: ${used.has(sd + '|' + k) ? used.get(sd + '|' + k).name : '—'}`); }
-          box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the OADM to plug it into a port.' }), el('pre', { class: 'muted small', style: 'max-height:150px;overflow:auto;white-space:pre-wrap', text: rows.join('\n') || 'No ports.' })); }
+        box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the OADM to plug it into a port.' }), portTable(n));
       }
       faults.push(list('badPorts', 128, 'Slot numbers (as in the Channels tab) whose add/drop port on this device has failed. Only the channels that join or leave the line here are lost; everything else keeps running.', 'Failed ports (slots)'),
         list('badCards', 16, `A card serves ${MODEL.PORTS_PER_CARD} consecutive slots: card 1 is slots 1-${MODEL.PORTS_PER_CARD}, card 2 the next ${MODEL.PORTS_PER_CARD}, and so on. A failed card takes down all of its ports at once.`, 'Failed cards'));
@@ -222,8 +234,7 @@ function renderInspectorBody() {
       box.append(field('Single fiber (BiDi)', selIn(p, 'bidi', [['false', 'No: a pair of fibers, the same slot both ways'], ['true', 'Yes: one fiber, a different slot each way']]), 'A BiDi mux passes a low and a high band of slots. A transponder on port k transmits one and listens on the other, so the two ends of a link must be on opposite bands.'));
       if (p.bidi) box.append(field('Band this end transmits', selIn(p, 'role', [['low', 'Low band (receives the high band)'], ['high', 'High band (receives the low band)']]), 'The far end has to be on the other band.'));
       box.append(field('Channel ports', numIn(p, 'ports', 1, 1, 64), 'A real mux is 8, 16, 40, 48 or 64 channels. Port 1 is the lowest slot.'), field('First slot', slotBox(p, 'first', 'f-first'), 'The slot (numbered as in the Channels tab) that port 1 passes; port k passes the slot k − 1 further on.'));
-      { const used = portsUsed(n), rows = []; for (let k = 0; k < Math.min(p.ports, 64); k++) rows.push(`${portSlotText(n, k, '')}: ${used.has('|' + k) ? used.get('|' + k).name : '—'}`);
-        box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the mux to give it a port.' }), el('pre', { class: 'muted small', style: 'max-height:150px;overflow:auto;white-space:pre-wrap', text: rows.join('\n') })); }
+      box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the mux to give it a port.' }), portTable(n));
     } else if (n.type === 'edfa') {
       box.append(field('Direction', selIn(p, 'bidi', [['false', 'One-way: the direction the line runs'], ['true', 'BiDi: both directions, for a single fiber']]), 'An ordinary EDFA has isolators, so on a single fiber (both directions in one glass) it passes one direction only and the reverse is lost. A BiDi amplifier has circulators and band filters around two amplifier paths (the return direction uses the settings marked return) and costs the filter loss below in each direction.'));
       if (p.bidi) box.append(field('Filter loss (dB each way)', numIn(p, 'bidiLoss', 0.1, 0, 6), 'Circulators and band filters around the amplifier. It counts only where the amplifier sits on a single fiber.'));
@@ -250,8 +261,7 @@ function renderInspectorBody() {
         field('Contentionless', selIn(p, 'contentionless', [['true', 'Yes: the same slot on several ports'], ['false', 'No: a slot at only one port']]), 'Without it two transponders on this ROADM cannot add the same slot, even towards different degrees.'));
       box.append(field(p.directionless ? 'Add/drop ports' : 'Add/drop ports per degree', numIn(p, 'ports', 1, 1, 64)));
       if (!p.colorless) box.append(field('First slot', slotBox(p, 'first', 'f-first'), 'The slot (numbered as in the Channels tab) of port 1; port k passes the slot k − 1 further on.'));
-      { const used = portsUsed(n), rows = []; for (const sd of deviceSides(n)) { for (let k = 0; k < Math.min(64, portCount(n, sd)); k++) rows.push(`${portSlotText(n, k, sd)}: ${used.has(sd + '|' + k) ? used.get(sd + '|' + k).name : '—'}`); }
-        box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the ROADM to plug it into a port. Typical add/drop loss: colored 4-6 dB, colorless 6-9 dB (with an amplifier), contentionless 9-12 dB.' }), el('pre', { class: 'muted small', style: 'max-height:150px;overflow:auto;white-space:pre-wrap', text: rows.join('\n') || 'No ports.' })); }
+      box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the ROADM to plug it into a port. Typical add/drop loss: colored 4-6 dB, colorless 6-9 dB (with an amplifier), contentionless 9-12 dB.' }), portTable(n));
       box.append(el('p', { class: 'muted small', text: 'Express traffic passes two WSSs (route and select). Add or drop passes one WSS plus the add/drop structure. Each WSS pass narrows the passband a little.' }));
     } else if (n.type === 'panel') {
       box.append(field('Ports', numIn(p, 'ports', 1, 1, 48), 'Each port joins a rear connector to a front connector.'), adv(field('Return loss (dB)', numIn(p, 'rl', 1, 20, 70), 'How well a mated connector pair keeps light from reflecting back: about 50 dB for a UPC polish, 65 for APC. A dirty or damaged port is taken as 30 dB at best. Two reflectors with gain between them add multipath noise that grows with that gain.'), +p.rl !== 50), field('Loss per mated pair (dB)', numIn(p, 'il', 0.1, 0, 3), 'A clean LC or SC pair is 0.3-0.75 dB.'));

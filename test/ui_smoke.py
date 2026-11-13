@@ -219,6 +219,26 @@ class UI(unittest.TestCase):
         pg.locator('button.tgroup', has_text='Analysis').click()
         self.assertEqual(pg.locator('.tab:visible', has_text='Transients').count(), 1)
 
+    def test_port_table_is_readable(self):
+        pg = self.page
+        self.explore('ports')
+        self.node('MUX-A').click()
+        table = pg.locator('#insp .ptable')
+        self.assertGreater(table.bounding_box()['height'], 150, 'the inspector must not squash its scroll boxes')
+        self.assertEqual(table.locator('tbody tr').count(), 16)
+        table.locator('tr.on').first.click()
+        self.assertEqual(pg.locator('#f-name').input_value(), 'TRX-A1')
+
+    def test_port_labels_clear_the_devices(self):
+        self.explore()
+        for preset in ['reach', 'ports', 'olp', 'odf']:
+            self.page.select_option('#preset', preset)
+            hits = self.page.evaluate("""(() => { const bodies = [...document.querySelectorAll('.node .body:not(circle)')].map(e => e.getBoundingClientRect()), hit = [];
+              for (const t of document.querySelectorAll('.plabel')) { const r = t.getBoundingClientRect();
+                if (bodies.some(b => r.left < b.right - 1 && r.right > b.left + 1 && r.top < b.bottom - 1 && r.bottom > b.top + 1)) hit.push(t.textContent); }
+              return hit; })()""")
+            self.assertEqual(hits, [], preset)
+
     def test_hover_readout(self):
         pg = self.page
         self.explore('dci')

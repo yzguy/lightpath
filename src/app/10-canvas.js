@@ -11,10 +11,21 @@ function fitView() {
 // Text and the fault badge are drawn in canvas units, so zooming out shrinks them below what can be read. They are counter-scaled to a floor on screen (names 11px,
 // cable labels and A/Z tags 9px, the badge 9px across) and only grow, never shrink, so a zoomed-in view looks as drawn.
 const floorScale = (px, k, max = 2.4) => Math.min(max, Math.max(1, px / (k * 1)));
+// Half the width and height of each device's body (a ROADM is a circle), so a port label can sit just outside it whatever the cable's angle.
+const HALF = { trx: [46, 22], mxp: [52, 30], mux: [30, 30], panel: [40, 16], splitter: [34, 20], switch: [34, 20], meter: [34, 18], otdr: [34, 18], host: [38, 20], oadm: [34, 20], edfa: [28, 26], roadm: [32, 32], dcm: [26, 18], voa: [26, 18] };
+const edgeDist = (n, ux, uy) => { const [w, h] = HALF[n.type] || [34, 20]; return n.type === 'roadm' ? w : Math.min(Math.abs(ux) > 1e-6 ? w / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? h / Math.abs(uy) : Infinity); };
+// The label is centred on the wire, far enough out that its own width (it grows when zoomed out) clears the device; on a short cable it stops before the middle.
+function placePortLabel(t, lf) {
+  const d = t.dataset, ux = +d.ux, uy = +d.uy, fs = 11 * lf, w = +d.n * fs * 0.62;
+  const r = Math.min(+d.max, +d.edge + 5 + Math.abs(ux) * w / 2 + Math.abs(uy) * fs * 0.6);
+  t.setAttribute('x', +d.x0 + ux * r); t.setAttribute('y', +d.y0 + uy * r);
+}
 function applyView() {
   const k = S.view.k;
   gRoot.setAttribute('transform', `scale(${k}) translate(${-S.view.x},${-S.view.y})`);
-  gRoot.style.setProperty('--lf1', floorScale(11, k * 11.5)); gRoot.style.setProperty('--lf2', floorScale(9, k * 11)); gRoot.style.setProperty('--lf3', floorScale(9, k * 10));
+  const lf2 = floorScale(9, k * 11);
+  gRoot.style.setProperty('--lf1', floorScale(11, k * 11.5)); gRoot.style.setProperty('--lf2', lf2);
+  gRoot.querySelectorAll('.plabel').forEach(t => placePortLabel(t, lf2)); gRoot.style.setProperty('--lf3', floorScale(9, k * 10));
   gRoot.querySelectorAll('.faultg').forEach(g => g.setAttribute('transform', `translate(${g.dataset.x},${g.dataset.y}) scale(${floorScale(9, k * 8)})`));
 }
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
@@ -161,8 +172,10 @@ function renderCanvas() {
       if (bg) { const u = sv('text', { x: mx, y: my + 16, class: 'llabel lbg', 'text-anchor': 'middle' }); u.textContent = `+${bg} background ch`; g.append(u); }
       if (cutNow) { const x = sv('text', { x: mx, y: my + 7, class: 'cutmark', 'text-anchor': 'middle' }); x.textContent = '✕'; g.append(x); }
     }
-    { const pl = portLink(l), labelAt = (m, o, text) => { // a small label on the cable, next to the device end
-        const dx = o.x - m.x, dy = o.y - m.y, d = Math.hypot(dx, dy) || 1, t = sv('text', { x: m.x + dx / d * 52, y: m.y + dy / d * 52 - 5, class: 'llabel', 'text-anchor': 'middle' }); t.textContent = text; g.append(t); };
+    { const pl = portLink(l), labelAt = (m, o, text) => { // a port label on the cable just outside the device it names (applyView places it)
+        const dx = o.x - m.x, dy = o.y - m.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+        const t = sv('text', { class: 'llabel plabel', 'text-anchor': 'middle', 'dominant-baseline': 'central', 'data-x0': m.x, 'data-y0': m.y, 'data-ux': ux, 'data-uy': uy, 'data-edge': edgeDist(m, ux, uy), 'data-max': d * 0.45, 'data-n': text.length });
+        t.textContent = text; g.append(t); };
       if (pl && l.p.mport != null) { const sd = sideOf(l, pl.m); labelAt(pl.m, pl.t, pl.m.type === 'roadm' ? `${sd ? 'D' + sd + '·' : ''}P${l.p.mport + 1}` : `${sd ? sd.toUpperCase() : 'P'}${l.p.mport + 1} · ${sideRange(pl.m, sd)[0] + l.p.mport + 1}`); }
       for (const n of [a, b]) if ((isTri(n) || n.type === 'panel') && sideOf2(l, n)) labelAt(n, n === a ? b : a, sideOf2(l, n).toUpperCase());
       if (clientLink(l)) { const h = a.type === 'host' ? a : b, e = h === a ? b : a; labelAt(h, e, `eth${(l.p.hport ?? 0) + 1}`); if (e.type === 'mxp') labelAt(e, h, `C${(l.p.cport ?? 0) + 1}`); }
@@ -199,35 +212,41 @@ function hopsOfLink(r, l) {
 // They follow the service's route, so a fiber on it carries all of them.
 function bgSplit(n) { const D = lastRes && lastRes.derived; if (D) return Math.min(D.fillers || 0, n); return !S.g.plan && n > 1 ? n - 1 : 0; }
 function bgOn(l) { const hs = hopsOfLink(lastRes, l); return hs.length ? bgSplit(Math.max(...hs.map(h => h.nch || 0))) : 0; }
-const loadText = n => { const bg = bgSplit(n); return !bg ? String(n) : lastRes.derived ? `${n} (${n - bg} cabled, ${bg} background)` : `${n} (yours and ${bg} background copies)`; };
+const loadText = n => { const bg = bgSplit(n); return !bg ? String(n) : lastRes.derived ? `${n} · ${n - bg} cabled + ${bg} background` : `${n} · yours + ${bg} background`; };
 function chanOf(r, id) { // the channel a transponder sends or receives, and its result
   const plan = (r && r.derived && r.derived.plan) || S.g.plan || [];
   const i = plan.findIndex(c => !c.filler && (c.tx === id || c.rx === id || c.from === id || c.to === id));
   return i < 0 ? null : { c: plan[i], o: r && r.channels ? r.channels[i] : null };
 }
 function tipFor(kind, id) {
-  const r = view(), lines = [];
-  const row = (k, v) => lines.push(el('div', {}, [k + ' ', el('span', { class: 'hv', text: v })]));
-  const io = hs => { const a = hs[0], z = hs[hs.length - 1]; row('Power in → out:', `${dbmT(a.in.sig)} → ${dbmT(z.out.sig)} per channel`); if (z.osnr != null) row('OSNR / GSNR after:', `${f1(z.osnr)} / ${f1(z.gosnr)} dB`); if (z.nch > 1) row('Channels here:', loadText(z.nch)); };
+  // one vocabulary per kind of thing, as a power meter or a vendor's PM would label it: Tx and Rx on transponders, input and output on amplifiers and passive
+  // devices, and on a cable the power where it leaves one device and where it reaches the next (in the direction the results show)
+  const r = view(), head = [], rows = [], notes = [];
+  const row = (k, v, words) => rows.push(el('span', { class: 'tk', text: k }), el('span', { class: words ? 'hv words' : 'hv', text: v }));
+  const note = t => notes.push(el('span', { class: 'muted', text: t }));
+  const z0 = x => (Math.abs(x) < 0.05 ? 0 : x), pw = x => (x > -90 ? `${f1(z0(x))} dBm/ch` : 'no light'), sgn = x => (x > 0 ? '+' : '') + f1(z0(x));
+  const lossRow = (a, z) => { if (a > -90 && z > -90) { const d = z - a; row(d > 0.05 ? 'Gain' : 'Loss', `${f1(Math.abs(d))} dB`); } };
+  const tail = z => { if (z.osnr != null) row('OSNR / GSNR', `${f1(z.osnr)} / ${f1(z.gosnr)} dB`); if (z.nch > 1) row('Channels', loadText(z.nch), true); };
   if (kind === 'node') {
     const n = node(id); if (!n) return null;
-    lines.push(el('b', { text: `${n.name} · ${TYPES[n.type].label}` }));
-    { const ps = portSummary(n); if (ps) row('Ports:', ps); }
+    head.push(el('b', { text: n.name }), el('span', { class: 'tsub', text: ' · ' + TYPES[n.type].label }));
     const hs = hopsOfNode(r, n);
-    if (r && r.mode && r.Z && n.id === r.Z.id) { row('Rx power:', `${f1(r.prx)} dBm`); row('Q margin:', `${r.qMargin > 0 ? '+' : ''}${f1(r.qMargin)} dB · ${STATUS[r.status]}`); }
-    else if (hs.length) { const z = hs[hs.length - 1]; if (z.kind === 'tx') row('Tx power:', `${f1(z.out.sig)} dBm`); else io(hs); if (z.gain != null && z.kind !== 'tx') row(z.gain >= 0 ? 'Gain:' : 'Loss:', `${f1(Math.abs(z.out.sig - hs[0].in.sig))} dB`); }
-    else if (isEnd(n) && uniformSide(n)) lines.push(el('span', { class: 'muted', text: `One of the ${S.g.nch} identical channels on this line. Click it to show its results.` }));
-    else if (isEnd(n)) { const ch = chanOf(r, n.id); if (ch && ch.o) { row('Channel:', `${chText(ch.c.slot, true)} THz`); row('Status:', `${STATUS[ch.o.status]}${ch.o.qMargin != null ? ` · Q margin ${ch.o.qMargin > 0 ? '+' : ''}${f1(ch.o.qMargin)} dB` : ''}`); lines.push(el('span', { class: 'muted', text: 'Click it to show its results.' })); } else lines.push(el('span', { class: 'muted', text: 'Not carrying a channel. Cable it to a mux or ROADM port with a partner on the far side.' })); }
-    else lines.push(el('span', { class: 'muted', text: r && r.mode ? 'Not on the service path.' : 'No service to measure yet.' }));
+    if (r && r.mode && r.Z && n.id === r.Z.id) { row('Rx power', `${f1(r.prx)} dBm`); row('Q margin', `${sgn(r.qMargin)} dB`); row('Status', STATUS[r.status], true); }
+    else if (hs.length) { const a = hs[0], z = hs[hs.length - 1]; if (z.kind === 'tx') row('Tx power', `${f1(z.out.sig)} dBm`); else { row('Input', pw(a.in.sig)); row('Output', pw(z.out.sig)); lossRow(a.in.sig, z.out.sig); tail(z); } }
+    else if (isEnd(n) && uniformSide(n)) note(`One of the ${S.g.nch} identical channels on this line. Click it to show its results.`);
+    else if (isEnd(n)) { const ch = chanOf(r, n.id); if (ch && ch.o) { row('Channel', `${chText(ch.c.slot, true)} THz`); row('Status', STATUS[ch.o.status], true); if (ch.o.qMargin != null) row('Q margin', `${sgn(ch.o.qMargin)} dB`); note('Click it to show its results.'); } else note('Not carrying a channel. Cable it to a mux or ROADM port with a partner on the far side.'); }
+    else note(r && r.mode ? 'Not on the service path.' : 'No service to measure yet.');
+    { const ps = portSummary(n); if (ps) row('Ports', ps, true); }
   } else {
     const l = link(id); if (!l) return null;
     const fb = PHY.FIBERS[l.p.fiber];
-    lines.push(el('b', { text: l.kind === 'fiber' ? `Fiber span · ${l.p.len} km ${fb.name.split(' (')[0]}` : 'Patch cord' }));
-    if (MODEL.isCut(S, l)) lines.push(el('span', { class: 'muted', text: 'Cut. Select it and choose Splice it back.' }));
-    const hs = hopsOfLink(r, l);
-    if (hs.length) io(hs); else if (l.kind === 'fiber') { row('Span loss:', `${f1(fb.att * l.p.len + +l.p.extra)} dB`); lines.push(el('span', { class: 'muted', text: 'Not on the service path.' })); }
+    head.push(el('b', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('span', { class: 'tsub', text: l.kind === 'fiber' ? ` · ${l.p.len} km ${fb.name.split(' (')[0]}` : '' }));
+    if (MODEL.isCut(S, l)) note('Cut. Right-click it and choose Splice it back.');
+    const hs = hopsOfLink(r, l), k = r && r.path ? r.path.links.indexOf(l.id) : -1;
+    if (hs.length) { const a = hs[0], z = hs[hs.length - 1], up = node(r.path.nodes[k]), dn = node(r.path.nodes[k + 1]); row(`Leaves ${up.name}`, pw(a.in.sig)); row(`Reaches ${dn.name}`, pw(z.out.sig)); lossRow(a.in.sig, z.out.sig); tail(z); }
+    else { if (l.kind === 'fiber') row('Span loss', `${f1(fb.att * l.p.len + +l.p.extra)} dB`); note('Not on the service path.'); }
   }
-  return lines;
+  return [el('div', { class: 'thead' }, head), rows.length ? el('div', { class: 'tgrid' }, rows) : null, ...notes].filter(Boolean);
 }
 function showTip(e, t) {
   const tip = $('#hovtip'), lines = tipFor(t.classList.contains('node') ? 'node' : 'link', t.dataset.id); if (!lines) return hideTip();
