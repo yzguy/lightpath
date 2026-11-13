@@ -241,6 +241,8 @@
   const isDead = n => !!n && !!n.p && n.p.fail === 'dead' && !onSpare(n);
   const spareLoss = n => (n && isEnd(n) && n.p && SPARE_LOSS[n.p.spare]) || 0;
   const degOf = n => (n && n.p && n.p.fail === 'degraded' ? (Number.isFinite(+n.p.degDb) ? Math.min(30, Math.max(0, +n.p.degDb)) : 3) : 0);
+  // a transponder's launch: its set Tx power or the mode's, less a degraded laser and a spare's patching
+  const txPower = (n, mode = PHY_.MODES[n.p.mode]) => (n.p.tx === '' || n.p.tx == null ? mode.tx : +n.p.tx) - (isEnd(n) ? degOf(n) + spareLoss(n) : 0);
 
   // Shortest path (km) from A to Z. Light never passes *through* a transponder. Cut fibers are only used if allowCut.
   // x.ignoreCut: plan on the intact network (cut flags are failures, not topology). x.exclude: link ids the route may not use.

@@ -2448,3 +2448,11 @@ test('cableKind: a fiber between sites, a patch cord inside a rack, matching nea
   for (const k in M.PRESETS) { const p = M.PRESETS[k].build(), n = id => p.nodes.find(x => x.id === id); for (const l of p.links) { all++; if (M.cableKind(n(l.a), n(l.b)) === l.kind) ok++; } }
   assert.ok(ok / all > 0.95, `${ok} of ${all}`);
 });
+
+test('txPower is the launch the simulation uses: the mode default or the set power, less a degraded laser', () => {
+  const S = build('dci'), a = S.nodes.find(n => n.id === S.svc.a), launch = () => M.simulate(S).hops[0].out.sig;
+  assert.equal(M.txPower(a), PHY.MODES[a.p.mode].tx);
+  assert.equal(launch(), M.txPower(a));
+  a.p.tx = -5; assert.equal(M.txPower(a), -5); assert.equal(launch(), -5);
+  a.p.fail = 'degraded'; a.p.degDb = 2; assert.equal(M.txPower(a), -7); assert.equal(launch(), -7);
+});

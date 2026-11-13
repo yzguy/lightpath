@@ -293,6 +293,10 @@ class UI(unittest.TestCase):
         lights = lambda: pg.evaluate("[...document.querySelectorAll('.node.t-trx .port')].map(l => l.getAttribute('class'))")
         self.explore('dci')
         self.assertEqual(set(lights()), {'port good'})
+        for end in ['TRX-A1', 'TRX-B1', 'TRX-A2']:  # every end shows both directions, not just the service's A transmitting and Z receiving
+            self.node(end).hover()
+            tip = pg.locator('#hovtip').inner_text()
+            self.assertIn('Tx power', tip); self.assertIn('Rx power', tip)
         self.cut_fiber()
         self.assertEqual(set(lights()), {'port bad'}, 'every pair on the cut line goes dark, not just the service')
         self.node('TRX-A2').hover()

@@ -302,15 +302,22 @@ function tipFor(kind, id) {
     const n = node(id); if (!n) return null;
     head.push(el('b', { text: n.name }), el('span', { class: 'tsub', text: ' · ' + TYPES[n.type].label }));
     const hs = hopsOfNode(r, n);
-    if (r && r.mode && r.Z && n.id === r.Z.id) { row('Rx power', `${f1(r.prx)} dBm`); row('Q margin', `${sgn(r.qMargin)} dB`); row('Status', STATUS[r.status], true); }
-    else if (hs.length) { const a = hs[0], z = hs[hs.length - 1]; if (z.kind === 'tx') row('Tx power', `${f1(z.out.sig)} dBm`); else { row('Input', pw(a.in.sig)); row('Output', pw(z.out.sig)); lossRow(a.in.sig, z.out.sig); tail(z); } }
-    else if (isEnd(n) && uniformSide(n)) note(`One of the ${S.g.nch} identical channels on this line. Click it to show its results.`);
-    else if (isEnd(n)) { const ch = chanOf(r, n.id); if (!ch) note('Not carrying a channel. Cable it to a mux or ROADM port with a partner on the far side.'); else { row('Channel', `${chText(ch.c.slot, true)} THz`); if (ch.o) { row('Status', STATUS[ch.o.status], true); if (ch.o.qMargin != null) row('Q margin', `${sgn(ch.o.qMargin)} dB`); } note('Click it to show its results.'); } }
-    else note(r && r.mode ? 'Not on the service path.' : 'No service to measure yet.');
-    if (isEnd(n)) { // why its status light is amber or red
-      const [lt, why] = endState(n); if (lt === 'warn' || lt === 'bad') note(why.charAt(0).toUpperCase() + why.slice(1));
+    if (isEnd(n)) {
+      // both directions: it transmits on its own and receives what the far end sent, which the forward result reports at Z and the return result at A
+      const F = lastRes, R = F && F.rev && F.rev.mode ? F.rev : null, svc = F && F.mode && (n.id === S.svc.a || n.id === S.svc.z), ch = chanOf(F, n.id), [lt, why] = endState(n);
+      const rx = svc ? (n.id === S.svc.z ? F : R) : ch && ch.o ? (n.id === ch.c.to ? ch.o : R && R.channels && R.channels[F.channels.indexOf(ch.o)]) : null;
+      if (ch) row('Channel', `${chText(ch.c.slot, true)} THz`);
+      row('Tx power', n.p.fail === 'dead' ? 'off' : `${f1(MODEL.txPower(n))} dBm`);
+      if (rx) { row('Rx power', rx.prx > -90 ? `${f1(rx.prx)} dBm` : 'no light'); if (Number.isFinite(rx.qMargin)) row('Q margin', `${sgn(rx.qMargin)} dB`); row('Status', STATUS[rx.status], true); }
+      else if ((svc || ch) && lt === 'bad') row('Rx power', 'no light'); // a lost service ends the simulation before the return direction is worked out
+      if (uniformSide(n) && !svc) note(`One of the ${S.g.nch} identical channels on this line. Click it to show its results.`);
+      else if (!svc && !ch) note('Not carrying a channel. Cable it to a mux or ROADM port with a partner on the far side.');
+      else if (!svc) note('Click it to show its results.');
+      if (lt === 'warn' || lt === 'bad') note(why.charAt(0).toUpperCase() + why.slice(1)); // why its status light is amber or red
       if (n.type === 'mxp') n.p.clients.forEach((c, i) => { const bad = clientLamp(n, i, lt)[1]; if (bad) note(bad); });
     }
+    else if (hs.length) { const a = hs[0], z = hs[hs.length - 1]; row('Input', pw(a.in.sig)); row('Output', pw(z.out.sig)); lossRow(a.in.sig, z.out.sig); tail(z); }
+    else note(r && r.mode ? 'Not on the service path.' : 'No service to measure yet.');
     { const ps = portSummary(n); if (ps) row('Ports', ps, true); }
   } else {
     const l = link(id); if (!l) return null;
