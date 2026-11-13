@@ -290,18 +290,18 @@ class UI(unittest.TestCase):
 
     def test_transponder_lights_show_their_own_line(self):
         pg = self.page
-        lights = lambda: pg.evaluate("[...document.querySelectorAll('.node.t-trx .led')].map(l => l.getAttribute('class'))")
+        lights = lambda: pg.evaluate("[...document.querySelectorAll('.node.t-trx .port')].map(l => l.getAttribute('class'))")
         self.explore('dci')
-        self.assertEqual(set(lights()), {'led good'})
+        self.assertEqual(set(lights()), {'port good'})
         self.cut_fiber()
-        self.assertEqual(set(lights()), {'led bad'}, 'every pair on the cut line goes dark, not just the service')
+        self.assertEqual(set(lights()), {'port bad'}, 'every pair on the cut line goes dark, not just the service')
         self.node('TRX-A2').hover()
         self.assertIn('Line los: LOS at TRX-B2: fiber cut', pg.locator('#hovtip').inner_text())
         pg.evaluate("localStorage.clear()")
         pg = self.page = self.open(self.ctx)
         pg.click('#w-blank')
         self.add('trx')
-        self.assertEqual(lights(), ['led off'], 'a transponder with no partner is unlit')
+        self.assertEqual(lights(), ['port off'], 'a transponder with no partner is unlit')
 
     def test_palette_fits_with_its_tools(self):
         pg = self.page

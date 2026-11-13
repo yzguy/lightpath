@@ -118,17 +118,15 @@ function nodeShape(n) {
     'aria-label': `${n.name}, ${(TYPES[n.type] || {}).label || n.type}${S.svc && S.svc.a === n.id ? ', service A end' : S.svc && S.svc.z === n.id ? ', service Z end' : ''}${n.p && n.p.fail === 'dead' ? ', failed' : n.p && n.p.fail === 'degraded' ? ', degraded' : ''}${panelDirty(n) ? ', dirty connector on port ' + Object.entries(n.p.dirty).filter(([, v]) => +v > 0.3).map(([k]) => k).join(', ') : ''}` });
   const st = n.type === 'trx' || n.type === 'mxp' ? endState(n) : null;
   if (st) g.setAttribute('aria-label', g.getAttribute('aria-label') + ', ' + st[1]);
-  const linePort = () => sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' });
+  const linePort = () => sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port ' + st[0] }); // the line port doubles as its status light
   if (n.type === 'trx') {
     g.append(sv('rect', { x: -46, y: -22, width: 92, height: 44, rx: 4, class: 'body' }));
     g.append(linePort());
     const t = sv('text', { x: -38, y: 4, class: 'glyph' }); t.textContent = PHY.MODES[n.p.mode].short; g.append(t);
-    g.append(sv('circle', { cx: -36, cy: -12, r: 3, class: 'led ' + st[0] }));
   } else if (n.type === 'mxp') {
     g.append(sv('rect', { x: -46, y: -30, width: 92, height: 60, rx: 4, class: 'body' }));
     const nc = n.p.clients.length;
     n.p.clients.forEach((c, i) => { const y = nc > 1 ? -22 + i * (44 / (nc - 1)) : 0, [cl] = clientLamp(n, i, st[0]); g.append(sv('line', { x1: -56, y1: y, x2: -46, y2: y, class: 'thin' })); g.append(sv('circle', { cx: -56, cy: y, r: 2.6, class: 'led ' + cl })); });
-    g.append(sv('circle', { cx: -36, cy: -21, r: 3, class: 'led ' + st[0] }));
     g.append(linePort());
     const t = sv('text', { x: -38, y: -6, class: 'glyph' }); t.textContent = PHY.MODES[n.p.mode].short; g.append(t);
     const t2 = sv('text', { x: -38, y: 10, class: 'glyph small' }); t2.textContent = `${nc} client${nc === 1 ? '' : 's'}`; g.append(t2);
