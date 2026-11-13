@@ -16,7 +16,7 @@ const HALF = { trx: [46, 22], mxp: [52, 30], mux: [30, 30], panel: [40, 16], spl
 const edgeDist = (n, ux, uy) => { const [w, h] = HALF[n.type] || [34, 20]; return n.type === 'roadm' ? w : Math.min(Math.abs(ux) > 1e-6 ? w / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? h / Math.abs(uy) : Infinity); };
 // Each label sits beside its wire (above it, or right of a vertical one), far enough out that its own size (it grows when zoomed out) clears the device, then
 // tries the other side and slides along the cable (up to the middle) until it covers no device, name, fiber label or port label placed before it. Chosen ports go first, then the
-// fixed port names (LINE, COM, IN/OUT); a label with no clear spot is hidden until zooming in makes room.
+// fixed port names (LINE, IN/OUT); a label with no clear spot is hidden until zooming in makes room.
 let placedLf = null;
 function placePortLabels(lf) {
   placedLf = lf;
@@ -248,7 +248,7 @@ function renderCanvas() {
       // devices whose ports are fixed: an amplifier's in and out follow the light along the service (forward) path
       const fp = lastRes && lastRes.path, at = fp ? fp.links.indexOf(l.id) : -1;
       const fixed = (n, o) => isEnd(n) ? (clientLink(l) ? null : 'LINE')
-        : n.type === 'mux' ? (isEnd(o) ? (l.p.mport == null ? 'A/D' : null) : 'COM')
+        : n.type === 'mux' ? (isEnd(o) ? (l.p.mport == null ? 'A/D' : null) : 'LINE')
         : n.type === 'roadm' && isEnd(o) && l.p.mport == null ? 'A/D'
         : (n.type === 'edfa' || n.type === 'dcm' || n.type === 'voa') && at >= 0 ? (fp.nodes[at] === n.id ? 'OUT' : 'IN')
         : n.type === 'meter' ? 'IN' : n.type === 'otdr' ? 'OTDR' : null;
