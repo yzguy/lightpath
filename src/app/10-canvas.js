@@ -241,7 +241,7 @@ function renderCanvas() {
         const dx = o.x - m.x, dy = o.y - m.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
         const t = sv('text', { class: 'llabel plabel' + (fixedPort ? ' pfixed' : ''), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'data-x0': m.x, 'data-y0': m.y, 'data-ux': ux, 'data-uy': uy, 'data-edge': edgeDist(m, ux, uy), 'data-len': d, 'data-n': text.length });
         t.textContent = text; g.append(t); };
-      if (pl && l.p.mport != null) { const sd = sideOf(l, pl.m); labelAt(pl.m, pl.t, pl.m.type === 'roadm' ? `${sd ? 'D' + sd + '·' : ''}P${l.p.mport + 1}` : `${sd ? sd.toUpperCase() : 'P'}${l.p.mport + 1} · ${sideRange(pl.m, sd)[0] + l.p.mport + 1}`); }
+      if (pl && l.p.mport != null) { const sd = sideOf(l, pl.m); labelAt(pl.m, pl.t, portChText(pl.m, l.p.mport, sd, pl.t)); }
       for (const n of [a, b]) if ((isTri(n) || n.type === 'panel') && sideOf2(l, n)) labelAt(n, n === a ? b : a, sideOf2(l, n).toUpperCase());
       if (clientLink(l)) { const h = a.type === 'host' ? a : b, e = h === a ? b : a; labelAt(h, e, `eth${(l.p.hport ?? 0) + 1}`); if (e.type === 'mxp') labelAt(e, h, `C${(l.p.cport ?? 0) + 1}`); }
       for (const n of [a, b]) if ((n.type === 'oadm' || n.type === 'roadm') && !(pl && pl.m.id === n.id) && sideOf(l, n)) labelAt(n, n === a ? b : a, n.type === 'roadm' ? 'D' + sideOf(l, n) : SIDE[sideOf(l, n)]);
@@ -531,6 +531,13 @@ const firstFreePort = (m, except, side) => { const u = portsUsed(m, except); for
 const portSlots = (m, k, side) => { // the transmit and receive slot of a BiDi (single-fiber) port: a low and a high band, the role says which way round
   if (m.type === 'roadm' || !m.p.bidi) return null; const first = sideRange(m, side)[0], n = portCount(m, side), role = m.type === 'oadm' ? m.p[side + 'Role'] : m.p.role, lo = first + k, hi = first + n + k;
   return role === 'low' ? { tx: lo, rx: hi } : { tx: hi, rx: lo };
+};
+// the channel a port passes, as its cable is labeled: a BiDi port's transmit/receive pair; a colorless port passes what its transponder is tuned to
+const portChText = (m, k, side, t) => {
+  const ch = s => 'CH' + PHY.slotChannel(s, +S.g.df * 1e9).ch, b = portSlots(m, k, side);
+  if (b) return `${ch(b.tx)}/${ch(b.rx)}`;
+  if (!colorless(m)) return ch(sideRange(m, side)[0] + k);
+  const c = chanOf(lastRes, t.id); return c ? ch(c.c.slot) : `${side ? 'D' + side + '·' : ''}P${k + 1}`;
 };
 const portSlotText = (m, k, side) => { const b = portSlots(m, k, side), lab = side ? sideLabel(m, side) + ' port' : 'Port'; if (b) return `${lab} ${k + 1} · transmit ${slotLbl(b.tx)} · receive ${slotLbl(b.rx)}`; return `${lab} ${k + 1}` + (colorless(m) ? ' · any slot' : ` · slot ${sideRange(m, side)[0] + k + 1} · ${chText(sideRange(m, side)[0] + k)}`); };
 // a slot number box that shows slots from 1 (the model counts from 0)

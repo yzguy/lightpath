@@ -315,7 +315,7 @@ class UI(unittest.TestCase):
         self.explore()
         self.page.select_option('#preset', 'dci')
         shown = self.page.evaluate("[...document.querySelectorAll('.plabel')].filter(t => t.getAttribute('visibility') !== 'hidden').map(t => t.textContent)")
-        for name in ['P8 · 32', 'P9 · 33', 'P10 · 34', 'LINE', 'COM', 'IN', 'OUT']:
+        for name in ['CH45', 'CH46', 'CH47', 'LINE', 'COM', 'IN', 'OUT']:
             self.assertIn(name, shown)
 
     def test_hover_readout(self):
