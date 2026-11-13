@@ -3,8 +3,8 @@
 Single-page browser app, no dependencies. Edit files in `src/`, then run `./build.sh` to produce `dist/lightpath.html`. Run `npm test` (Node's built-in runner, no installs) before finishing any change.
 
 - `src/engine.js` is pure physics and must stay DOM-free so it can be tested in Node.
-- `src/model.js` is the topology model: device/preset definitions, `sanitize()` for untrusted JSON, `route()` and `simulate(S, launchOverride)`. Also DOM-free and unit-tested; uses global `PHY`. Keep simulation logic here, not in app.js. The channel plan (`g.plan`, `buildChans`, event-log replay for per-channel results) lives here too.
-- `src/app.js` is an IIFE using the globals `PHY` and `MODEL`: UI only (canvas, inspector, results views).
+- `src/model/*.js` is the topology model: device/preset definitions, challenges, `sanitize()` for untrusted JSON, `route()` and `simulate(S, launchOverride)` (in `95-simulate.js`). Also DOM-free and unit-tested; uses global `PHY`. Keep simulation logic here, not in the app. The channel plan (`g.plan`, `buildChans`, event-log replay for per-channel results) lives here too. The files are consecutive parts of ONE closure (the first opens `const MODEL = (() => {`, the last closes it), joined in file-name order by build.sh; they are not standalone modules, so a part need not parse on its own. `src/model.js` is only the Node loader (`require('./src/model.js')`); errors in Node point at line numbers in the joined text (`cat src/model/*.js`).
+- `src/app/*.js` is the same pattern for the UI: parts of one IIFE using the globals `PHY` and `MODEL` (canvas, inspector, results views). New files sort into place by their number prefix.
 - Anything loaded from localStorage or pasted import must go through `MODEL.sanitize()`.
 - `src/shell.html` has no `<html>/<head>/<body>`; build.sh wraps it.
 - Colors are CSS tokens on `:root` with dark overrides; keep both themes working.

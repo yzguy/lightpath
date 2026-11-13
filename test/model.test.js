@@ -2413,3 +2413,26 @@ test('align and distribute: edges line up, spacing is even, and fewer than three
   assert.equal(M.alignNodes(S, ['a'], 'left'), 0);
   assert.equal(M.alignNodes(S, ['a', 'b'], 'nonsense'), 0);
 });
+
+test('sanitize keeps the channel count within the slots the grid has', () => {
+  const S = build('dci'); S.g = { ...S.g, df: 150, nch: 96 };
+  S.links.find(l => l.kind === 'fiber').p.nch = 80;
+  const o = M.sanitize(S);
+  assert.equal(o.g.nch, PHY.cBandSlots(150e9));
+  assert.equal(o.links.find(l => l.kind === 'fiber').p.nch, 32);
+  assert.equal(M.sanitize({ ...build('dci'), g: { df: 50, nch: 96 } }).g.nch, 96);
+});
+
+test('cableKind: a fiber between sites, a patch cord inside a rack, matching nearly every cable in the scenarios', () => {
+  const T = t => ({ type: t });
+  assert.equal(M.cableKind(T('edfa'), T('edfa')), 'fiber');
+  assert.equal(M.cableKind(T('roadm'), T('roadm')), 'fiber');
+  assert.equal(M.cableKind(T('trx'), T('trx')), 'fiber'); // dark fiber
+  assert.equal(M.cableKind(T('trx'), T('mux')), 'patch');
+  assert.equal(M.cableKind(T('mux'), T('edfa')), 'patch');
+  assert.equal(M.cableKind(T('host'), T('mxp')), 'patch');
+  assert.equal(M.cableKind(T('panel'), T('otdr')), 'patch');
+  let ok = 0, all = 0;
+  for (const k in M.PRESETS) { const p = M.PRESETS[k].build(), n = id => p.nodes.find(x => x.id === id); for (const l of p.links) { all++; if (M.cableKind(n(l.a), n(l.b)) === l.kind) ok++; } }
+  assert.ok(ok / all > 0.95, `${ok} of ${all}`);
+});
