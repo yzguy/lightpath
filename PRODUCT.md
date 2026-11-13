@@ -23,7 +23,7 @@ The user works at a canvas of devices and cables, with an inspector for the sele
 - The channel plan can be a table or can be derived from the cabling.
 - Physics constants are representative values, not datasheet figures; the app should say so rather than imply precision. Physics and model code stay DOM-free and covered by tests, and anything loaded from storage or pasted import is sanitised.
 - Both light and dark themes must keep working.
-- A desktop browser is the target. Phone and touch use are not a goal and are not tested or maintained (some phone styling exists and may stay, but nothing depends on it).
+- A desktop browser is the target. Phone and touch use are not a goal: there is no phone layout, touch styling or pinch zoom.
 
 ## Brand Commitments
 The product is named Lightpath. No logo, voice guide or other identity assets have been established.

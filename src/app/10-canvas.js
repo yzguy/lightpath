@@ -1,14 +1,12 @@
 // ---------- canvas ----------
 const svg = $('#cv'), gRoot = $('#world');
-function fitView(readable) {
+function fitView() {
   if (!S.nodes.length) return;
   const xs = S.nodes.map(n => n.x), ys = S.nodes.map(n => n.y);
   const r = svg.getBoundingClientRect();
   const w = Math.max(...xs) - Math.min(...xs) + 220, h = Math.max(...ys) - Math.min(...ys) + 200;
   const k = Math.min(1.4, Math.max(0.15, Math.min(r.width / w, r.height / h)));
   S.view = { k, x: (Math.min(...xs) + Math.max(...xs)) / 2 - r.width / 2 / k, y: (Math.min(...ys) + Math.max(...ys)) / 2 - r.height / 2 / k };
-  // On a phone the whole-lab overview would render labels at 5px: open at a readable zoom from the left (pan or pinch for the rest; Fit gives the overview)
-  if (readable && r.width < 600 && k < 0.6) { const k2 = 0.6; S.view = { k: k2, x: Math.min(...xs) - 70 / k2, y: (Math.min(...ys) + Math.max(...ys)) / 2 - r.height / 2 / k2 }; }
 }
 // Text and the fault badge are drawn in canvas units, so zooming out shrinks them below what can be read. They are counter-scaled to a floor on screen (names 11px,
 // cable labels and A/Z tags 9px, the badge 9px across) and only grow, never shrink, so a zoomed-in view looks as drawn.
@@ -236,7 +234,7 @@ function moveTip(e) {
 }
 function hideTip() { $('#hovtip').hidden = true; }
 let tipOn = null;
-svg.addEventListener('pointerover', e => { if (drag || e.pointerType === 'touch') return; const t = e.target.closest('.node, .link'); if (t && t !== tipOn) { tipOn = t; showTip(e, t); } });
+svg.addEventListener('pointerover', e => { if (drag) return; const t = e.target.closest('.node, .link'); if (t && t !== tipOn) { tipOn = t; showTip(e, t); } });
 svg.addEventListener('pointerout', e => { const t = e.target.closest('.node, .link'); if (t && !t.contains(e.relatedTarget)) { tipOn = null; hideTip(); } });
 svg.addEventListener('pointerleave', () => { tipOn = null; hideTip(); });
 
@@ -261,18 +259,8 @@ function followService(n) {
 
 // pointer interactions
 let drag = null;
-// Two-finger pinch: zoom about the midpoint and pan with it. Cancels any one-finger drag in progress.
-const ptrs = new Map();
-let pinch = null;
-const pinchGeom = () => { const [a, b] = [...ptrs.values()]; return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }; };
 svg.addEventListener('pointerdown', e => {
-  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (ptrs.size === 2) {
-    drag = null; $('#rubber').setAttribute('visibility', 'hidden');
-    const g = pinchGeom(); pinch = { d: g.d, k: S.view.k, w: toWorld(g.mx, g.my) };
-    svg.setPointerCapture(e.pointerId); return;
-  }
-  if (ptrs.size > 2) return;
+  if (!e.isPrimary) return;
   const nEl = e.target.closest('.node'), lEl = e.target.closest('.link');
   const w = toWorld(e.clientX, e.clientY);
   hideTip();
@@ -296,11 +284,6 @@ svg.addEventListener('pointerdown', e => {
   svg.setPointerCapture(e.pointerId);
 });
 svg.addEventListener('pointermove', e => {
-  if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pinch && ptrs.size === 2) {
-    const g = pinchGeom(), r = svg.getBoundingClientRect(), k = Math.min(2.5, Math.max(0.15, pinch.k * g.d / pinch.d));
-    S.view = { k, x: pinch.w.x - (g.mx - r.left) / k, y: pinch.w.y - (g.my - r.top) / k }; applyView(); return;
-  }
   if (!drag) return;
   const w = toWorld(e.clientX, e.clientY);
   drag.moved = true;
@@ -316,16 +299,13 @@ svg.addEventListener('pointermove', e => {
   else if (drag.kind === 'pan') { S.view.x = drag.vx - (e.clientX - drag.sx) / S.view.k; S.view.y = drag.vy - (e.clientY - drag.sy) / S.view.k; applyView(); }
   else if (drag.kind === 'cable') { const rb = $('#rubber'); rb.setAttribute('x2', w.x); rb.setAttribute('y2', w.y); }
 });
-const endPointer = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; };
-// A drag that is cancelled (the browser takes the gesture to scroll), loses its capture, or is interrupted by switching windows ends cleanly: the node stays
+// A drag that is cancelled, loses its capture, or is interrupted by switching windows ends cleanly: the node stays
 // where it was dropped and the change is saved (so it can be undone), and the next tap or drag works without a reload.
-function abortDrag(e) { if (e) endPointer(e); else { ptrs.clear(); pinch = null; } const d = drag; drag = null; $('#rubber').setAttribute('visibility', 'hidden'); const m = gRoot.querySelector('#marq'); if (m) m.remove(); if (d && d.kind === 'node' && d.moved) save(); }
-svg.addEventListener('pointercancel', abortDrag);
-svg.addEventListener('lostpointercapture', e => { if (drag) abortDrag(e); });
-window.addEventListener('blur', () => abortDrag(null));
+function abortDrag() { const d = drag; drag = null; $('#rubber').setAttribute('visibility', 'hidden'); const m = gRoot.querySelector('#marq'); if (m) m.remove(); if (d && d.kind === 'node' && d.moved) save(); }
+svg.addEventListener('pointercancel', () => abortDrag());
+svg.addEventListener('lostpointercapture', () => { if (drag) abortDrag(); });
+window.addEventListener('blur', () => abortDrag());
 svg.addEventListener('pointerup', e => {
-  const wasPinch = !!pinch; endPointer(e);
-  if (wasPinch) { drag = null; return; }
   if (!drag) return;
   const d = drag; drag = null;
   if (d.kind === 'cable') {

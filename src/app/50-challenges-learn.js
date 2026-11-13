@@ -10,7 +10,7 @@ function startChallenge(id) {
   S = { ...MODEL.sanitize(c.build()), view: { x: -40, y: -60, k: 1 } };
   labKey = ''; labHash = null; sel = null; chal.active = id; chal.hints = 0; chal.shown = false; saveChal();
   if (tab === 'challenges') tab = 'hops';
-  fitView(true); checkpoint(); renderAll(); renderTabBody(); toast('Challenge: ' + c.title);
+  fitView(); checkpoint(); renderAll(); renderTabBody(); toast('Challenge: ' + c.title);
 }
 function renderChallenge() {
   { const nd = MODEL.CHALLENGES.filter(x => chal.done[x.id]).length; $('#btn-chal').textContent = nd ? `Challenges · ${nd}/${MODEL.CHALLENGES.length}` : 'Challenges'; }
@@ -128,11 +128,7 @@ function learnView() {
     none.hidden = !q || [...shown.values()].some(n => n > 0);
   };
   find.addEventListener('input', () => { learnFilter = find.value; apply(); }); apply();
-  const pick = el('select', { class: 'lpick', 'aria-label': 'Learn topic' });
-  for (const [gname, ks] of groups) { const og = el('optgroup', { label: gname }); for (const k of ks) og.append(el('option', { value: k, text: LEARN[k][0] })); pick.append(og); }
-  pick.value = learnTopic;
-  pick.addEventListener('change', () => { learnTopic = pick.value; renderTabBody(); });
   const art = el('article', {}, [el('h3', { text: LEARN[learnTopic][0] }), el('div', { html: LEARN[learnTopic][1] })]); if (learnTopic === 'itu') art.append(ituTable());
-  return el('div', { class: 'learn' }, [pick, nav, art]);
+  return el('div', { class: 'learn' }, [nav, art]);
 }
 

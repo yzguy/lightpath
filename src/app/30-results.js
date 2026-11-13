@@ -2,7 +2,6 @@
 function bindGlobals() {
   const nch = $('#g-nch'), df = $('#g-df'), la = $('#g-launch');
   nch.max = PHY.cBandSlots(+S.g.df * 1e9); nch.value = S.g.nch; df.value = S.g.df; la.value = S.g.launch;
-  $('#labsum').textContent = `Line settings · ${S.g.nch} ch · ${S.g.df} GHz · ${S.g.launch > 0 ? '+' : ''}${S.g.launch} dBm`;
   const D = lastRes && lastRes.derived, lbl = $('#g-nch-l'), out = $('#g-nch-v');
   nch.disabled = !!S.g.plan && !D;
   if (S.g.plan && !D) { out.textContent = `${S.g.plan.length} ch · plan`; lbl.title = 'The channel plan on the Channels tab sets the load. Use "Reset to uniform" there to go back to this slider.'; }
@@ -20,7 +19,6 @@ $('#btn-itu').addEventListener('click', () => learn('itu'));
 const syncExpert = () => { document.body.classList.toggle('expert', expert); $('#btn-expert').setAttribute('aria-pressed', expert); };
 syncExpert();
 $('#btn-expert').addEventListener('click', () => { expert = !expert; try { localStorage.setItem('lightpath-expert', expert ? '1' : '0'); } catch (e) { /* no storage */ } syncExpert(); renderAll(); toast(expert ? 'Expert mode: advanced settings and the Planner, Resilience, Transients and Raman tabs are shown' : 'Expert mode off: advanced settings are hidden unless they are in use'); });
-{ const pd = $('#paldet'), ls = $('#labset'), sync = () => { pd.open = !narrow.matches; ls.open = !narrow.matches; }; sync(); narrow.addEventListener('change', sync); $('#statusbar').addEventListener('click', () => $('#results').scrollIntoView({ block: 'start' })); } // the palette is one tap away on a phone, open on a wide screen
 $('#btn-undo').addEventListener('click', undo); $('#btn-redo').addEventListener('click', redo);
 $('#btn-clear').addEventListener('click', () => {
   const b = $('#btn-clear');
@@ -31,7 +29,7 @@ $('#btn-export').addEventListener('click', () => { $('#io').hidden = false; $('#
 $('#io-close').addEventListener('click', () => { $('#io').hidden = true; });
 $('#io-copy').addEventListener('click', () => { const t = $('#io-text'); navigator.clipboard?.writeText(t.value).then(() => toast('Copied topology JSON'), () => { t.select(); toast('Select-all done; press Ctrl/Cmd+C'); }) ?? t.select(); });
 $('#io-load').addEventListener('click', () => {
-  try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; labKey = ''; sel = null; $('#io').hidden = true; fitView(true); checkpoint(); renderAll(); toast('Topology loaded', { label: 'Undo', fn: undo }); }
+  try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; labKey = ''; sel = null; $('#io').hidden = true; fitView(); checkpoint(); renderAll(); toast('Topology loaded', { label: 'Undo', fn: undo }); }
   catch (e) { toast('That text is not a topology export. Paste the JSON from Export.'); }
 });
 
@@ -41,7 +39,7 @@ csvMode.value = 'zrp400';
 $('#csv-build').addEventListener('click', () => {
   const r = MODEL.fromSpans($('#csv-text').value, csvMode.value);
   if (!r.topo) return toast(r.errors[0]);
-  S = { ...S, ...MODEL.sanitize(r.topo) }; labKey = ''; sel = null; $('#io').hidden = true; fitView(true); checkpoint(); renderAll();
+  S = { ...S, ...MODEL.sanitize(r.topo) }; labKey = ''; sel = null; $('#io').hidden = true; fitView(); checkpoint(); renderAll();
   toast(`Built ${r.spans.length} span${r.spans.length === 1 ? '' : 's'}` + (r.errors.length ? `. ${r.errors.length} row${r.errors.length === 1 ? '' : 's'} skipped: ${r.errors[0]}` : ''));
 });
 
@@ -87,7 +85,6 @@ function renderResults() {
   }
   $('#status').className = 'status s-' + lastRes.status; $('#status').textContent = STATUS[lastRes.status];
   $('#headline').textContent = lastRes.headline;
-  $('#sb-status').className = 'status s-' + lastRes.status; $('#sb-status').textContent = STATUS[lastRes.status]; $('#sb-text').textContent = lastRes.headline;
   { const msg = `${STATUS[lastRes.status]}. ${lastRes.headline}`; if (msg !== srLast) { srLast = msg; $('#sr-live').textContent = msg; } } // announced only when it changes
   const k = $('#kpis'); k.innerHTML = ''; $('#diag').innerHTML = '';
   if (!r.mode) { $('#tabbody').innerHTML = ''; renderAlarms(r); renderTabBody(); return; }

@@ -44,7 +44,6 @@ function selIn(obj, key, opts) {
   s.value = String(obj[key]); s.addEventListener('change', () => { obj[key] = s.value === 'true' ? true : s.value === 'false' ? false : s.value; renderAll(); }); return s;
 }
 let assumeOpen, inspKey, kpiAll = false, ramanOpen;
-const narrow = window.matchMedia('(max-width: 900px)');
 // a new selection opens at the top (type, name, actions); an edit to the same selection keeps the scroll position
 function renderInspector() {
   const box = $('#insp'), top = box.scrollTop, key = sel ? sel.kind + ':' + sel.id : '';
@@ -71,7 +70,7 @@ function renderInspectorBody() {
     S.g.eolSpan ??= PHY.EOL.spanLoss; S.g.eolTrx ??= PHY.EOL.trxPen;
     S.g.neighbors ??= 'same';
     S.g.reopt = S.g.reopt === true;
-    // the model-wide settings are there to look up, not to read first: collapsed on a phone, where they would push everything else a screen down
+    // the model-wide settings are there to look up, not to read first: collapsed until opened
     const det = el('details', { class: 'assume' }, [el('summary', { text: 'Model assumptions' })]); det.open = assumeOpen ?? false; det.addEventListener('toggle', () => { assumeOpen = det.open; });
     det.append(el('h3', { text: 'Line loading' }), field('Launch power', selIn(S.g, 'reopt', [['false', 'Fixed: amplifier targets and Amp output in the header'], ['true', 'Re-optimised for the load on each span']]), 'Re-optimised: every amplifier whose output target is blank sets the GN-optimal power for the span after it, given the channels actually lit there, so the setting follows channels as they are added and dropped. Amplifiers with an explicit target keep it.'), field('Neighbouring channels', selIn(S.g, 'neighbors', [['same', 'Same type as the service'], ['coh', '60 GBd coherent channels']]), 'Only matters for direct-detection optics (10G DWDM): cross-phase modulation from neighbours is stronger when they are wide coherent channels.'));
     S.g.tempC ??= 27;

@@ -76,7 +76,7 @@ const redo = () => { if (stepHistory(1)) toast('Redone', { label: 'Undo', fn: un
 function applyPreset(k, quiet) {
   const p = MODEL.sanitize(PRESETS[k].build());
   S = { ...p, view: { x: -40, y: -60, k: 1 } }; // everything the scenario defines, its traffic flows included
-  labKey = k; labHash = null; sel = null; if (chal.active) { chal.active = ''; saveChal(); } if (!quiet) { fitView(true); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
+  labKey = k; labHash = null; sel = null; if (chal.active) { chal.active = ''; saveChal(); } if (!quiet) { fitView(); checkpoint(); renderAll(); toast('Loaded: ' + PRESETS[k].name, { label: 'Undo', fn: undo }); }
 }
 const node = id => S.nodes.find(n => n.id === id);
 const link = id => S.links.find(l => l.id === id);

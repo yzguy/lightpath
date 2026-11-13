@@ -1,5 +1,4 @@
 <title>Lightpath</title>
-<meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
@@ -21,7 +20,7 @@
   --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --mpi: #e0a35c; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10); color-scheme: dark }
 * { box-sizing: border-box }
 [hidden] { display: none !important }
-body { background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 14px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px 32px }
+body { background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 14px; padding: 12px 16px 32px }
 h1, h2, h3, h4 { margin: 0; text-wrap: balance }
 button, select, input { font: inherit; color: inherit }
 .muted { color: var(--muted) } .small { font-size: 12px } .pad { padding: 16px }
@@ -51,7 +50,6 @@ body:not(.expert) .adv { display: none }
 #hovtip b { font-weight: 700 } #hovtip .hv { font-family: var(--f-mono); font-variant-numeric: tabular-nums } #hovtip .muted { display: block }
 .chandle { opacity: 0; cursor: crosshair; transition: opacity .12s } .chandle circle { fill: var(--jacket); stroke: var(--ink); stroke-width: 1.2 } .chandle path { stroke: var(--ink); stroke-width: 1.6; pointer-events: none }
 .node:hover .chandle, .node.sel .chandle, .chandle:focus { opacity: 1 }
-@media (pointer: coarse) { .chandle { opacity: .8 } }
 .headbtns { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px } .headbtns .btn { align-self: center; padding: 4px 10px; font-size: 13px }
 #welcome { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 32px)); padding: 18px 20px; display: grid; gap: 10px; z-index: 6; background: var(--raised); box-shadow: 0 10px 40px rgba(0,0,0,.18) }
 #welcome h2 { font-size: 18px } #welcome p { margin: 0; line-height: 1.5 }
@@ -72,10 +70,6 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0 }
 .palette { padding: 10px; overflow: auto }
 .paldet { display: flex; flex-direction: column; gap: 6px }
-.paldet > summary { display: none; cursor: pointer; font-weight: 600; font-size: 13px; align-items: center; min-height: 44px; width: 100%; list-style: none }
-.paldet > summary::-webkit-details-marker { display: none }
-.paldet > summary::before { content: '+'; display: inline-block; width: 22px; font-family: var(--f-mono); font-weight: 700 }
-.paldet[open] > summary::before { content: '\2212' }
 .raman { display: grid; gap: 10px } .raman > summary { cursor: pointer; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: 4px 2px; min-height: 24px }
 .assume > summary { cursor: pointer; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: 8px 2px; min-height: 24px }
 .assume > summary + * { margin-top: 4px }
@@ -211,12 +205,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 #alarms:empty, #diag:empty { display: none }
 #diag > div { padding: 6px 2px; font-size: 13px; border-top: 1px solid var(--line) } /* flat: it already sits in the results panel */
 .planwrap p, .learn p, p.muted.small { max-width: 60ch } /* explanatory text keeps a readable line length */ /* explanatory text keeps a readable measure on a wide screen */
-.labrow { display: flex; flex-wrap: nowrap; gap: 8px 18px; align-items: center } /* the line settings stay together on one row, or drop below the lab menu as a group (a details lays its content out in a block box, so the row is its own element) */
+.labrow { display: flex; flex-wrap: nowrap; gap: 8px 18px; align-items: center } /* the line settings stay together on one row, or drop below the lab menu as a group */
 #preset { width: 230px; text-overflow: ellipsis }
-.labset > summary { display: none; cursor: pointer; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); align-items: center; min-height: 44px; list-style: none }
-.labset > summary::-webkit-details-marker { display: none }
-.labset > summary::before { content: '+'; display: inline-block; width: 18px; font-family: var(--f-mono); font-weight: 700 }
-.labset[open] > summary::before { content: '\2212' }
 .kgroup { grid-column: 1 / -1; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin-top: 4px } .kgroup:first-child { margin-top: 0 }
 .tabsep { align-self: stretch; width: 1px; margin: 8px 6px; background: var(--line); flex: none }
 #headfix { align-self: center } #alarms .alfix { margin-left: 10px; padding: 2px 10px; min-height: 0 }
@@ -279,7 +269,6 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 .learn { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 20px; padding-top: 8px }
 .lnav { display: flex; flex-direction: column; gap: 3px }
 .lfind { width: 100%; margin-bottom: 6px } .lgroup { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin: 10px 2px 2px } .lgroup:first-of-type { margin-top: 0 }
-.lpick { display: none; width: 100%; margin-bottom: 4px }
 #dirsw { display: inline-flex; gap: 2px }
 .chip { text-align: left; background: none; border: 1px solid transparent; border-radius: 5px; padding: 5px 8px; cursor: pointer; color: var(--muted) }
 .chip[aria-pressed=true] { background: var(--raised); border-color: var(--line); color: var(--ink); font-weight: 600 }
@@ -289,55 +278,16 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 
 #toast .toast-act { background: none; border: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; padding: 4px 2px; cursor: pointer }
 #toast .toast-act:focus-visible { outline: 2px solid currentColor; outline-offset: 2px }
-#statusbar { display: none }
-@media (max-width: 900px) {
-  /* a status strip stays at the bottom of the screen, so the result of what you just did is in view wherever you are on the page */
-  #statusbar { display: flex; align-items: center; gap: 10px; position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; min-height: 52px; padding: 6px max(12px, env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) max(12px, env(safe-area-inset-left, 0px)); background: var(--panel); border-top: 1px solid var(--line); box-shadow: 0 -4px 12px rgba(0,0,0,.08); font: inherit; color: inherit; text-align: left; width: 100%; cursor: pointer }
-  #statusbar .status { flex: none }
-  #statusbar .sbtext { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }
-  #statusbar .sbgo { flex: none; font-size: 12px; color: var(--muted) }
-  body { padding-bottom: 70px }
-  body #toast { bottom: calc(66px + env(safe-area-inset-bottom, 0px)) } /* above the status strip */
-}
 /* the five readings that give the verdict (margin, Rx, OSNR, GSNR, distance) show until "More readings"; the groups and the noise breakdown open with it */
 .kpis:not(.all) > .kgroup, .kpis:not(.all) > .kpi:not(.core) { display: none }
 .kpis:not(.all) + #diag { display: none }
 .morekpi { justify-self: start; align-self: center }
-#toast { display: flex; align-items: center; gap: 12px; width: max-content; position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 20; max-width: calc(100% - 32px) }
+#toast { display: flex; align-items: center; gap: 12px; width: max-content; position: fixed; left: 50%; transform: translateX(-50%); bottom: 18px; background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 6px; font-size: 13px; z-index: 20; max-width: calc(100% - 32px) }
 #io { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: grid; place-items: center; z-index: 30; padding: 16px }
 #io .panel { width: min(640px, 100%); padding: 14px; display: grid; gap: 10px }
 #io textarea.csv { height: 110px }
 #io textarea { width: 100%; height: 300px; font-family: var(--f-mono); font-size: 12px; background: var(--raised); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; padding: 8px }
 
-@media (pointer: coarse) {
-  .link .hit { stroke-width: 30 }
-  .pal-item { padding: 10px 8px; min-height: 44px } .tool, .canvas-tools .btn, .btn { min-height: 44px; min-width: 44px }
-  .tab, .chip { min-height: 44px }
-  /* 16px fields stop iOS zooming the page on focus, and 44px is a comfortable touch target */
-  select, input[type=number], input:not([type]), textarea, .fld input, .fld select { font-size: 16px; min-height: 44px }
-  .g input[type=range] { height: 32px }
-  #toast .toast-act { min-height: 44px; padding: 10px 8px }
-}
-@media (max-width: 900px) {
-  .bench { grid-template-columns: minmax(0, 1fr); height: auto }
-  .paldet { flex-direction: row; flex-wrap: wrap }
-  .paldet > summary { display: flex }
-  .paldet h2 { width: 100% }
-  .pal-item { flex: 1 1 140px }
-  .tools { grid-template-columns: repeat(3, 1fr); width: 100% }
-  .canvaswrap { height: 46vh; min-height: 300px }
-  .canvaswrap { order: -2 } .insp { order: -1 } /* canvas first, then the inspector, then the palette */
-  .globals { margin-left: 0; width: 100%; gap: 4px 14px }
-  .globals > .g { flex: 1 1 100% }
-  .labset { width: 100% } .labrow { flex-direction: column; align-items: stretch; gap: 4px } .labset > summary { display: flex } /* the three line settings are one row until opened */
-  .labset .g { width: 100% }
-  .g { min-width: 0; max-width: 100% }
-  .g select { flex: 1 1 auto; min-width: 0 }
-  .g input[type=range] { flex: 1 1 60px; width: auto; min-width: 60px }
-  .constwrap, .learn { grid-template-columns: minmax(0, 1fr) }
-  .lnav { display: none } .lpick { display: block } /* a phone picks the topic from a menu: 30 chips would push the article a screen down */
-  .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin } .tab { flex: none; white-space: nowrap } /* one swipeable row instead of five wrapped rows */
-}
 .planstrip { display: flex; flex-wrap: wrap; gap: 2px; margin: 8px 0 }
 .pcell { width: 18px; height: 22px; padding: 0; border: 1px solid var(--line); border-radius: 3px; background: var(--raised); cursor: pointer; font-size: 9px; color: var(--muted) }
 .pcell.multi { border: 3px double var(--raised); opacity: 1 } .slotin { width: 58px }
@@ -354,17 +304,17 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div class="globals">
     <label class="g" for="preset">Lab
       <select id="preset"><option value="">Load a scenario…</option><optgroup label="Point-to-point links"><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="dark">Dark fiber: unamplified ZR</option><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="mix">Mixed line: 10G beside 400G</option></optgroup><optgroup label="Clients and traffic"><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="mxp2">Two muxponders per side on passive muxes</option><option value="reach">Hosts reaching each other over a muxponder link</option></optgroup><optgroup label="ROADMs and mesh"><option value="mesh">Mesh: channels on different routes</option><option value="adddrop">ROADM line with add/drop at the middle node</option><option value="roadmports">ROADM ring with transponders on add/drop ports</option></optgroup><optgroup label="Restoration and protection"><option value="ring">ROADM triangle with restoration</option><option value="srlg">Shared duct: two fibers that fail together</option><option value="protect">Protection and converters on a triangle</option><option value="client">Dual-homed transponders with spare modules</option><option value="olp">Optical line protection: splitter, tap and switch</option><option value="cabprot">Protection and a converter on cabled channels</option></optgroup><optgroup label="Passive optics and cabling"><option value="oadm">Passive OADM bus: transponders on add/drop ports</option><option value="ports">Transponders on mux ports: the cabling sets the channels</option><option value="bidi">Single-fiber (BiDi) bus: OADM between two muxes</option><option value="bidiamp">Single-fiber (BiDi) bus with a BiDi amplifier</option><option value="osc">Supervisory channel (1510 nm) and 1310 nm client ports</option><option value="odf">Patch panels: connector loss and a dirty port</option><option value="otdr">OTDR and power meter at a patch panel</option></optgroup></select></label>
-    <details class="labset" id="labset" open><summary id="labsum">Line settings</summary><div class="labrow">
+    <div class="labset" id="labset"><div class="labrow">
     <label class="g" for="g-nch" id="g-nch-l">Line load <input type="range" id="g-nch" min="1" max="96" step="1"><output id="g-nch-v"></output></label>
     <label class="g" for="g-df">Grid <select id="g-df"><option value="50">50 GHz</option><option value="75">75 GHz</option><option value="100">100 GHz</option><option value="150">150 GHz</option></select></label><button class="btn quiet" id="btn-itu" type="button" title="ITU grid and channel numbers: every channel at each spacing">ITU grid</button>
     <label class="g" for="g-launch" title="The power per channel every amplifier puts out, unless it has its own output target. A transponder's own Tx power is set on the transponder.">Amp output <input type="range" id="g-launch" min="-6" max="6" step="0.5"><output id="g-launch-v"></output></label>
-    </div></details>
+    </div></div>
   </div>
 </header>
 
 <section class="bench">
   <aside class="panel palette" aria-label="Component palette">
-  <details class="paldet" id="paldet" open><summary>Add devices and cables</summary>
+  <div class="paldet" id="paldet">
     <h2>Devices</h2>
     <div class="pal-item" draggable="true" data-type="trx" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="2" y="5" width="30" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="5" height="6" fill="var(--jacket)"/></svg><span><b>Transponder</b><small>ZR, ZR+, 100G, 800G</small></span></div>
     <div class="pal-item" draggable="true" data-type="mxp" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="6" y="3" width="24" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M1 7h5M1 11h5M1 15h5M1 19h5" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="4" height="6" fill="var(--jacket)"/></svg><span><b>Muxponder</b><small>Client ports into one ZR line</small></span></div>
@@ -387,7 +337,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
       <button class="tool" data-tool="fiber"><i></i>Fiber span<kbd>F</kbd></button>
     </div>
     <p class="muted small" style="margin:6px 2px 0">Drag devices onto the bench (or click to add). To cable two devices, drag the <b>+</b> beside one onto the other: the cable type is chosen for you. The tools above force a patch cord or a fiber.</p>
-    </details>
+    </div>
   </aside>
   <div class="panel canvaswrap">
     <svg id="cv" tabindex="-1" role="group" aria-label="Topology canvas: devices and cables, Enter selects"><g id="world"></g></svg>
@@ -444,7 +394,6 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
   <div id="tabbody"></div>
 </section>
 
-<button id="statusbar" type="button" aria-label="Service status. Jump to the results"><span class="status" id="sb-status"></span><span class="sbtext" id="sb-text"></span><span class="sbgo" aria-hidden="true">Details ↓</span></button>
 <div id="toast" role="status" aria-live="polite" hidden></div>
 <div id="tour" class="panel" role="dialog" aria-live="polite" hidden></div>
 <div id="sr-live" class="sr-only" role="status" aria-live="polite"></div>

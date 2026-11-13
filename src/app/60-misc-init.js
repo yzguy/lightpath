@@ -62,5 +62,5 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && tourAt >= 
 
 load();
 setTool('select');
-requestAnimationFrame(() => { fitView(true); renderAll(); let seen = false; try { seen = localStorage.getItem(WELCOMED) === '1'; } catch (e) { /* no storage */ } if (firstRun && !seen) $('#welcome').hidden = false; });
+requestAnimationFrame(() => { fitView(); renderAll(); let seen = false; try { seen = localStorage.getItem(WELCOMED) === '1'; } catch (e) { /* no storage */ } if (firstRun && !seen) $('#welcome').hidden = false; });
 })();

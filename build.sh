@@ -16,7 +16,7 @@ for f in src/engine.js dist/model.js dist/app.js; do node --check "$f"; done
 rm dist/model.js dist/app.js
 # Wrap in a document skeleton so the file opens directly in a browser.
 {
-  echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body>'
+  echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body>'
   cat dist/lightpath.html.body
   echo '</body></html>'
 } > dist/lightpath.html
