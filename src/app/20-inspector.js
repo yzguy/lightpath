@@ -236,18 +236,20 @@ function renderInspectorBody() {
       box.append(field('Channel ports', numIn(p, 'ports', 1, 1, 64), 'A real mux is 8, 16, 40, 48 or 64 channels. Port 1 is the lowest slot.'), field('First slot', slotBox(p, 'first', 'f-first'), 'The slot (numbered as in the Channels tab) that port 1 passes; port k passes the slot k − 1 further on.'));
       box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the mux to give it a port.' }), portTable(n));
     } else if (n.type === 'edfa') {
-      box.append(field('Direction', selIn(p, 'bidi', [['false', 'One-way: the direction the line runs'], ['true', 'BiDi: both directions, for a single fiber']]), 'An ordinary EDFA has isolators, so on a single fiber (both directions in one glass) it passes one direction only and the reverse is lost. A BiDi amplifier has circulators and band filters around two amplifier paths (the return direction uses the settings marked return) and costs the filter loss below in each direction.'));
+      const two = !oneWayAmp(n), R = ampRoles(n);
+      box.append(field('Type', selIn(p, 'bidi', [['false', 'Ordinary, with isolators'], ['true', 'BiDi: both directions on one fiber']]), 'On a pair of fibers the unit holds an amplifier for each direction: a booster one way is the preamp the other way. An ordinary EDFA has isolators, so on a single fiber (both directions in one glass) it passes one direction only and the return is lost. A BiDi amplifier has circulators and band filters around its two amplifiers and costs the filter loss below in each direction.'));
       if (p.bidi) box.append(field('Filter loss (dB each way)', numIn(p, 'bidiLoss', 0.1, 0, 6), 'Circulators and band filters around the amplifier. It counts only where the amplifier sits on a single fiber.'));
       box.append(field('Gain control', selIn(p, 'ctl', [['auto', 'Auto: hit output target'], ['fixed', 'Fixed gain']])));
-      if (p.ctl === 'auto') box.append(field('Output target (dBm/ch)', numIn(p, 'target', 0.5, -10, 10, true, String(S.g.launch)), 'Blank = follow Amp output in the header'), adv(field('Same, return direction (dBm/ch)', numIn(p, 'targetRev', 0.5, -10, 10, true, p.target === '' ? String(S.g.launch) : String(p.target)), 'Z to A. A line amp is really two amps, one per direction: a booster in one is a preamp in the other. Blank = same as forward.'), isSet(p.targetRev)));
-      else box.append(field('Gain (dB)', numIn(p, 'gain', 0.5, 0, 40)), adv(field('Same, return direction (dB)', numIn(p, 'gainRev', 0.5, 0, 40, true, String(p.gain)), 'Z to A. Blank = same as forward.'), isSet(p.gainRev)));
-      box.append(field('Noise figure (dB)', numIn(p, 'nf', 0.1, 3, 12), 'Quantum limit is 3 dB. Real EDFAs: 4.5–6 dB'));
-      box.append(field('Gain range min / max (dB)', el('div', { class: 'pair' }, [numIn(p, 'gmin', 1, 0, 40), numIn(p, 'gmax', 1, 0, 40)])));
-      box.append(field('Max total output (dBm)', numIn(p, 'pmax', 0.5, 10, 30), 'Shared by every channel in the fiber'));
+      // one column per direction; a blank return setting copies A→Z, and a blank target follows Amp output in the header
+      const rows = [p.ctl === 'auto' ? ['Output target (dBm/ch)', 'target', 0.5, -10, 10] : ['Gain (dB)', 'gain', 0.5, 0, 40], ['Noise figure (dB)', 'nf', 0.1, 3, 12], ['Min gain (dB)', 'gmin', 1, 0, 40], ['Max gain (dB)', 'gmax', 1, 0, 40], ['Max total output (dBm)', 'pmax', 0.5, 10, 30]];
+      const head = (d, role) => el('b', { text: d + (role ? ' · ' + role : '') }), grid = el('div', { class: 'dirgrid' + (two ? '' : ' one') }, [el('span'), head('A→Z', R && R.fwd), ...(two ? [head('Z→A', R && R.rev)] : [])]);
+      for (const [lab, k, st, mn, mx] of rows) {
+        const fwd = numIn(p, k, st, mn, mx, k === 'target', k === 'target' ? String(S.g.launch) : undefined); fwd.setAttribute('aria-label', lab + ', A to Z');
+        grid.append(el('span', { class: 'dlab', text: lab }), fwd);
+        if (two) { const rv = numIn(p, k + 'Rev', st, mn, mx, true, String(p[k] === '' ? S.g.launch : p[k])); rv.setAttribute('aria-label', lab + ', Z to A'); grid.append(rv); }
+      }
+      box.append(grid, el('p', { class: 'muted small', text: two ? 'A blank Z→A box copies A→Z. A blank target follows Amp output in the header.' : 'On a single fiber this amplifier passes A→Z only: make it BiDi for the return.' }));
       box.append(adv(field('Max total input (dBm)', numIn(p, 'pinMax', 0.5, -10, 20), 'The most total power (all channels together) the input stage takes. Above it the amplifier is overloaded: an alarm tells you, and well above it the input stage saturates and can be damaged. Typical 8 to 12 dBm.'), +p.pinMax !== 10));
-      box.append(adv(field('Return direction: noise figure (dB)', numIn(p, 'nfRev', 0.1, 3, 12, true, String(p.nf)), 'Blank = same as forward. Also below: gain range and max output for the other amplifier in this box.'), isSet(p.nfRev)));
-      box.append(adv(field('Return: gain range min / max (dB)', el('div', { class: 'pair' }, [numIn(p, 'gminRev', 1, 0, 40, true, String(p.gmin)), numIn(p, 'gmaxRev', 1, 0, 40, true, String(p.gmax))])), isSet(p.gminRev) || isSet(p.gmaxRev)));
-      box.append(adv(field('Return: max total output (dBm)', numIn(p, 'pmaxRev', 0.5, 10, 30, true, String(p.pmax))), isSet(p.pmaxRev)));
       box.append(adv(field('Control response (µs)', numIn(p, 'agcUs', 5, 0, 5000, true, String(S.g.agcUs ?? PHY.TRANSIENT.agcUs)), 'Blank = the global setting. How fast the gain control reacts when channels vanish (Transients tab).'), isSet(p.agcUs)));
       box.append(field('Gain-tilt control', selIn(p, 'tiltCtl', [['true', 'On: re-flatten the band'], ['false', 'Off: SRS tilt accumulates']]), 'Counters Raman tilt from the span before it'));
     } else if (n.type === 'roadm') {

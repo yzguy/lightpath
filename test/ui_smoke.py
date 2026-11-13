@@ -307,6 +307,21 @@ class UI(unittest.TestCase):
         self.add('trx')
         self.assertEqual(lights(), ['port off'], 'a transponder with no partner is unlit')
 
+    def test_amplifier_shows_both_directions(self):
+        pg = self.page
+        self.explore('dci')
+        glyphs = lambda name: self.node(name).locator('text.glyph').all_text_contents()
+        self.assertEqual(glyphs('BST-A'), ['BST', 'PRE'], 'the A side unit boosts A to Z and pre-amplifies Z to A')
+        self.assertEqual(glyphs('PRE-B'), ['PRE', 'BST'])
+        self.node('BST-A').hover()
+        tip = pg.locator('#hovtip').inner_text()
+        self.assertIn('A→Z · Booster', tip); self.assertIn('Z→A · Preamp', tip)
+        self.node('BST-A').click()
+        self.assertEqual(pg.locator('.dirgrid b').all_inner_texts(), ['A→Z · Booster', 'Z→A · Preamp'])
+        pg.locator('#f-targetRev').fill('-3')
+        self.node('BST-A').hover()
+        self.assertIn('-17.0 → -3.0 dBm/ch', pg.locator('#hovtip').inner_text(), 'the Z to A column sets the return amplifier')
+
     def test_palette_fits_with_its_tools(self):
         pg = self.page
         self.explore()

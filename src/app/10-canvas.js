@@ -111,6 +111,15 @@ function clientLamp(n, i, line) {
   const own = p.status === 'ok' ? 'good' : p.status === 'down' ? 'bad' : 'warn';
   return [RANK[Math.max(RANK.indexOf(line), RANK.indexOf(own))], p.status === 'ok' ? '' : `Client ${i + 1} (${p.optic.name}): ${p.notes.join('; ')}`];
 }
+// An amplifier unit holds an amplifier for each direction (the return one uses the settings marked return). Its role in each follows the cables either
+// side of it along the service path: fiber out is a booster, fiber in a preamp, fiber both sides in-line. Null off the path.
+const ROLE = { pf: 'Booster', fp: 'Preamp', ff: 'In-line', pp: 'Amplifier' }, ROLE_ABBR = { Booster: 'BST', Preamp: 'PRE', 'In-line': 'ILA', Amplifier: 'AMP' };
+function ampRoles(n) {
+  const p = lastRes && lastRes.path, k = p ? p.nodes.indexOf(n.id) : -1; if (k <= 0 || k >= p.nodes.length - 1) return null;
+  const kind = id => (link(id).kind === 'fiber' ? 'f' : 'p'), i = kind(p.links[k - 1]), o = kind(p.links[k]);
+  return { fwd: ROLE[i + o], rev: ROLE[o + i], right: node(p.nodes[k + 1]).x >= node(p.nodes[k - 1]).x };
+}
+const oneWayAmp = n => !n.p.bidi && S.links.some(l => (l.a === n.id || l.b === n.id) && l.p.single); // isolators pass one direction of a single fiber
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 const weakPorts = n => !!n.p && !!n.p.degPorts && Object.values(n.p.degPorts).some(v => +v > 0);
 function nodeShape(n) {
@@ -174,8 +183,12 @@ function nodeShape(n) {
     for (const [sd, x] of [['w', -26], ['e', 26]]) if (n.p.sides.includes(sd)) { const e = sv('text', { x, y: 14, class: 'glyph small', 'text-anchor': 'middle' }); e.textContent = sd.toUpperCase(); g.append(e); }
     if (n.p.p1310 || n.p.osc) { g.append(sv('line', { x1: 0, y1: 20, x2: 0, y2: 30, class: 'thin' }), sv('circle', { cx: 0, cy: 32, r: 2.5, class: 'led' })); const e = sv('text', { x: 8, y: 36, class: 'glyph small' }); e.textContent = n.p.osc && n.p.p1310 ? 'OSC 1310' : n.p.osc ? 'OSC' : '1310'; g.append(e); }
   } else if (n.type === 'edfa') {
-    g.append(sv('path', { d: 'M-26,-26 L30,0 L-26,26 Z', class: 'body' }));
-    const t = sv('text', { x: -18, y: 4, class: 'glyph small' }); t.textContent = 'EDFA'; g.append(t);
+    if (oneWayAmp(n)) { g.append(sv('path', { d: 'M-26,-26 L30,0 L-26,26 Z', class: 'body' })); const t = sv('text', { x: -18, y: 4, class: 'glyph small' }); t.textContent = 'EDFA'; g.append(t); }
+    else { // two amplifiers, one per direction: the top one points right, each named by its role in the direction it points
+      const R = ampRoles(n), [rt, lt] = !R ? ['', ''] : R.right ? [R.fwd, R.rev] : [R.rev, R.fwd];
+      g.append(sv('path', { d: 'M-26,-26 L30,-14 L-26,-2 Z', class: 'body' }), sv('path', { d: 'M30,2 L-26,14 L30,26 Z', class: 'body' }));
+      for (const [txt, x, y, anchor] of [[ROLE_ABBR[rt], -22, -10, 'start'], [ROLE_ABBR[lt], 26, 18, 'end']]) if (txt) { const t = sv('text', { x, y, class: 'glyph small', 'text-anchor': anchor }); t.textContent = txt; g.append(t); }
+    }
   } else if (n.type === 'roadm') {
     g.append(sv('circle', { r: 32, class: 'body' }));
     g.append(sv('path', { d: 'M-18,-8 L18,-8 M12,-14 L18,-8 L12,-2 M18,8 L-18,8 M-12,2 L-18,8 L-12,14', class: 'thin' }));
@@ -315,6 +328,14 @@ function tipFor(kind, id) {
       else if (!svc) note('Click it to show its results.');
       if (lt === 'warn' || lt === 'bad') note(why.charAt(0).toUpperCase() + why.slice(1)); // why its status light is amber or red
       if (n.type === 'mxp') n.p.clients.forEach((c, i) => { const bad = clientLamp(n, i, lt)[1]; if (bad) note(bad); });
+    }
+    else if (n.type === 'edfa' && !oneWayAmp(n) && hopsOfNode(lastRes, n).length) { // both amplifiers of the unit, each with its role
+      const R = ampRoles(n) || {};
+      for (const [res, d, role] of [[lastRes, 'A→Z', R.fwd], [lastRes.rev && lastRes.rev.mode ? lastRes.rev : null, 'Z→A', R.rev]]) {
+        const h = hopsOfNode(res, n); if (!h.length) continue; const a = h[0].in.sig, z = h[h.length - 1].out.sig;
+        row(d + (role ? ' · ' + role : ''), a > -90 && z > -90 ? `${f1(a)} → ${f1(z)} dBm/ch, gain ${sgn(z - a)} dB` : 'no light', true);
+      }
+      if (hs.length) tail(hs[hs.length - 1]); // OSNR and load: the direction the results show
     }
     else if (hs.length) { const a = hs[0], z = hs[hs.length - 1]; row('Input', pw(a.in.sig)); row('Output', pw(z.out.sig)); lossRow(a.in.sig, z.out.sig); tail(z); }
     else note(r && r.mode ? 'Not on the service path.' : 'No service to measure yet.');
