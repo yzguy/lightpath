@@ -20,7 +20,7 @@
       goals: [goalUp(), goalKeep('zr400')],
       hints: ['Look at the received power in the KPI row and the alarm next to it.', 'A receiver has an overload point as well as a sensitivity floor. Too much light is also a fault.', 'Two ways in: take the power down at the transmitter, or add loss on the path (a VOA, or extra loss on the span).'],
       answer: 'The receiver overloads above 0 dBm. Lower the transmit power, or put a fixed attenuator (a VOA, from the palette) in the path. On short links with no amplifier the span loss is tiny, so a transmitter at full power has to be padded down.',
-      build() { const a = N('trx', 'TRX-A', 150, 220, { tx: 3 }), z = N('trx', 'TRX-Z', 800, 220, { tx: 3 }); return { nodes: [a, z], links: [L(a, z, 'fiber', { len: 1, extra: 0 })], g: { nch: 1, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } }; } },
+      build() { const a = N('trx', 'TRX-A', 150, 220, { tx: 3 }), z = N('trx', 'TRX-Z', 800, 220, { tx: 3 }); return { nodes: [a, z], links: [L(a, z, 'fiber', { len: 1, extra: 0 })], g: { nch: 1, df: 100, launch: 0 }, svc: { a: a.id, z: z.id } }; } },
     { id: 'port', level: 1, title: 'One wavelength is weak', topic: 'ports',
       story: 'Fifteen channels on this line are healthy, but the 10G service in the middle has been raising a warning ever since a technician swapped a card at the multiplexer.',
       goals: [goalUp(), goalKeep('dwdm10f')],
@@ -110,7 +110,7 @@
       goals: [goalUp(2), goalKeep('zrp400'), { text: 'The route is still 200 km or more of fiber', ok: S => S.links.filter(l => l.kind === 'fiber').reduce((a, l) => a + (+l.p.len || 0), 0) >= 200 }],
       hints: ['Read the received power in the KPI row. 210 km of fiber loses over 40 dB.', 'Drag amplifiers from the palette onto the span, or use the fix button on a span\'s alarm. Each one splits the span in two.', 'Shorter spans first, but do not forget the last one: the receiver needs enough power too, so an amplifier close to each end helps.'],
       answer: 'Light loses about 0.2 dB per km, so 210 km costs over 40 dB, more than a receiver can recover from. Three amplifiers split it into four spans of about 52 km: each loses about 10 dB, the amplifiers restore the level each time, and the last one hands the receiver a strong signal. The OSNR from four short spans beats the OSNR from one long one by a wide margin.',
-      build() { const a = N('trx', 'TRX-A', 120, 220, { mode: 'zrp400' }), z = N('trx', 'TRX-Z', 840, 220, { mode: 'zrp400' }); return { nodes: [a, z], links: [L(a, z, 'fiber', { len: 210 })], g: { nch: 16, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } }; } },
+      build() { const a = N('trx', 'TRX-A', 120, 220, { mode: 'zrp400' }), z = N('trx', 'TRX-Z', 840, 220, { mode: 'zrp400' }); return { nodes: [a, z], links: [L(a, z, 'fiber', { len: 210 })], g: { nch: 16, df: 100, launch: 0 }, svc: { a: a.id, z: z.id } }; } },
     { id: 'raman', level: 3, title: 'No room for a hut', topic: 'raman',
       story: 'A 160 km span has to carry 400G ZR+ between two sites. There is no power, building or access at the midpoint, so no amplifier can go there. The only equipment you can change is at the two ends.',
       goals: [goalUp(1.5), goalKeep('zrp400'), { text: 'No amplifier added in the span (still two EDFAs, 150 km or more of fiber)', ok: S => S.nodes.filter(n => n.type === 'edfa').length <= 2 && S.links.filter(l => l.kind === 'fiber').reduce((a, l) => a + (+l.p.len || 0), 0) >= 150 }],
@@ -118,14 +118,14 @@
       answer: 'A backward Raman pump of about 1 W amplifies the signal inside the last tens of kilometres of the span, where it is weakest, so the noise it adds is far less than one lumped amplifier would add after all 160 km of loss. The cost: more nonlinearity, and a Class 4 laser above about 1 W that needs interlocks and a safety procedure.',
       build() { const p = PRESETS.dci.build(); p.nodes.filter(n => n.type === 'trx').forEach(n => { n.p.mode = 'zrp400'; }); p.links.find(l => l.kind === 'fiber').p.len = 160; return p; } },
     { id: 'filters', level: 3, title: 'Death by a thousand filters', topic: 'filter',
-      story: 'Someone put a full ROADM in every hut along 660 km, twelve in all. Only the two end sites need to add or drop anything. The line passes its power checks, yet the 400G service will not come up.',
+      story: 'Someone put a full ROADM in every hut along 660 km, twelve in all, on a tight 75 GHz grid. Only the two end sites need to add or drop anything. The line passes its power checks, yet the 400G service will not come up.',
       goals: [goalUp(2), goalKeep('zrp400'), { text: 'The route is still 600 km or more of fiber', ok: S => S.links.filter(l => l.kind === 'fiber').reduce((a, l) => a + (+l.p.len || 0), 0) >= 600 }],
       hints: ['Read the headline: power is fine, so what else gets worse at every device?', 'Each WSS cuts a little off the edges of the passband. Twelve of them in a row cut a lot. The Spectrum tab shows the passband.', 'A site that only passes the light through needs only gain. A cheaper, wider device can do that job.'],
       answer: 'Each ROADM narrows the passband slightly, and the penalty adds up: after twelve the filtering costs well over a dB and the service fails. The huts that only pass light through need amplifiers, not ROADMs. Replace the ten middle ROADMs with in-line amplifiers and keep the two end ROADMs where channels are added and dropped. (Widening the grid to 100 GHz helps too but is not enough alone.)',
       build() { const n = 12, nodes = [], links = [], t = (nm, x) => N('trx', nm, x, 300, { mode: 'zrp400' }), a = t('TRX-A', 40), z = t('TRX-Z', 1240), r = [];
         for (let i = 0; i < n; i++) r.push(N('roadm', 'ROADM-' + (i + 1), 120 + i * 95, 180));
         nodes.push(a, ...r, z); links.push(L(a, r[0], 'patch')); for (let i = 0; i < n - 1; i++) links.push(L(r[i], r[i + 1], 'fiber', { len: 60 })); links.push(L(r[n - 1], z, 'patch'));
-        return { nodes, links, g: { nch: 32, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } }; } },
+        return { nodes, links, g: { nch: 32, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } }; } }, // at 100 GHz the slot is wide enough that the filters barely matter
     { id: 'monday', level: 3, title: 'Monday morning', topic: 'fail',
       story: 'The overnight alert says the A–Z service is down. Operations replaced the cable, but the link is still not right. There may be more than one thing wrong.',
       goals: [goalUp(), goalKeep('zrp400')],

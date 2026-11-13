@@ -200,9 +200,9 @@ class UI(unittest.TestCase):
     def test_background_channels_are_shown(self):
         pg = self.page
         self.explore('dci')
-        self.assertEqual(pg.locator('.lbg').first.text_content(), '+15 background ch')
+        self.assertEqual(pg.locator('.lbg').first.text_content(), '+13 background ch')  # 16 on the line, 3 of them cabled
         self.open_tab('Instruments', 'Spectrum')
-        self.assertEqual(pg.locator('.sp-bg').count(), 15)
+        self.assertEqual(pg.locator('.sp-bg').count(), 13)
         self.assertEqual(pg.locator('.sp-me').count(), 1)
 
     def test_learn_try_it_and_expert_tabs(self):
@@ -231,13 +231,21 @@ class UI(unittest.TestCase):
 
     def test_port_labels_clear_the_devices(self):
         self.explore()
-        for preset in ['reach', 'ports', 'olp', 'odf']:
+        for preset in self.page.evaluate("[...document.querySelectorAll('#preset option')].map(o => o.value).filter(Boolean)"):
             self.page.select_option('#preset', preset)
-            hits = self.page.evaluate("""(() => { const bodies = [...document.querySelectorAll('.node .body:not(circle)')].map(e => e.getBoundingClientRect()), hit = [];
-              for (const t of document.querySelectorAll('.plabel')) { const r = t.getBoundingClientRect();
-                if (bodies.some(b => r.left < b.right - 1 && r.right > b.left + 1 && r.top < b.bottom - 1 && r.bottom > b.top + 1)) hit.push(t.textContent); }
+            hits = self.page.evaluate("""(() => { const ov = (r, b) => r.left < b.right - 1 && r.right > b.left + 1 && r.top < b.bottom - 1 && r.bottom > b.top + 1;
+              const bodies = [...document.querySelectorAll('.node .body:not(circle), .nlabel')].map(e => e.getBoundingClientRect()), hit = [];
+              const shown = [...document.querySelectorAll('.plabel')].filter(t => t.getAttribute('visibility') !== 'hidden'), R = shown.map(t => t.getBoundingClientRect());
+              shown.forEach((t, i) => { if (bodies.some(b => ov(R[i], b)) || R.some((q, j) => j > i && ov(R[i], q))) hit.push(t.textContent); });
               return hit; })()""")
             self.assertEqual(hits, [], preset)
+
+    def test_starter_lab_names_every_port(self):
+        self.explore()
+        self.page.select_option('#preset', 'dci')
+        shown = self.page.evaluate("[...document.querySelectorAll('.plabel')].filter(t => t.getAttribute('visibility') !== 'hidden').map(t => t.textContent)")
+        for name in ['P8 · 32', 'P9 · 33', 'P10 · 34', 'LINE', 'COM', 'IN', 'OUT']:
+            self.assertIn(name, shown)
 
     def test_hover_readout(self):
         pg = self.page

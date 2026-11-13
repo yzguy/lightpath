@@ -4,6 +4,8 @@ const PHY = require('../src/engine.js');
 const M = require('../src/model.js');
 
 const build = k => { const p = M.PRESETS[k].build(); return { nodes: p.nodes, links: p.links, g: p.g, svc: p.svc, flows: p.flows }; };
+// The same lab with its transponders unplugged from the mux ports: channels come from Line load and the plan, not the cabling.
+const uniform = k => { const S = build(k); S.links.forEach(l => { l.p.mport = null; }); return S; };
 const clone = o => JSON.parse(JSON.stringify(o));
 
 test('presets simulate to their intended status', () => {
@@ -41,7 +43,7 @@ test('ROADM triangle restores around a cut, with more distance', () => {
 });
 
 test('light does not route through a third transponder', () => {
-  const S = build('dci'), ids = S.nodes.filter(n => n.type === 'trx').map(n => n.id);
+  const S = uniform('dci'), ids = S.nodes.filter(n => n.type === 'trx').map(n => n.id);
   S.svc = { a: ids[0], z: ids[1] }; // two transponders on the same mux
   const r = M.simulate(S);
   assert.ok(r.path.nodes.every((id, i) => i === 0 || i === r.path.nodes.length - 1 || S.nodes.find(n => n.id === id).type !== 'trx'));
@@ -64,7 +66,7 @@ test('a very long unamplified span is LOS, and CD limit takes 400ZR down', () =>
 });
 
 test('mode mismatch between ends takes the link down', () => {
-  const S = build('dci'); S.nodes.find(n => n.id === S.svc.z).p.mode = 'c100';
+  const S = uniform('dci'); S.nodes.find(n => n.id === S.svc.z).p.mode = 'c100';
   const r = M.simulate(S);
   assert.equal(r.status, 'down');
   assert.match(r.headline, /Mode mismatch/);
@@ -86,7 +88,7 @@ test('simulate does not mutate the topology', () => {
 });
 
 test('amplifier total-output limit is enforced and flagged', () => {
-  const S = build('lh'); S.g.nch = 96; S.g.launch = 6;
+  const S = uniform('lh'); S.g.df = 50; S.g.nch = 96; S.g.launch = 6; // 96 channels fit the C band at 50 GHz
   const r = M.simulate(S);
   assert.ok(r.alarms.some(a => /total output limit/.test(a.text)));
 });
@@ -108,7 +110,7 @@ test('sanitize: drops junk, fills defaults, keeps valid data', () => {
   assert.deepEqual([v.name, v.x, v.y, v.p.att], ['7', 0, 0, 5]);
   assert.equal(c.nodes[0].p.mode, 'zr400');
   assert.equal(c.links.find(l => l.kind === 'fiber').p.fiber, 'smf');
-  assert.deepEqual(c.g, { nch: 16, df: 75, launch: 1.5, neighbors: "same", reopt: false, plan: null, tempC: 27, eolSpan: 1, eolTrx: 0.5, rampMs: 0, lossPct: 50, agcUs: 20, cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60, devRate: 0.02 });
+  assert.deepEqual(c.g, { nch: 16, df: 100, launch: 1.5, neighbors: "same", reopt: false, plan: null, tempC: 27, eolSpan: 1, eolTrx: 0.5, rampMs: 0, lossPct: 50, agcUs: 20, cutRate: 3, mttr: 12, detectMs: 5, switchMs: 30, sharedSec: 3, restoreSec: 60, devRate: 0.02 });
   assert.deepEqual(c.svc, { a: null, z: S.svc.z });
   assert.ok(M.simulate(c).status); // and the cleaned topology simulates without throwing
 });
@@ -123,22 +125,24 @@ test('required OSNR is cached per mode', () => {
 });
 
 test('per-span channel loading: fewer lit channels on a span means less NLI downstream', () => {
-  const S = build('lh'); S.g.launch = 3;
+  const S = uniform('lh'); S.g.launch = 3;
   const base = M.simulate(S);
   S.links.filter(l => l.kind === 'fiber').forEach(l => (l.p.nch = 4));
   const thin = M.simulate(S);
   assert.ok(thin.snrNli > base.snrNli, 'NLI should drop');
   assert.ok(thin.hops.some(h => h.kind === 'span' && h.nch === 4));
-  assert.equal(base.hops.filter(h => h.kind === 'span')[0].nch, 64);
+  assert.equal(base.hops.filter(h => h.kind === 'span')[0].nch, 48);
 });
 
 test('channels that do not fit the C-band grid raise an alarm', () => {
-  const S = build('lh'); // 64 ch at 75 GHz fits exactly
+  const S = uniform('lh'); // 48 ch at 100 GHz fits exactly
   assert.ok(!M.simulate(S).alarms.some(a => /do not fit/.test(a.text)));
   S.g.nch = 96;
   assert.ok(M.simulate(S).alarms.some(a => /do not fit/.test(a.text)));
-  S.g.nch = 64; S.g.df = 100;
+  S.g.nch = 64;
   assert.ok(M.simulate(S).alarms.some(a => /do not fit/.test(a.text)));
+  S.g.df = 75; // 64 fit a 75 GHz grid
+  assert.ok(!M.simulate(S).alarms.some(a => /do not fit/.test(a.text)));
 });
 
 test('sanitize: span channel override must be blank or >= 1', () => {
@@ -451,14 +455,14 @@ test('Raman pump direction: forward lifts the signal early (better ASE) but pays
 
 test('Raman pump depletion: a full band on a short span with a modest pump loses gain that a few channels keep', () => {
   const gainFor = nch => {
-    const S = build('dci'), f = S.links.find(l => l.kind === 'fiber'); f.p.len = 50; f.p.raman = 300; S.g.nch = nch; S.g.launch = 3;
+    const S = uniform('dci'), f = S.links.find(l => l.kind === 'fiber'); f.p.len = 50; f.p.raman = 300; S.g.nch = nch; S.g.launch = 3;
     return M.simulate(S, undefined, { single: true }).hops.find(h => h.kind === 'span').raman;
   };
   assert.ok(gainFor(2) > gainFor(96) + 0.2, `${gainFor(2)} vs ${gainFor(96)}`);
 });
 
 test('cross-phase modulation penalises direct-detection channels only, more beside coherent neighbours', () => {
-  const S = build('sfp10'); S.g.nch = 40; S.g.launch = 3;
+  const S = uniform('sfp10'); S.g.nch = 40; S.g.launch = 3;
   const same = M.simulate(S, undefined, { single: true });
   assert.ok(same.xpmPen > 0);
   const coh = clone(S); coh.g.neighbors = 'coh';
@@ -499,7 +503,7 @@ test('the service channel row matches the headline numbers, and every channel ge
 });
 
 test('a mixed line: each channel has its own mode, and a 10G channel beside 400G gets an XPM penalty', () => {
-  const S = build('dci');
+  const S = uniform('dci');
   S.nodes.filter(isTrx => isTrx.type === 'trx').forEach(n => (n.p.mode = 'dwdm10f'));
   S.g.df = 75;
   const plan = [];
@@ -1154,7 +1158,7 @@ test('resilience: no route is reported, availability defaults load, and sanitize
   const T = build('mesh'); T.g.cutRate = 1e9; T.g.mttr = 'x'; T.g.switchMs = -5;
   const g = M.sanitize(T).g; assert.equal(g.cutRate, 50); assert.equal(g.mttr, 12); assert.equal(g.switchMs, 0);
   assert.deepEqual(Object.keys(M.RESIL).sort(), ['cutRate', 'detectMs', 'devRate', 'mttr', 'restoreSec', 'sharedSec', 'switchMs']);
-  assert.equal(M.resilience(build('dci')).length, 1, 'no plan: just the service');
+  assert.equal(M.resilience(uniform('dci')).length, 1, 'no plan: just the service');
 });
 
 // ---- power transients when channels drop ----
@@ -1163,7 +1167,7 @@ test('transients: a cascade of gain-controlled amplifiers adds up the surge each
   const amps = r.hops.filter(h => h.kind === 'amp');
   assert.equal(t.rows.length, amps.length);
   const T = PHY.TRANSIENT, f = 1 - Math.exp(-T.agcUs / T.tauUs), n = t.rows[0].n, lost = Math.max(1, Math.round(0.5 * (n - 1)));
-  assert.equal(n, 64); assert.equal(t.rows[0].lost, lost);
+  assert.equal(n, 48); assert.equal(t.rows[0].lost, lost);
   assert.ok(Math.abs(t.rows[0].rawDb - 10 * Math.log10(n / (n - lost))) < 1e-9);
   assert.ok(Math.abs(t.rows[0].peakDb - t.rows[0].rawDb * f) < 1e-9);
   assert.ok(t.rows.every((x, i) => i === 0 || x.cumDb > t.rows[i - 1].cumDb), 'excursions accumulate along the cascade');
@@ -1497,7 +1501,7 @@ test('client protection in the availability estimate: spares and dual-homing cut
 
 // ---- coupled-wave Raman solver in the line simulation ----
 const ramanLine = (opts = {}) => {
-  const S = build('dci'), f = S.links.find(l => l.kind === 'fiber'); f.p.len = 110; f.p.raman = opts.mw ?? 800; f.p.ramanPumps = opts.pumps ?? 1; f.p.ramanDir = opts.dir ?? 'back'; f.p.ramanFull = !!opts.full;
+  const S = uniform('dci'), f = S.links.find(l => l.kind === 'fiber'); f.p.len = 110; f.p.raman = opts.mw ?? 800; f.p.ramanPumps = opts.pumps ?? 1; f.p.ramanDir = opts.dir ?? 'back'; f.p.ramanFull = !!opts.full;
   S.g.nch = opts.nch ?? 32; S.g.df = 75; S.g.launch = opts.launch ?? 0;
   return { S, f };
 };
@@ -1678,8 +1682,16 @@ test('cabling defines channels: two transponders on one port, a missing port and
   const d = M.derive(S); assert.equal(d.paired, 2); assert.ok(d.dark.some(x => /will never lock/.test(x.why)));
 });
 
+test('the starter labs are plugged in by mux port, with the results of the uniform line', () => {
+  for (const k of ['dci', 'lh', 'sfp10', 'sfp10dcm', 'mxp', 'olp', 'odf']) {
+    const c = M.simulate(build(k)), u = M.simulate(uniform(k));
+    assert.ok(c.derived, `${k} is cabled`); assert.equal(c.status, u.status, k); assert.ok(Math.abs(c.gosnr - u.gosnr) < 0.05, `${k}: ${c.gosnr} vs ${u.gosnr}`);
+    assert.equal(c.derived.dark.length, 0, `${k}: every transponder has a partner`);
+  }
+});
+
 test('cabling defines channels: a lab without mux ports behaves as before, and ports survive sanitize', () => {
-  assert.equal(M.derive(build('mxp')), null); assert.equal(M.derive(build('dci')), null);
+  assert.equal(M.derive(uniform('mxp')), null); assert.equal(M.derive(uniform('dci')), null);
   const S = build('ports'), c = M.sanitize(clone(S));
   assert.equal(M.derive(c).paired, 3);
   const bad = clone(S); bad.links.forEach(l => { if (l.p.mport === 2) l.p.mport = 'x'; if (l.p.mport === 3) l.p.mport = -4; });
@@ -1799,7 +1811,7 @@ test('single fiber: both ends on the same band, or a wrong receive slot, is dark
 });
 
 test('single fiber: a channel needs a different slot each way, and no other channel may use either', () => {
-  const S = M.sanitize(build('dci')), fib = S.links.find(l => l.kind === 'fiber'); fib.p.single = true;
+  const S = M.sanitize(uniform('dci')), fib = S.links.find(l => l.kind === 'fiber'); fib.p.single = true;
   S.nodes.forEach(n => { if (n.type === 'edfa') n.p.bidi = true; }); // the line's amplifiers have to pass both directions on a single fiber
   S.g.plan = M.planFromUniform(S.g, 'zrp400'); S.g.nch = S.g.plan.length;
   let r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /single fiber: each direction needs its own wavelength/);
@@ -2062,7 +2074,7 @@ test('worst channel margin is the worst lit channel in the plan, as the Channels
   const table = Math.min(...r.channels.filter(c => (c.status === 'up' || c.status === 'degraded') && Number.isFinite(c.qMargin)).map(c => c.qMargin));
   assert.ok(Math.abs(r.worstChannelQ - table) < 1e-9);
   assert.ok(r.worstQMargin > r.worstChannelQ + 3, 'the SRS-tilt edge slot of the service mode is a different (higher) number in a mixed line');
-  const u = M.sanitize(build('dci')); assert.equal(M.simulate(u).worstChannelQ, undefined, 'a uniform line has no plan; the tilt-edge slot is the worst channel');
+  const u = M.sanitize(uniform('dci')); assert.equal(M.simulate(u).worstChannelQ, undefined, 'a uniform line has no plan; the tilt-edge slot is the worst channel');
 });
 
 test('a remedy can be carried out on the lab: splice, work, clean and an amplifier in a too-long span', () => {

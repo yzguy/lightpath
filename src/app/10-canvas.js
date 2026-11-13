@@ -14,18 +14,39 @@ const floorScale = (px, k, max = 2.4) => Math.min(max, Math.max(1, px / (k * 1))
 // Half the width and height of each device's body (a ROADM is a circle), so a port label can sit just outside it whatever the cable's angle.
 const HALF = { trx: [46, 22], mxp: [52, 30], mux: [30, 30], panel: [40, 16], splitter: [34, 20], switch: [34, 20], meter: [34, 18], otdr: [34, 18], host: [38, 20], oadm: [34, 20], edfa: [28, 26], roadm: [32, 32], dcm: [26, 18], voa: [26, 18] };
 const edgeDist = (n, ux, uy) => { const [w, h] = HALF[n.type] || [34, 20]; return n.type === 'roadm' ? w : Math.min(Math.abs(ux) > 1e-6 ? w / Math.abs(ux) : Infinity, Math.abs(uy) > 1e-6 ? h / Math.abs(uy) : Infinity); };
-// The label is centred on the wire, far enough out that its own width (it grows when zoomed out) clears the device; on a short cable it stops before the middle.
-function placePortLabel(t, lf) {
-  const d = t.dataset, ux = +d.ux, uy = +d.uy, fs = 11 * lf, w = +d.n * fs * 0.62;
-  const r = Math.min(+d.max, +d.edge + 5 + Math.abs(ux) * w / 2 + Math.abs(uy) * fs * 0.6);
-  t.setAttribute('x', +d.x0 + ux * r); t.setAttribute('y', +d.y0 + uy * r);
+// Each label sits beside its wire (above it, or right of a vertical one), far enough out that its own size (it grows when zoomed out) clears the device, then
+// tries the other side and slides along the cable (up to the middle) until it covers no device, name, fiber label or port label placed before it. Chosen ports go first, then the
+// fixed port names (LINE, COM, IN/OUT); a label with no clear spot is hidden until zooming in makes room.
+let placedLf = null;
+function placePortLabels(lf) {
+  placedLf = lf;
+  const fs = 11 * lf, hh = fs * 0.6, boxes = [], box = (bb, e = 0, f = 0) => boxes.push([bb.x + e + bb.width / 2, bb.y + f + bb.height / 2, bb.width / 2, bb.height / 2]);
+  for (const g of gRoot.querySelectorAll('.node')) { const m = g.transform.baseVal.consolidate(), e = m ? m.matrix.e : 0, f = m ? m.matrix.f : 0; for (const c of g.querySelectorAll('.body, .nlabel, .endtag')) box(c.getBBox(), e, f); }
+  for (const t of gRoot.querySelectorAll('.link .llabel:not(.plabel)')) if (t.textContent) box(t.getBBox());
+  const wires = [...gRoot.querySelectorAll('.link .wire')].map(w => [w.parentNode, ...['x1', 'y1', 'x2', 'y2'].map(k => +w.getAttribute(k))]);
+  const crosses = ([x0, y0, x1, y1], cx, cy, hx, hy) => { // Liang-Barsky: does the segment enter the box?
+    let lo = 0, hi = 1; const dx = x1 - x0, dy = y1 - y0;
+    for (const [p, q] of [[-dx, x0 - (cx - hx)], [dx, cx + hx - x0], [-dy, y0 - (cy - hy)], [dy, cy + hy - y0]]) {
+      if (p === 0) { if (q < 0) return false; } else { const r = q / p; if (p < 0) lo = Math.max(lo, r); else hi = Math.min(hi, r); if (lo > hi) return false; }
+    }
+    return true; };
+  const labels = [...gRoot.querySelectorAll('.plabel')].sort((p, q) => p.classList.contains('pfixed') - q.classList.contains('pfixed'));
+  for (const t of labels) {
+    const d = t.dataset, ux = +d.ux, uy = +d.uy, hw = +d.n * fs * 0.31, ext = Math.abs(ux) * hw + Math.abs(uy) * hh, r0 = +d.edge + 5 + ext, half = +d.len / 2;
+    const side = (Math.abs(uy) * hw + Math.abs(ux) * hh + 2) * -Math.sign((Math.abs(ux) >= Math.abs(uy) ? ux : uy) || 1), at = (r, o) => [+d.x0 + ux * r - uy * o, +d.y0 + uy * r + ux * o];
+    const clear = ([x, y]) => boxes.every(b => Math.abs(x - b[0]) >= hw + b[2] + 2 || Math.abs(y - b[1]) >= hh + b[3] + 1) && wires.every(([g, ...w]) => g === t.parentNode || !crosses(w, x, y, hw, hh));
+    const tries = []; for (let r = r0; r <= Math.max(r0, half - ext); r += 4) tries.push(at(r, side), at(r, -side));
+    const p = tries.find(clear), show = !!p, q = p || tries[0];
+    t.setAttribute('x', q[0]); t.setAttribute('y', q[1]); t.setAttribute('visibility', show ? 'visible' : 'hidden');
+    if (show) boxes.push([q[0], q[1], hw, hh]);
+  }
 }
 function applyView() {
   const k = S.view.k;
   gRoot.setAttribute('transform', `scale(${k}) translate(${-S.view.x},${-S.view.y})`);
   const lf2 = floorScale(9, k * 11);
   gRoot.style.setProperty('--lf1', floorScale(11, k * 11.5)); gRoot.style.setProperty('--lf2', lf2);
-  gRoot.querySelectorAll('.plabel').forEach(t => placePortLabel(t, lf2)); gRoot.style.setProperty('--lf3', floorScale(9, k * 10));
+  if (lf2 !== placedLf || gRoot.querySelector('.plabel:not([x])')) placePortLabels(lf2); gRoot.style.setProperty('--lf3', floorScale(9, k * 10));
   gRoot.querySelectorAll('.faultg').forEach(g => g.setAttribute('transform', `translate(${g.dataset.x},${g.dataset.y}) scale(${floorScale(9, k * 8)})`));
 }
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
@@ -172,14 +193,22 @@ function renderCanvas() {
       if (bg) { const u = sv('text', { x: mx, y: my + 16, class: 'llabel lbg', 'text-anchor': 'middle' }); u.textContent = `+${bg} background ch`; g.append(u); }
       if (cutNow) { const x = sv('text', { x: mx, y: my + 7, class: 'cutmark', 'text-anchor': 'middle' }); x.textContent = '✕'; g.append(x); }
     }
-    { const pl = portLink(l), labelAt = (m, o, text) => { // a port label on the cable just outside the device it names (applyView places it)
+    { const pl = portLink(l), labelAt = (m, o, text, fixedPort) => { // a port label on the cable just outside the device it names (applyView places it)
         const dx = o.x - m.x, dy = o.y - m.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
-        const t = sv('text', { class: 'llabel plabel', 'text-anchor': 'middle', 'dominant-baseline': 'central', 'data-x0': m.x, 'data-y0': m.y, 'data-ux': ux, 'data-uy': uy, 'data-edge': edgeDist(m, ux, uy), 'data-max': d * 0.45, 'data-n': text.length });
+        const t = sv('text', { class: 'llabel plabel' + (fixedPort ? ' pfixed' : ''), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'data-x0': m.x, 'data-y0': m.y, 'data-ux': ux, 'data-uy': uy, 'data-edge': edgeDist(m, ux, uy), 'data-len': d, 'data-n': text.length });
         t.textContent = text; g.append(t); };
       if (pl && l.p.mport != null) { const sd = sideOf(l, pl.m); labelAt(pl.m, pl.t, pl.m.type === 'roadm' ? `${sd ? 'D' + sd + '·' : ''}P${l.p.mport + 1}` : `${sd ? sd.toUpperCase() : 'P'}${l.p.mport + 1} · ${sideRange(pl.m, sd)[0] + l.p.mport + 1}`); }
       for (const n of [a, b]) if ((isTri(n) || n.type === 'panel') && sideOf2(l, n)) labelAt(n, n === a ? b : a, sideOf2(l, n).toUpperCase());
       if (clientLink(l)) { const h = a.type === 'host' ? a : b, e = h === a ? b : a; labelAt(h, e, `eth${(l.p.hport ?? 0) + 1}`); if (e.type === 'mxp') labelAt(e, h, `C${(l.p.cport ?? 0) + 1}`); }
-      for (const n of [a, b]) if ((n.type === 'oadm' || n.type === 'roadm') && !(pl && pl.m.id === n.id) && sideOf(l, n)) labelAt(n, n === a ? b : a, n.type === 'roadm' ? 'D' + sideOf(l, n) : SIDE[sideOf(l, n)]); }
+      for (const n of [a, b]) if ((n.type === 'oadm' || n.type === 'roadm') && !(pl && pl.m.id === n.id) && sideOf(l, n)) labelAt(n, n === a ? b : a, n.type === 'roadm' ? 'D' + sideOf(l, n) : SIDE[sideOf(l, n)]);
+      // devices whose ports are fixed: an amplifier's in and out follow the light along the service (forward) path
+      const fp = lastRes && lastRes.path, at = fp ? fp.links.indexOf(l.id) : -1;
+      const fixed = (n, o) => isEnd(n) ? (clientLink(l) ? null : 'LINE')
+        : n.type === 'mux' ? (isEnd(o) ? (l.p.mport == null ? 'A/D' : null) : 'COM')
+        : n.type === 'roadm' && isEnd(o) && l.p.mport == null ? 'A/D'
+        : (n.type === 'edfa' || n.type === 'dcm' || n.type === 'voa') && at >= 0 ? (fp.nodes[at] === n.id ? 'OUT' : 'IN')
+        : n.type === 'meter' ? 'IN' : n.type === 'otdr' ? 'OTDR' : null;
+      for (const [n, o] of [[a, b], [b, a]]) { const t = fixed(n, o); if (t) labelAt(n, o, t, true); } }
     lg.append(g);
   }
   const badged = []; // fault badges need the devices in the document to be measured, so they are added after

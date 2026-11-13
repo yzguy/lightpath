@@ -1,6 +1,7 @@
   // ---------- presets ----------
   function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
   function L(a, b, kind, p = {}) { return { id: uid('l'), a: a.id, b: b.id, kind, p: { ...linkDefaults(kind), ...p } }; }
+  // Transponders on a passive mux are plugged in by port; with the defaults (16 ports from slot 24) port 8 (mport 7) passes slot 31, the usual service channel.
   const PRESETS = {
     dci: {
       name: 'DCI: 400ZR over 80 km', build() {
@@ -8,18 +9,18 @@
         const ma = N('mux', 'MUX-A', 230, 220), ba = N('edfa', 'BST-A', 370, 220, { gmin: 5 });
         const pb = N('edfa', 'PRE-B', 640, 220, { gmin: 5 }), mb = N('mux', 'MUX-B', 780, 220);
         const b1 = N('trx', 'TRX-B1', 930, 120), b2 = N('trx', 'TRX-B2', 930, 220), b3 = N('trx', 'TRX-B3', 930, 320);
-        return { nodes: [a1, a2, a3, ma, ba, pb, mb, b1, b2, b3], links: [L(a1, ma, 'patch'), L(a2, ma, 'patch'), L(a3, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, b1, 'patch'), L(mb, b2, 'patch'), L(mb, b3, 'patch')],
-          g: { nch: 16, df: 75, launch: 0 }, svc: { a: a1.id, z: b1.id } };
+        return { nodes: [a1, a2, a3, ma, ba, pb, mb, b1, b2, b3], links: [L(a1, ma, 'patch', { mport: 7 }), L(a2, ma, 'patch', { mport: 8 }), L(a3, ma, 'patch', { mport: 9 }), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, b1, 'patch', { mport: 7 }), L(mb, b2, 'patch', { mport: 8 }), L(mb, b3, 'patch', { mport: 9 })],
+          g: { nch: 16, df: 100, launch: 0 }, svc: { a: a1.id, z: b1.id } };
       }
     },
     lh: {
       name: 'Long haul: 5 spans with ILAs', build() {
-        // 64 channels at 0 dBm each put 12 dBm into the booster and the return-direction preamp, so these two are the high-input type (the default limit is 10 dBm).
+        // 48 channels at 0 dBm each put 12 dBm into the booster and the return-direction preamp, so these two are the high-input type (the default limit is 10 dBm).
         const a = N('trx', 'TRX-A', 60, 120, { mode: 'zrp400' }), ma = N('mux', 'MUX-A', 60, 250), ba = N('edfa', 'BST-A', 220, 250, { gmin: 5, pinMax: 14 });
         const i1 = N('edfa', 'ILA-1', 400, 250), i2 = N('edfa', 'ILA-2', 580, 250), i3 = N('edfa', 'ILA-3', 760, 250), i4 = N('edfa', 'ILA-4', 940, 250);
         const pb = N('edfa', 'PRE-B', 1120, 250, { gmin: 5, pinMax: 14 }), mb = N('mux', 'MUX-B', 1260, 250), z = N('trx', 'TRX-Z', 1260, 120, { mode: 'zrp400' });
-        return { nodes: [a, ma, ba, i1, i2, i3, i4, pb, mb, z], links: [L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, i1, 'fiber', { len: 80 }), L(i1, i2, 'fiber', { len: 95 }), L(i2, i3, 'fiber', { len: 80 }), L(i3, i4, 'fiber', { len: 100 }), L(i4, pb, 'fiber', { len: 85 }), L(pb, mb, 'patch'), L(mb, z, 'patch')],
-          g: { nch: 64, df: 75, launch: 1 }, svc: { a: a.id, z: z.id } };
+        return { nodes: [a, ma, ba, i1, i2, i3, i4, pb, mb, z], links: [L(a, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, i1, 'fiber', { len: 80 }), L(i1, i2, 'fiber', { len: 95 }), L(i2, i3, 'fiber', { len: 80 }), L(i3, i4, 'fiber', { len: 100 }), L(i4, pb, 'fiber', { len: 85 }), L(pb, mb, 'patch'), L(mb, z, 'patch', { mport: 7 })],
+          g: { nch: 48, df: 100, launch: 1 }, svc: { a: a.id, z: z.id } };
       }
     },
     ring: {
@@ -27,7 +28,7 @@
         const ra = N('roadm', 'ROADM-A', 200, 300), rb = N('roadm', 'ROADM-B', 520, 110), rc = N('roadm', 'ROADM-C', 840, 300);
         const ta = N('trx', 'TRX-A', 200, 440, { mode: 'zrp400' }), tc = N('trx', 'TRX-C', 840, 440, { mode: 'zrp400' }), tb = N('trx', 'TRX-B', 520, 0, { mode: 'zrp400' });
         return { nodes: [ra, rb, rc, ta, tb, tc], links: [L(ra, rc, 'fiber', { len: 70 }), L(ra, rb, 'fiber', { len: 100 }), L(rb, rc, 'fiber', { len: 110 }), L(ta, ra, 'patch'), L(tc, rc, 'patch'), L(tb, rb, 'patch')],
-          g: { nch: 48, df: 75, launch: 0 }, svc: { a: ta.id, z: tc.id } };
+          g: { nch: 48, df: 100, launch: 0 }, svc: { a: ta.id, z: tc.id } };
       }
     },
     adddrop: {
@@ -43,7 +44,7 @@
           plan.push(c);
         }
         return { nodes: [ra, rb, rc, ta, tc], links: [L(ra, rb, 'fiber', { len: 80 }), L(rb, rc, 'fiber', { len: 80 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
-          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
+          g: { nch: plan.length, df: 100, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
       }
     },
     mesh: {
@@ -59,7 +60,7 @@
         for (let k = 0; k < 4; k++) ch(32 + k);
         plan.sort((a, b) => a.slot - b.slot);
         return { nodes: [ra, rb, rc, ta, tc], links: [L(ra, rc, 'fiber', { len: 70 }), L(ra, rb, 'fiber', { len: 100 }), L(rb, rc, 'fiber', { len: 110 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
-          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
+          g: { nch: plan.length, df: 100, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
       }
     },
     protect: {
@@ -74,7 +75,7 @@
         ch(31, { svc: true, prot: '1+1' });
         for (let k = 0; k < 4; k++) ch(32 + k);
         return { nodes: [ra, rb, rc, ta, tc], links: [L(ra, rc, 'fiber', { len: 70 }), L(ra, rb, 'fiber', { len: 100 }), L(rb, rc, 'fiber', { len: 110 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
-          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
+          g: { nch: plan.length, df: 100, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
       }
     },
     srlg: {
@@ -86,7 +87,7 @@
         const plan = [], ch = (slot, o = {}) => plan.push({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: slot, prot: '', ...o });
         ch(31, { svc: true, prot: '1+1' }); for (let k = 0; k < 3; k++) ch(32 + k); for (let k = 0; k < 3; k++) ch(24 + k, { from: ra.id, to: rb.id });
         return { nodes: [ra, rb, rc, rd, ta, tc], links: [L(ra, rc, 'fiber', { len: 70, srlg: 'duct1' }), L(ra, rb, 'fiber', { len: 80, srlg: 'duct1' }), L(rb, rc, 'fiber', { len: 80 }), L(ra, rd, 'fiber', { len: 90 }), L(rd, rc, 'fiber', { len: 90 }), L(ta, ra, 'patch'), L(tc, rc, 'patch')],
-          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
+          g: { nch: plan.length, df: 100, launch: 0, plan }, svc: { a: ta.id, z: tc.id } };
       }
     },
     client: {
@@ -98,15 +99,15 @@
         const plan = [], ch = (slot, o = {}) => plan.push({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: slot, prot: '', ...o });
         ch(31, { svc: true, prot: '1+1' }); for (let k = 0; k < 4; k++) ch(32 + k, { from: a1.id, to: z1.id }); for (let k = 0; k < 4; k++) ch(24 + k, { from: a2.id, to: z2.id });
         return { nodes: [a1, a2, z1, z2, ta, tz], links: [L(a1, z1, 'fiber', { len: 90 }), L(a2, z2, 'fiber', { len: 110 }), L(ta, a1, 'patch'), L(ta, a2, 'patch'), L(tz, z1, 'patch'), L(tz, z2, 'patch')],
-          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: ta.id, z: tz.id } };
+          g: { nch: plan.length, df: 100, launch: 0, plan }, svc: { a: ta.id, z: tz.id } };
       }
     },
     mxp: {
       name: 'Muxponder: 4x100G over 400G ZR+', build() {
         const a = N('mxp', 'MXP-A', 80, 220), ma = N('mux', 'MUX-A', 260, 220), ba = N('edfa', 'BST-A', 400, 220, { gmin: 5 });
         const pb = N('edfa', 'PRE-B', 670, 220, { gmin: 5 }), mb = N('mux', 'MUX-B', 810, 220), z = N('mxp', 'MXP-B', 960, 220);
-        return { nodes: [a, ma, ba, pb, mb, z], links: [L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, z, 'patch')],
-          g: { nch: 16, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } };
+        return { nodes: [a, ma, ba, pb, mb, z], links: [L(a, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, z, 'patch', { mport: 7 })],
+          g: { nch: 16, df: 100, launch: 0 }, svc: { a: a.id, z: z.id } };
       }
     },
     mxp2: {
@@ -117,7 +118,7 @@
         const plan = [], ch = (slot, o = {}) => plan.push({ slot, mode: 'zrp400', off: 0, svc: false, from: '', to: '', via: '', conv: '', slot2: slot, prot: '', ...o });
         ch(31, { svc: true, from: a1.id, to: z1.id }); ch(32, { from: a2.id, to: z2.id }); for (let k = 0; k < 6; k++) ch(24 + k);
         return { nodes: [a1, a2, ma, ba, pb, mb, z1, z2], links: [L(a1, ma, 'patch'), L(a2, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, z1, 'patch'), L(mb, z2, 'patch')],
-          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: a1.id, z: z1.id } };
+          g: { nch: plan.length, df: 100, launch: 0, plan }, svc: { a: a1.id, z: z1.id } };
       }
     },
     oadm: {
@@ -133,7 +134,7 @@
         const links = [...a.map((t, k) => L(t, ma, 'patch', { mport: pa[k] })), ...z.map((t, k) => L(t, mz, 'patch', { mport: pzz[k] })), L(ma, ba, 'patch'), L(ba, ab, 'fiber', { len: 40 }), L(ab, ob, 'patch', { sb: 'w' }),
           L(b[0], ob, 'patch', { mport: 0, sb: 'w' }), L(b[1], ob, 'patch', { mport: 1, sb: 'w' }), L(b[2], ob, 'patch', { mport: 0, sb: 'e' }), L(ob, ac, 'fiber', { len: 40, sa: 'e' }), L(ac, oc, 'patch', { sb: 'w' }),
           L(c[0], oc, 'patch', { mport: 0, sb: 'w' }), L(c[1], oc, 'patch', { mport: 0, sb: 'e' }), L(oc, pz, 'fiber', { len: 40, sa: 'e' }), L(pz, mz, 'patch')];
-        return { nodes: [...a, ...b, ...c, ...z, ma, mz, ba, ab, ob, ac, oc, pz], links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: a[2].id, z: z[1].id } };
+        return { nodes: [...a, ...b, ...c, ...z, ma, mz, ba, ab, ob, ac, oc, pz], links, g: { nch: 16, df: 100, launch: 0 }, svc: { a: a[2].id, z: z[1].id } };
       }
     },
     ports: {
@@ -142,7 +143,7 @@
         const ma = N('mux', 'MUX-A', 260, 300, { ports: 16, first: 24 }), mb = N('mux', 'MUX-B', 800, 300, { ports: 16, first: 24 }), ba = N('edfa', 'BST-A', 400, 300, { gmin: 5 }), pb = N('edfa', 'PRE-B', 660, 300, { gmin: 5 });
         const port = [2, 3, 5]; // MUX ports 3, 4 and 6 (slots 27, 28, 30); each transponder follows its port
         return { nodes: [...a, ...z, ma, mb, ba, pb], links: [...a.map((t, k) => L(t, ma, 'patch', { mport: port[k] })), ...z.map((t, k) => L(t, mb, 'patch', { mport: port[k] })), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch')],
-          g: { nch: 16, df: 75, launch: 0 }, svc: { a: a[0].id, z: z[0].id } };
+          g: { nch: 16, df: 100, launch: 0 }, svc: { a: a[0].id, z: z[0].id } };
       }
     },
     roadmports: {
@@ -154,7 +155,7 @@
         a2.p.peer = b1.id; b1.p.peer = a2.id; b2.p.peer = c2.id; c2.p.peer = b2.id;
         const port = (t, r, k) => L(t, r, 'patch', { mport: k });
         return { nodes: [ra, rb, rc, a1, a2, b1, b2, c1, c2], links: [L(ra, rb, 'fiber', { len: 80 }), L(rb, rc, 'fiber', { len: 80 }), L(ra, rc, 'fiber', { len: 70 }), port(a1, ra, 0), port(a2, ra, 1), port(b1, rb, 0), port(b2, rb, 1), port(c1, rc, 0), port(c2, rc, 1)],
-          g: { nch: 12, df: 75, launch: 0 }, svc: { a: a1.id, z: c1.id } };
+          g: { nch: 12, df: 100, launch: 0 }, svc: { a: a1.id, z: c1.id } };
       }
     },
     otdr: {
@@ -179,7 +180,7 @@
         // management domain, each span with its own budget. OADM-1 and OADM-2 also have a 1310 nm port with a 10GBASE-LR client over 15 km of fiber and a patch panel
         // port with a dirty connector (little margin left). The amplifier between OADM-2 and OADM-3 regenerates the OSC but blocks the 1310 nm client.
         return { nodes: [ta, tz, ma, mz, ba, o1, od, o2, ac, o3], links: [L(ta, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, o1, 'fiber', { len: 20 }), L(o1, od, 'fiber', { len: 8 }), L(od, o2, 'fiber', { len: 7 }),
-          L(o2, ac, 'fiber', { len: 40 }), L(ac, o3, 'fiber', { len: 40 }), L(o3, mz, 'patch'), L(mz, tz, 'patch', { mport: 7 })], g: { nch: 8, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
+          L(o2, ac, 'fiber', { len: 40 }), L(ac, o3, 'fiber', { len: 40 }), L(o3, mz, 'patch'), L(mz, tz, 'patch', { mport: 7 })], g: { nch: 8, df: 100, launch: 0 }, svc: { a: ta.id, z: tz.id } };
       }
     },
     cabprot: {
@@ -199,7 +200,7 @@
         const pb = N('edfa', 'PRE-B', 780, 220, { gmin: 5 }), mb = N('mux', 'MUX-B', 910, 220), z = N('mxp', 'MXP-B', 1060, 220);
         const cli = (h, m, k) => L(h, m, 'patch', { hport: 0, cport: k });
         return { nodes: [ha1, ha2, a, ma, ba, pb, mb, z, hb1, hb2], links: [cli(ha1, a, 0), cli(ha2, a, 1), L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 80 }), L(pb, mb, 'patch'), L(mb, z, 'patch'), cli(hb1, z, 0), cli(hb2, z, 1)],
-          g: { nch: 16, df: 75, launch: 0 }, svc: { a: a.id, z: z.id },
+          g: { nch: 16, df: 100, launch: 0 }, svc: { a: a.id, z: z.id },
           flows: [{ a: ha1.id, z: hb1.id, gbps: 60 }, { a: ha2.id, z: hb2.id, gbps: 150 }, { a: hb1.id, z: ha1.id, gbps: 20 }] };
       }
     },
@@ -212,7 +213,7 @@
         const ob = N('oadm', 'OADM-B', 690, 300, { bidi: true, sides: 'ew', wFirst: 24, wPorts: 2, wRole: 'high', eFirst: 30, ePorts: 1, eRole: 'low' });
         const links = [...a.map((t, k) => L(t, ma, 'patch', { mport: k })), L(ma, ob, 'fiber', { len: 25, single: true, sb: 'w' }), L(b[0], ob, 'patch', { mport: 0, sb: 'w' }), L(b[1], ob, 'patch', { mport: 1, sb: 'w' }), L(b[2], ob, 'patch', { mport: 0, sb: 'e' }),
           L(ob, mz, 'fiber', { len: 25, single: true, sa: 'e' }), L(z, mz, 'patch', { mport: 0 })];
-        return { nodes: [...a, ...b, z, ma, ob, mz], links, g: { nch: 3, df: 75, launch: 0 }, svc: { a: a[0].id, z: b[0].id } };
+        return { nodes: [...a, ...b, z, ma, ob, mz], links, g: { nch: 3, df: 100, launch: 0 }, svc: { a: a[0].id, z: b[0].id } };
       }
     },
     bidiamp: {
@@ -233,8 +234,8 @@
         const sw = N('switch', 'SW-Z', 900, 280), pz = N('edfa', 'PRE-Z', 1030, 280, { gmin: 5 }), mz = N('mux', 'MUX-Z', 1190, 280);
         // The booster feeds a 99/1 tap (its monitor port is left free to read the power) and a 50/50 splitter that lights both fibers. The switch at the far end
         // passes port A (60 km) and, being set to auto, goes to port B (80 km) if the light on A is lost. Cut the 60 km fiber, then set the switch to manual.
-        const links = [L(ta, ma, 'patch'), L(ma, ba, 'patch'), L(ba, tap, 'patch', { sb: 'c' }), L(tap, spl, 'patch', { sa: 'a', sb: 'c' }), L(spl, sw, 'fiber', { len: 60, sa: 'a', sb: 'a' }), L(spl, sw, 'fiber', { len: 80, sa: 'b', sb: 'b' }), L(sw, pz, 'patch', { sa: 'c' }), L(pz, mz, 'patch'), L(mz, tz, 'patch')];
-        return { nodes: [ta, tz, ma, ba, tap, spl, sw, pz, mz], links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
+        const links = [L(ta, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, tap, 'patch', { sb: 'c' }), L(tap, spl, 'patch', { sa: 'a', sb: 'c' }), L(spl, sw, 'fiber', { len: 60, sa: 'a', sb: 'a' }), L(spl, sw, 'fiber', { len: 80, sa: 'b', sb: 'b' }), L(sw, pz, 'patch', { sa: 'c' }), L(pz, mz, 'patch'), L(mz, tz, 'patch', { mport: 7 })];
+        return { nodes: [ta, tz, ma, ba, tap, spl, sw, pz, mz], links, g: { nch: 16, df: 100, launch: 0 }, svc: { a: ta.id, z: tz.id } };
       }
     },
     odf: {
@@ -244,8 +245,8 @@
         const ob = N('panel', 'ODF-B', 820, 280, { ports: 12, dirty: { 1: 1.8 } }), pb = N('edfa', 'PRE-B', 960, 280, { gmin: 5 }), mb = N('mux', 'MUX-B', 1090, 280);
         // The booster is patched to the front of ODF-A port 1; the fiber runs from the rear of that port to the rear of ODF-B port 1; the pre-amp hangs off its front.
         // Every mated connector pair costs 0.5 dB, and the connector on ODF-B port 1 is dirty: 1.8 dB more. Clean it in the inspector (Dirty connectors).
-        const links = [L(ta, ma, 'patch'), L(ma, ba, 'patch'), L(ba, oa, 'patch', { sb: 'f1' }), L(oa, ob, 'fiber', { len: 60, sa: 'r1', sb: 'r1' }), L(ob, pb, 'patch', { sa: 'f1' }), L(pb, mb, 'patch'), L(mb, tz, 'patch')];
-        return { nodes: [ta, tz, ma, ba, oa, ob, pb, mb], links, g: { nch: 16, df: 75, launch: 0 }, svc: { a: ta.id, z: tz.id } };
+        const links = [L(ta, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, oa, 'patch', { sb: 'f1' }), L(oa, ob, 'fiber', { len: 60, sa: 'r1', sb: 'r1' }), L(ob, pb, 'patch', { sa: 'f1' }), L(pb, mb, 'patch'), L(mb, tz, 'patch', { mport: 7 })];
+        return { nodes: [ta, tz, ma, ba, oa, ob, pb, mb], links, g: { nch: 16, df: 100, launch: 0 }, svc: { a: ta.id, z: tz.id } };
       }
     },
     sfp10: {
@@ -254,7 +255,7 @@
         const ma = N('mux', 'MUX-A', 240, 220), ba = N('edfa', 'BST-A', 380, 220, { gmin: 3, targetRev: -4 });
         const pb = N('edfa', 'PRE-B', 650, 220, { target: -4, targetRev: 0, gmin: 0 }), mb = N('mux', 'MUX-B', 790, 220);
         const b1 = N('trx', 'SW-B1', 940, 150, { mode: 'dwdm10' }), b2 = N('trx', 'SW-B2', 940, 290, { mode: 'dwdm10' });
-        return { nodes: [a1, a2, ma, ba, pb, mb, b1, b2], links: [L(a1, ma, 'patch'), L(a2, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 60 }), L(pb, mb, 'patch'), L(mb, b1, 'patch'), L(mb, b2, 'patch')],
+        return { nodes: [a1, a2, ma, ba, pb, mb, b1, b2], links: [L(a1, ma, 'patch', { mport: 7 }), L(a2, ma, 'patch', { mport: 8 }), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 60 }), L(pb, mb, 'patch'), L(mb, b1, 'patch', { mport: 7 }), L(mb, b2, 'patch', { mport: 8 })],
           g: { nch: 8, df: 100, launch: 0 }, svc: { a: a1.id, z: b1.id } };
       }
     },
@@ -262,7 +263,7 @@
       name: 'Switch 10G over 120 km with a DCM', build() {
         const a1 = N('trx', 'SW-A1', 80, 220, { mode: 'dwdm10f' }), ma = N('mux', 'MUX-A', 230, 220), ba = N('edfa', 'BST-A', 370, 220, { gmin: 3, targetRev: -4 });
         const pb = N('edfa', 'PRE-B', 640, 220, { target: 2, targetRev: 0, gmin: 0 }), dc = N('dcm', 'DCM-B', 780, 220, { cd: -1360, il: 7 }), mb = N('mux', 'MUX-B', 920, 220), b1 = N('trx', 'SW-B1', 1060, 220, { mode: 'dwdm10f' });
-        return { nodes: [a1, ma, ba, pb, dc, mb, b1], links: [L(a1, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 120 }), L(pb, dc, 'patch'), L(dc, mb, 'patch'), L(mb, b1, 'patch')],
+        return { nodes: [a1, ma, ba, pb, dc, mb, b1], links: [L(a1, ma, 'patch', { mport: 7 }), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 120 }), L(pb, dc, 'patch'), L(dc, mb, 'patch'), L(mb, b1, 'patch', { mport: 7 })],
           g: { nch: 8, df: 100, launch: 0 }, svc: { a: a1.id, z: b1.id } };
       }
     },
@@ -274,13 +275,13 @@
         for (let s = 24; s < 40; s++) plan.push({ slot: s, mode: s === 30 || s === 32 ? 'dwdm10f' : 'zrp400', off: s === 30 || s === 32 ? -3 : 0, svc: s === 31 });
         plan[7].mode = 'dwdm10f'; plan[7].off = -3; // slot 31 is the service: the 10G channel in the middle
         return { nodes: [a, ma, ba, pb, mb, z], links: [L(a, ma, 'patch'), L(ma, ba, 'patch'), L(ba, pb, 'fiber', { len: 60 }), L(pb, mb, 'patch'), L(mb, z, 'patch')],
-          g: { nch: plan.length, df: 75, launch: 0, plan }, svc: { a: a.id, z: z.id } };
+          g: { nch: plan.length, df: 100, launch: 0, plan }, svc: { a: a.id, z: z.id } };
       }
     },
     dark: {
       name: 'Dark fiber: unamplified ZR', build() {
         const a = N('trx', 'TRX-A', 150, 220), z = N('trx', 'TRX-Z', 800, 220);
-        return { nodes: [a, z], links: [L(a, z, 'fiber', { len: 25, extra: 1.5 })], g: { nch: 1, df: 75, launch: 0 }, svc: { a: a.id, z: z.id } };
+        return { nodes: [a, z], links: [L(a, z, 'fiber', { len: 25, extra: 1.5 })], g: { nch: 1, df: 100, launch: 0 }, svc: { a: a.id, z: z.id } };
       }
     },
   };
