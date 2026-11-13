@@ -167,8 +167,8 @@ const LAB_INTRO = {
   otdr: ['The patch-panel lab with an OTDR on one end of the span and a power meter at the other.', 'otdr'],
 };
 function introCard(k) {
-  const it = LAB_INTRO[k]; if (!it || !PRESETS[k]) return null;
-  const [about, topic, own] = it, lt = LEARN_TRY[topic], step = own || (lt && lt[0] === k ? lt[2] : '');
+  const it = LAB_INTRO[k]; if (!it) return null;
+  const [about, topic, own] = it, lt = LEARN_TRY[topic], step = own || (lt[0] === k ? lt[2] : '');
   const box = el('div', { class: 'labintro', id: 'labintro', role: 'note' }, [el('h3', { text: PRESETS[k].name }), el('p', { text: about })]);
   if (step) box.append(el('p', { class: 'try' }, [el('b', { text: 'Try: ' }), step]));
   box.append(el('div', { class: 'acts' }, [el('button', { class: 'btn', type: 'button', text: `Read: ${LEARN[topic][0]}`, onclick: () => learn(topic) })]));

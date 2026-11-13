@@ -86,6 +86,13 @@ class UI(unittest.TestCase):
         self.page.locator('button.tgroup', has_text=group).click()
         self.page.locator('.tab:visible', has_text=name).click()
 
+    def current_tab(self):
+        return self.page.locator('.tab[aria-selected=true]').inner_text()
+
+    def cut_fiber(self, i=0):
+        self.page.locator('.link.k-fiber .hit').nth(i).click(force=True)  # force: a level line has a zero-height box, which Playwright calls invisible
+        self.page.get_by_role('button', name='Cut this fiber').click()
+
     # ---------- tests ----------
     def test_first_run_welcome_and_tour(self):
         pg = self.page
@@ -254,11 +261,10 @@ class UI(unittest.TestCase):
         self.explore('mesh')
         self.assertIn('same four slots', card.inner_text())
         card.locator('button', has_text='Read:').click()
-        self.assertEqual(pg.locator('.tab[aria-selected=true]').inner_text(), 'Topics')
+        self.assertEqual(self.current_tab(), 'Topics')
         self.assertFalse(pg.locator('#btn-reset').is_visible())
         header_h = pg.locator('header').bounding_box()['height']
-        pg.locator('.link.k-fiber .hit').nth(1).click()  # a diagonal one: a level line has a zero-height box, which Playwright calls invisible
-        pg.get_by_role('button', name='Cut this fiber').click()
+        self.cut_fiber()
         self.assertIn('edited', pg.locator('#preset option:checked').inner_text())
         self.assertEqual(pg.locator('header').bounding_box()['height'], header_h, 'the Reset button wrapped the header')
         pg.click('#btn-reset')
@@ -271,7 +277,7 @@ class UI(unittest.TestCase):
         self.explore('dci')
         self.assertEqual(pg.locator('#chsum').inner_text(), '3 channels: 3 up')
         pg.click('#chsum')
-        self.assertEqual(pg.locator('.tab[aria-selected=true]').inner_text(), 'Channels')
+        self.assertEqual(self.current_tab(), 'Channels')
         self.explore('dark')
         self.assertFalse(pg.locator('#chsum').is_visible())
         self.explore('dci')
@@ -284,16 +290,18 @@ class UI(unittest.TestCase):
 
     def test_transponder_lights_show_their_own_line(self):
         pg = self.page
-        lights = lambda: pg.evaluate("Object.fromEntries([...document.querySelectorAll('.node.t-trx')].map(g => [g.querySelector(':scope > title').textContent.split(':')[0], g.querySelector('.led').getAttribute('class')]))")
+        lights = lambda: pg.evaluate("[...document.querySelectorAll('.node.t-trx .led')].map(l => l.getAttribute('class'))")
         self.explore('dci')
-        self.assertEqual(set(lights().values()), {'led good'})
-        self.assertIn('Line port', pg.locator('.node.t-trx .port title').first.text_content())
-        pg.locator('.link.k-fiber .hit').first.click(force=True)  # the lab's one span is level: a zero-height box, which Playwright calls invisible
-        pg.get_by_role('button', name='Cut this fiber').click()
-        self.assertEqual(set(lights().values()), {'led bad'}, 'every pair on the cut line goes dark, not just the service')
-        self.assertIn('fiber cut', pg.locator('.node.t-trx > title').nth(1).text_content())
-        self.explore('ring')
-        self.assertEqual(lights()['TRX-B'], 'led off', 'a transponder with no channel is unlit')
+        self.assertEqual(set(lights()), {'led good'})
+        self.cut_fiber()
+        self.assertEqual(set(lights()), {'led bad'}, 'every pair on the cut line goes dark, not just the service')
+        self.node('TRX-A2').hover()
+        self.assertIn('Line los: LOS at TRX-B2: fiber cut', pg.locator('#hovtip').inner_text())
+        pg.evaluate("localStorage.clear()")
+        pg = self.page = self.open(self.ctx)
+        pg.click('#w-blank')
+        self.add('trx')
+        self.assertEqual(lights(), ['led off'], 'a transponder with no partner is unlit')
 
     def test_palette_fits_with_its_tools(self):
         pg = self.page

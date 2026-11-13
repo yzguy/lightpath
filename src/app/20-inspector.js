@@ -125,7 +125,7 @@ function renderInspectorBody() {
     return;
   }
   if (!sel) {
-    box.append(el('h2', { text: 'Inspector' }), ...[labKey && introCard(labKey)].filter(Boolean), el('p', { class: 'muted', html: 'Select a device or a cable to edit it. Drag the <b>+</b> beside a device onto another to cable them. Try cutting a fiber: select a span, then choose <b>Cut this fiber</b>. Click a transponder to show its channel in the results; hover anything for its power and OSNR.' }));
+    box.append(el('h2', { text: 'Inspector' }), ...[introCard(labKey)].filter(Boolean), el('p', { class: 'muted', html: 'Select a device or a cable to edit it. Drag the <b>+</b> beside a device onto another to cable them. Try cutting a fiber: select a span, then choose <b>Cut this fiber</b>. Click a transponder to show its channel in the results; hover anything for its power and OSNR.' }));
     S.g.eolSpan ??= PHY.EOL.spanLoss; S.g.eolTrx ??= PHY.EOL.trxPen;
     S.g.neighbors ??= 'same';
     S.g.reopt = S.g.reopt === true;

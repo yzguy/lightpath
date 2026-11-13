@@ -77,40 +77,48 @@ const LAMP = { up: 'good', degraded: 'warn', standby: 'off', none: 'off' };
 function endState(n) {
   const r = lastRes, lamp = (st, why) => { why = (why || '').replace(/^Up, but (with a warning: )?/, ''); return [LAMP[st] || 'bad', `line ${(STATUS[st] || st).toLowerCase()}${why ? ': ' + why : ''}`]; };
   if (n.p.fail === 'dead') return ['bad', 'failed'];
-  if (!r) return ['off', 'not carrying a channel'];
-  const D = r.derived, dk = D && D.dark.find(d => d.id === n.id); if (dk) return ['bad', 'no line: ' + dk.why];
-  const i = D ? D.plan.findIndex(c => !c.filler && (c.tx === n.id || c.rx === n.id)) : (r.channels || []).findIndex(c => c.from === n.id || c.to === n.id), c = i >= 0 && r.channels && r.channels[i];
-  const margin = q => Number.isFinite(q) ? `${q.toFixed(1)} dB margin` : '';
-  if (c) return lamp(c.status, c.status === 'up' ? chText(c.slot, true) + ' THz, ' + margin(c.qMargin) : (c.notes || [])[0]);
-  if (S.svc && (S.svc.a === n.id || S.svc.z === n.id)) return lamp(r.status, r.status === 'up' ? margin(r.qMargin) : r.headline);
+  const OFF = ['off', 'not carrying a channel']; if (!r) return OFF;
+  const L = lampData(), D = L.D, dk = D && D.dark.find(d => d.id === n.id); if (dk) return ['bad', 'no line: ' + dk.why];
+  const margin = q => Number.isFinite(q) ? `${f1(q)} dB margin` : '';
+  const chLamp = c => lamp(c.status, c.status === 'up' ? chText(c.slot, true) + ' THz, ' + margin(c.qMargin) : (c.notes || [])[0]);
+  const svcLamp = r => lamp(r.status, r.status === 'up' ? margin(r.qMargin) : r.headline);
+  const c = (r.channels || []).find(c => c.from === n.id || c.to === n.id); if (c) return chLamp(c);
+  if (S.svc.a === n.id || S.svc.z === n.id) return svcLamp(r);
   // a lost service ends the simulation before the other channels are worked out, so a pair without a result is simulated as if it were the service
-  const own = (D ? D.plan : S.g.plan || []).find(c => !c.filler && (D ? [c.tx, c.rx] : [c.from, c.to]).includes(n.id));
-  if (own) { const p = pairRes(own, D); return lamp(p.status, p.status === 'up' ? margin(p.qMargin) : p.headline); }
-  return ['off', 'not carrying a channel'];
+  const own = (D ? D.plan : S.g.plan || []).find(c => !c.filler && [c.from, c.to].includes(n.id));
+  if (own) {
+    const k = own.from + '|' + own.to;
+    if (!L.pairs.has(k)) L.pairs.set(k, MODEL.simulate({ ...S, svc: { a: own.from, z: own.to }, g: D ? S.g : { ...S.g, plan: S.g.plan.map(e => ({ ...e, svc: e === own })) } }));
+    const p = L.pairs.get(k), pc = (p.channels || []).find(c => c.svc);
+    return pc ? chLamp(pc) : svcLamp(p); // its own channel: the pair's headline also counts the channels that are failing around it
+  }
+  return uniformSide(n) ? svcLamp(r) : OFF; // one of the identical channels of a uniform line
 }
-let pairCache = { res: null, m: new Map() };
-function pairRes(c, D) {
-  if (pairCache.res !== lastRes) pairCache = { res: lastRes, m: new Map() };
-  const a = D ? c.tx : c.from, z = D ? c.rx : c.to, k = a + '|' + z;
-  if (!pairCache.m.has(k)) pairCache.m.set(k, MODEL.simulate({ ...S, svc: { a, z }, g: D ? S.g : { ...S.g, plan: S.g.plan.map(e => ({ ...e, svc: e === c })) } }));
-  return pairCache.m.get(k);
+// Kept while the lab is unchanged, so selecting and hovering reuse it: the channel plan (a failed service end stops the simulation before it reports one)
+// and the pairs simulated on their own.
+let lampCtx = { res: null, key: '' };
+function lampData() {
+  if (lampCtx.res === lastRes) return lampCtx;
+  const key = strHash(snapshot());
+  if (key !== lampCtx.key) lampCtx = { key, D: lastRes.derived || MODEL.effective(S)._derived, pairs: new Map() };
+  lampCtx.res = lastRes; return lampCtx;
 }
-// a muxponder client port passes traffic only if its own optic works and the line does
+// a muxponder client port passes traffic only if its own optic works and the line does; returns [light, the optic's problem or '']
+const RANK = ['off', 'good', 'warn', 'bad'];
 function clientLamp(n, i, line) {
   const cl = lastRes && (lastRes.clients || []).find(c => c.node.id === n.id), p = cl && cl.ports[i];
-  if (!p || line === 'off') return [line, `client ${i + 1}`];
-  const own = p.status === 'ok' ? 'good' : p.status === 'down' ? 'bad' : 'warn', worst = [line, own].includes('bad') ? 'bad' : [line, own].includes('warn') ? 'warn' : 'good';
-  return [worst, `client ${i + 1} (${p.optic.name})${p.status === 'ok' ? '' : ': ' + p.notes.join('; ')}`];
+  if (!p || line === 'off') return [line, ''];
+  const own = p.status === 'ok' ? 'good' : p.status === 'down' ? 'bad' : 'warn';
+  return [RANK[Math.max(RANK.indexOf(line), RANK.indexOf(own))], p.status === 'ok' ? '' : `Client ${i + 1} (${p.optic.name}): ${p.notes.join('; ')}`];
 }
-const tip = (elt, text) => { const t = sv('title', {}); t.textContent = text; elt.append(t); return elt; };
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 const weakPorts = n => !!n.p && !!n.p.degPorts && Object.values(n.p.degPorts).some(v => +v > 0);
 function nodeShape(n) {
   const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || weakPorts(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : group.has(n.id) ? ' sel msel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': (sel && sel.id === n.id) || group.has(n.id) ? 'true' : 'false',
     'aria-label': `${n.name}, ${(TYPES[n.type] || {}).label || n.type}${S.svc && S.svc.a === n.id ? ', service A end' : S.svc && S.svc.z === n.id ? ', service Z end' : ''}${n.p && n.p.fail === 'dead' ? ', failed' : n.p && n.p.fail === 'degraded' ? ', degraded' : ''}${panelDirty(n) ? ', dirty connector on port ' + Object.entries(n.p.dirty).filter(([, v]) => +v > 0.3).map(([k]) => k).join(', ') : ''}` });
   const st = n.type === 'trx' || n.type === 'mxp' ? endState(n) : null;
-  if (st) { g.classList.add('lamp-' + st[0]); tip(g, `${n.name}: ${st[1]}`); g.setAttribute('aria-label', g.getAttribute('aria-label') + ', ' + st[1]); }
-  const linePort = () => tip(sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' }), 'Line port: the fiber, or the cord to a mux port, plugs in here');
+  if (st) g.setAttribute('aria-label', g.getAttribute('aria-label') + ', ' + st[1]);
+  const linePort = () => sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' });
   if (n.type === 'trx') {
     g.append(sv('rect', { x: -46, y: -22, width: 92, height: 44, rx: 4, class: 'body' }));
     g.append(linePort());
@@ -119,7 +127,7 @@ function nodeShape(n) {
   } else if (n.type === 'mxp') {
     g.append(sv('rect', { x: -46, y: -30, width: 92, height: 60, rx: 4, class: 'body' }));
     const nc = n.p.clients.length;
-    n.p.clients.forEach((c, i) => { const y = nc > 1 ? -22 + i * (44 / (nc - 1)) : 0, [cl, ct] = clientLamp(n, i, st[0]); g.append(sv('line', { x1: -56, y1: y, x2: -46, y2: y, class: 'thin' })); g.append(tip(sv('circle', { cx: -56, cy: y, r: 2.6, class: 'led ' + cl }), ct)); });
+    n.p.clients.forEach((c, i) => { const y = nc > 1 ? -22 + i * (44 / (nc - 1)) : 0, [cl] = clientLamp(n, i, st[0]); g.append(sv('line', { x1: -56, y1: y, x2: -46, y2: y, class: 'thin' })); g.append(sv('circle', { cx: -56, cy: y, r: 2.6, class: 'led ' + cl })); });
     g.append(sv('circle', { cx: -36, cy: -21, r: 3, class: 'led ' + st[0] }));
     g.append(linePort());
     const t = sv('text', { x: -38, y: -6, class: 'glyph' }); t.textContent = PHY.MODES[n.p.mode].short; g.append(t);
@@ -279,7 +287,7 @@ function bgSplit(n) { const D = lastRes && lastRes.derived; if (D) return Math.m
 function bgOn(l) { const hs = hopsOfLink(lastRes, l); return hs.length ? bgSplit(Math.max(...hs.map(h => h.nch || 0))) : 0; }
 const loadText = n => { const bg = bgSplit(n); return !bg ? String(n) : lastRes.derived ? `${n} · ${n - bg} cabled + ${bg} background` : `${n} · yours + ${bg} background`; };
 function chanOf(r, id) { // the channel a transponder sends or receives, and its result
-  const plan = (r && r.derived && r.derived.plan) || S.g.plan || [];
+  const D = (r && r.derived) || (lastRes && lampData().D), plan = (D && D.plan) || S.g.plan || [];
   const i = plan.findIndex(c => !c.filler && (c.tx === id || c.rx === id || c.from === id || c.to === id));
   return i < 0 ? null : { c: plan[i], o: r && r.channels ? r.channels[i] : null };
 }
@@ -299,8 +307,12 @@ function tipFor(kind, id) {
     if (r && r.mode && r.Z && n.id === r.Z.id) { row('Rx power', `${f1(r.prx)} dBm`); row('Q margin', `${sgn(r.qMargin)} dB`); row('Status', STATUS[r.status], true); }
     else if (hs.length) { const a = hs[0], z = hs[hs.length - 1]; if (z.kind === 'tx') row('Tx power', `${f1(z.out.sig)} dBm`); else { row('Input', pw(a.in.sig)); row('Output', pw(z.out.sig)); lossRow(a.in.sig, z.out.sig); tail(z); } }
     else if (isEnd(n) && uniformSide(n)) note(`One of the ${S.g.nch} identical channels on this line. Click it to show its results.`);
-    else if (isEnd(n)) { const ch = chanOf(r, n.id); if (ch && ch.o) { row('Channel', `${chText(ch.c.slot, true)} THz`); row('Status', STATUS[ch.o.status], true); if (ch.o.qMargin != null) row('Q margin', `${sgn(ch.o.qMargin)} dB`); note('Click it to show its results.'); } else note('Not carrying a channel. Cable it to a mux or ROADM port with a partner on the far side.'); }
+    else if (isEnd(n)) { const ch = chanOf(r, n.id); if (!ch) note('Not carrying a channel. Cable it to a mux or ROADM port with a partner on the far side.'); else { row('Channel', `${chText(ch.c.slot, true)} THz`); if (ch.o) { row('Status', STATUS[ch.o.status], true); if (ch.o.qMargin != null) row('Q margin', `${sgn(ch.o.qMargin)} dB`); } note('Click it to show its results.'); } }
     else note(r && r.mode ? 'Not on the service path.' : 'No service to measure yet.');
+    if (isEnd(n)) { // why its status light is amber or red
+      const [lt, why] = endState(n); if (lt === 'warn' || lt === 'bad') note(why.charAt(0).toUpperCase() + why.slice(1));
+      if (n.type === 'mxp') n.p.clients.forEach((c, i) => { const bad = clientLamp(n, i, lt)[1]; if (bad) note(bad); });
+    }
     { const ps = portSummary(n); if (ps) row('Ports', ps, true); }
   } else {
     const l = link(id); if (!l) return null;
@@ -333,7 +345,7 @@ svg.addEventListener('pointerleave', () => { tipOn = null; hideTip(); });
 // selecting a transponder that carries a channel makes the results describe that channel's two ends
 // on a uniform line (no channel plan, no ports) every transponder is one of the identical channels: it takes the place of the service end on its side
 function uniformSide(n) {
-  if (S.g.plan || (lastRes && lastRes.derived) || !node(S.svc.a) || !node(S.svc.z)) return null;
+  if (S.g.plan || (lastRes && lampData().D) || !node(S.svc.a) || !node(S.svc.z)) return null;
   const ra = MODEL.route(S, n.id, S.svc.a, true), rz = MODEL.route(S, n.id, S.svc.z, true); if (!ra || !rz) return null;
   return ra.links.length <= rz.links.length ? 'a' : 'z';
 }

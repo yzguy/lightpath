@@ -483,10 +483,9 @@ function sweepChart(r) {
   s.append(sv('path', { d: pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.p)},${Y(p.g)}`).join(' '), class: 'pl l-sig' }));
   const best = pts.reduce((a, b) => (b.g > a.g ? b : a));
   s.append(sv('circle', { cx: X(best.p), cy: Y(best.g), r: 5, class: 'dot-best' }));
-  const bt = sv('text', { x: X(best.p), y: Y(best.g) - 12, class: 'ax strong', 'text-anchor': 'middle' }); bt.textContent = `optimum ${best.p > 0 ? '+' : ''}${best.p} dBm`; s.append(bt);
+  const bt = sv('text', { x: X(best.p), y: Y(best.g) - 12, class: 'ax strong', 'text-anchor': 'middle' }); const bestTxt = `${best.p > 0 ? '+' : ''}${best.p} dBm`; bt.textContent = `optimum ${bestTxt}`; s.append(bt);
   if (r.gosnr != null && S.g.launch >= lo && S.g.launch <= hi) { s.append(sv('line', { x1: X(S.g.launch), x2: X(S.g.launch), y1: mt, y2: H - mb, class: 'nowline' })); s.append(sv('circle', { cx: X(S.g.launch), cy: Y(r.gosnr), r: 5, class: 'dot-now' })); }
-  const bestTxt = `${best.p > 0 ? '+' : ''}${best.p} dBm`;
-  if (Math.abs(best.p - S.g.launch) >= 0.25) wrap.append(el('p', { class: 'pad' }, [el('button', { class: 'btn primary', type: 'button', text: `Use ${bestTxt}`, title: 'Set Amp output in the header to the optimum', onclick: () => { S.g.launch = best.p; checkpoint(); renderAll(); toast(`Amp output set to ${bestTxt} per channel`, { label: 'Undo', fn: undo }); } }),
+  if (Math.abs(best.p - S.g.launch) >= 0.25) wrap.append(el('p', { class: 'pad' }, [el('button', { class: 'btn primary', type: 'button', text: `Use ${bestTxt}`, title: 'Set Amp output in the header to the optimum', onclick: act(() => { S.g.launch = best.p; }, `Amp output set to ${bestTxt} per channel`) }),
     el('span', { class: 'muted', text: ` Amp output is ${S.g.launch > 0 ? '+' : ''}${S.g.launch} dBm; the best GSNR here is at ${bestTxt}.` })]));
   wrap.append(s, el('div', { class: 'legend' }, [lg('l-sig', 'GSNR (ASE + nonlinearity)'), lg('l-ase dashed', 'OSNR (ASE only, what an OSA shows)'), lg('dot-now-i', 'Current global launch power'),
     el('span', { class: 'muted', text: 'Too little power and amplifier noise wins. Too much and fiber nonlinearity wins. The top of the curve is the optimum. Only amplifiers in Auto mode follow the global launch power.' })]));

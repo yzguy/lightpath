@@ -43,12 +43,13 @@ const strHash = t => { let h = 5381; for (let i = 0; i < t.length; i++) h = ((h 
 function syncLab() {
   const sel = $('#preset'); if (!sel || !S) return;
   for (const o of sel.options) { o.dataset.base ??= o.textContent; o.textContent = o.dataset.base; }
+  let edited = false;
   if (labKey && PRESETS[labKey]) {
     labHash ??= strHash(snapshot()); // the first render after a load is the baseline
-    const edited = strHash(snapshot()) !== labHash;
+    edited = strHash(snapshot()) !== labHash;
     sel.value = labKey; sel.selectedOptions[0].textContent = sel.selectedOptions[0].dataset.base + (edited ? ' · edited' : '');
-    $('#btn-reset').hidden = !edited;
-  } else { sel.value = ''; sel.options[0].textContent = 'Your own lab · load a scenario…'; $('#btn-reset').hidden = true; }
+  } else { sel.value = ''; sel.options[0].textContent = 'Your own lab · load a scenario…'; }
+  $('#btn-reset').hidden = !edited;
   try { localStorage.setItem(LAB_KEY, JSON.stringify({ key: labKey, hash: labHash })); } catch (e) {}
 }
 // Undo and redo: every change ends in save(), which records a snapshot of the lab (not the pan and zoom). Edits that come in a quick burst (typing a number,
