@@ -44,6 +44,52 @@ function selIn(obj, key, opts) {
   s.value = String(obj[key]); s.addEventListener('change', () => { obj[key] = s.value === 'true' ? true : s.value === 'false' ? false : s.value; renderAll(); }); return s;
 }
 let assumeOpen, inspKey, kpiAll = false, ramanOpen;
+// The ports a cable's two ends use, one select per choice. Shared by the cable inspector and the picker that opens when a new cable has a port to choose.
+// A change applies at once, then after() runs. An option in use by another cable is marked (data-used) so the picker can refuse it.
+function portControls(l, after = renderAll) {
+  const out = [], seenHints = new Set(), once = (k, t) => (seenHints.has(k) ? undefined : (seenHints.add(k), t));
+  const opt = (value, text, used) => { const o = el('option', { value, text: text + (used ? ` · in use${used === true ? '' : ' by ' + used}` : '') }); if (used) o.dataset.used = '1'; return o; };
+  if (clientLink(l)) {
+    const a = node(l.a), h = a.type === 'host' ? a : node(l.b), e = h === a ? node(l.b) : a, mine = S.links.filter(x => x !== l && clientLink(x));
+    const usedH = new Set(mine.filter(x => x.a === h.id || x.b === h.id).map(x => x.p.hport)), usedC = new Map(mine.filter(x => x.a === e.id || x.b === e.id).map(x => [x.p.cport, (node(x.a).type === 'host' ? node(x.a) : node(x.b)).name]));
+    const hs = el('select', { id: 'f-hport', 'aria-label': 'Host port' });
+    for (let k = 0; k < h.p.ports; k++) hs.append(opt(String(k), `Port ${k + 1} (${h.p.speed}G)`, usedH.has(k)));
+    hs.value = String(l.p.hport ?? 0); hs.addEventListener('change', () => { l.p.hport = +hs.value; after(); });
+    out.push({ label: `Port on ${h.name}`, sel: hs });
+    const cs = el('select', { id: 'f-cport', 'aria-label': 'Client port' });
+    for (let k = 0; k < clientCount(e); k++) { const o = e.type === 'mxp' ? PHY.CLIENT_OPTICS[e.p.clients[k].optic] : null; cs.append(opt(String(k), `Client port ${k + 1}` + (o ? ` (${o.name})` : ` (${PHY.MODES[e.p.mode].rate}G)`), usedC.get(k))); }
+    cs.value = String(l.p.cport ?? 0); cs.addEventListener('change', () => { l.p.cport = +cs.value; after(); });
+    out.push({ label: `Client port on ${e.name}`, sel: cs, hint: e.type === 'mxp' ? 'A muxponder client port is carried to the same-numbered client port on the far muxponder.' : 'A transponder has one client port; it has to match the line rate.' });
+  }
+  if (portLink(l)) {
+    const { t, m } = portLink(l), used = portsUsed(m, l), so = el('select', { id: 'f-mport', 'aria-label': 'Port' });
+    so.append(el('option', { value: '', text: 'Not assigned (no port model)' }));
+    for (const sd of deviceSides(m)) { for (let k = 0; k < portCount(m, sd); k++) so.append(opt(`${sd}:${k}`, portSlotText(m, k, sd), used.has(sd + '|' + k) && used.get(sd + '|' + k).name)); }
+    so.value = l.p.mport == null ? '' : `${sideOf(l, m)}:${l.p.mport}`;
+    so.addEventListener('change', () => { if (so.value === '') l.p.mport = null; else { const [sd, k] = so.value.split(':'); if (m.type !== 'mux') setSide(l, m, sd); l.p.mport = +k; } after(); });
+    out.push({ label: `Port on ${m.name}`, sel: so, hint: `${t.name} is plugged into this port. The filter passes only that port's slot, so ${t.name} has to be tuned to it (Auto follows the port).${m.type === 'oadm' ? ' Its light goes out on that side of the OADM.' : m.type === 'roadm' && !m.p.directionless ? ' Its light goes out on that degree only (the ROADM is not directionless).' : ''}` });
+  }
+  for (const n of [node(l.a), node(l.b)]) if (n && n.type === 'panel') {
+    const ps = el('select', { id: 'f-odf-' + n.id, 'aria-label': `Port on ${n.name}` }), used = new Set(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => sideOf2(x, n)));
+    for (let k = 1; k <= n.p.ports; k++) for (const sd of ['r', 'f']) ps.append(opt(sd + k, `${sd === 'r' ? 'Rear' : 'Front'} of port ${k}` + (n.p.dirty && n.p.dirty[k] ? ' · dirty' : ''), used.has(sd + k)));
+    ps.value = sideOf2(l, n) || 'r1'; ps.addEventListener('change', () => { setSide(l, n, ps.value); after(); });
+    out.push({ label: `Port on ${n.name}`, sel: ps, hint: once('panel', 'Light enters one side of a port and leaves the other side of the same port: the rear is usually the outside plant, the front the patch cords to equipment. Each mated connector pair costs the panel\'s connector loss.') });
+  }
+  for (const n of [node(l.a), node(l.b)]) if (isTri(n)) {
+    const ps = el('select', { id: 'f-tri-' + n.id, 'aria-label': `Port on ${n.name}` }), used = new Map(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => [sideOf2(x, n), 1]));
+    for (const k of ['c', 'a', 'b']) ps.append(opt(k, TRI_NAME[k] + (n.type === 'splitter' && k === 'b' ? ' (tap / second branch)' : ''), used.has(k)));
+    ps.value = sideOf2(l, n) || 'c'; ps.addEventListener('change', () => { setSide(l, n, ps.value); after(); });
+    out.push({ label: `Port on ${n.name}`, sel: ps, hint: once('tri', n.type === 'splitter' ? 'Light goes between the common port and either branch, never between the two branches. A 99/1 tap sends 1% to port B.' : 'The common port is the one the receiver side hangs off; the switch passes port A or port B to it.') });
+  }
+  for (const n of [node(l.a), node(l.b)]) if (n && (n.type === 'oadm' || n.type === 'roadm') && !(portLink(l) && portLink(l).m === n) && !isEnd(n === node(l.a) ? node(l.b) : node(l.a))) { // a line cable on an OADM or ROADM: which side or degree of it
+    const ss = el('select', { id: 'f-side-' + n.id, 'aria-label': `Side of ${n.name}` }), other = n === node(l.a) ? node(l.b) : node(l.a);
+    const usedS = new Set(n.type === 'roadm' ? S.links.filter(x => x !== l && !portLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n)) : []);
+    for (const sd of lineSides(n)) ss.append(opt(sd, sideLabel(n, sd), usedS.has(sd)));
+    ss.value = sideOf(l, n) || (n.type === 'roadm' ? lineSides(n)[0] : defSide(n, other)); ss.addEventListener('change', () => { setSide(l, n, ss.value); after(); });
+    out.push({ label: n.type === 'roadm' ? `Degree on ${n.name}` : `Line side on ${n.name}`, sel: ss, hint: once('side', n.type === 'roadm' ? 'Each line cable is one degree of the ROADM. If the add/drop is not directionless, a transponder port belongs to one degree and its light only leaves by that one.' : 'West is where the line comes from on the left, East the right. A transponder on a West port talks to the West line only.') });
+  }
+  return out;
+}
 // a new selection opens at the top (type, name, actions); an edit to the same selection keeps the scroll position
 function renderInspector() {
   const box = $('#insp'), top = box.scrollTop, key = sel ? sel.kind + ':' + sel.id : '';
@@ -266,44 +312,7 @@ function renderInspectorBody() {
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
     if (l.p.dir == null) l.p.dir = 'both';
     { const na = node(l.a), nb = node(l.b); box.append(field('Carries light', selIn(l.p, 'dir', [['both', 'Both ways (a fiber pair)'], ['ab', `${na ? na.name : 'a'} → ${nb ? nb.name : 'b'} only`], ['ba', `${nb ? nb.name : 'b'} → ${na ? na.name : 'a'} only`]]), 'A one-way fiber lets each direction take a different route.')); }
-    if (clientLink(l)) {
-      const a = node(l.a), h = a.type === 'host' ? a : node(l.b), e = h === a ? node(l.b) : a, mine = S.links.filter(x => x !== l && clientLink(x));
-      const usedH = new Set(mine.filter(x => x.a === h.id || x.b === h.id).map(x => x.p.hport)), usedC = new Map(mine.filter(x => x.a === e.id || x.b === e.id).map(x => [x.p.cport, (node(x.a).type === 'host' ? node(x.a) : node(x.b)).name]));
-      const hs = el('select', { id: 'f-hport', 'aria-label': 'Host port' });
-      for (let k = 0; k < h.p.ports; k++) hs.append(el('option', { value: String(k), text: `Port ${k + 1} (${h.p.speed}G)` + (usedH.has(k) ? ' · in use' : '') }));
-      hs.value = String(l.p.hport ?? 0); hs.addEventListener('change', () => { l.p.hport = +hs.value; renderAll(); });
-      box.append(field(`Port on ${h.name}`, hs));
-      const cs = el('select', { id: 'f-cport', 'aria-label': 'Client port' });
-      for (let k = 0; k < clientCount(e); k++) { const o = e.type === 'mxp' ? PHY.CLIENT_OPTICS[e.p.clients[k].optic] : null; cs.append(el('option', { value: String(k), text: `Client port ${k + 1}` + (o ? ` (${o.name})` : ` (${PHY.MODES[e.p.mode].rate}G)`) + (usedC.has(k) ? ` · in use by ${usedC.get(k)}` : '') })); }
-      cs.value = String(l.p.cport ?? 0); cs.addEventListener('change', () => { l.p.cport = +cs.value; renderAll(); });
-      box.append(field(`Client port on ${e.name}`, cs, e.type === 'mxp' ? 'A muxponder client port is carried to the same-numbered client port on the far muxponder.' : 'A transponder has one client port; it has to match the line rate.'));
-    }
-    if (portLink(l)) {
-      const { t, m } = portLink(l), used = portsUsed(m, l), so = el('select', { id: 'f-mport', 'aria-label': 'Port' });
-      so.append(el('option', { value: '', text: 'Not assigned (no port model)' }));
-      for (const sd of deviceSides(m)) { for (let k = 0; k < portCount(m, sd); k++) so.append(el('option', { value: `${sd}:${k}`, text: portSlotText(m, k, sd) + (used.has(sd + '|' + k) ? ` · in use by ${used.get(sd + '|' + k).name}` : '') })); }
-      so.value = l.p.mport == null ? '' : `${sideOf(l, m)}:${l.p.mport}`;
-      so.addEventListener('change', () => { if (so.value === '') l.p.mport = null; else { const [sd, k] = so.value.split(':'); if (m.type !== 'mux') setSide(l, m, sd); l.p.mport = +k; } renderAll(); });
-      box.append(field(`Port on ${m.name}`, so, `${t.name} is plugged into this port. The filter passes only that port's slot, so ${t.name} has to be tuned to it (Auto follows the port).${m.type === 'oadm' ? ' Its light goes out on that side of the OADM.' : m.type === 'roadm' && !m.p.directionless ? ' Its light goes out on that degree only (the ROADM is not directionless).' : ''}`));
-    }
-    for (const n of [node(l.a), node(l.b)]) if (n && n.type === 'panel') {
-      const ps = el('select', { id: 'f-odf-' + n.id, 'aria-label': `Port on ${n.name}` }), used = new Set(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => sideOf2(x, n)));
-      for (let k = 1; k <= n.p.ports; k++) for (const sd of ['r', 'f']) ps.append(el('option', { value: sd + k, text: `${sd === 'r' ? 'Rear' : 'Front'} of port ${k}` + (used.has(sd + k) ? ' · in use' : '') + (n.p.dirty && n.p.dirty[k] ? ' · dirty' : '') }));
-      ps.value = sideOf2(l, n) || 'r1'; ps.addEventListener('change', () => { setSide(l, n, ps.value); renderAll(); });
-      box.append(field(`Port on ${n.name}`, ps, once('panel', 'Light enters one side of a port and leaves the other side of the same port: the rear is usually the outside plant, the front the patch cords to equipment. Each mated connector pair costs the panel\'s connector loss.')));
-    }
-    for (const n of [node(l.a), node(l.b)]) if (isTri(n)) {
-      const ps = el('select', { id: 'f-tri-' + n.id, 'aria-label': `Port on ${n.name}` }), used = new Map(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => [sideOf2(x, n), 1]));
-      for (const k of ['c', 'a', 'b']) ps.append(el('option', { value: k, text: TRI_NAME[k] + (n.type === 'splitter' && k === 'b' ? ' (tap / second branch)' : '') + (used.has(k) ? ' · in use' : '') }));
-      ps.value = sideOf2(l, n) || 'c'; ps.addEventListener('change', () => { setSide(l, n, ps.value); renderAll(); });
-      box.append(field(`Port on ${n.name}`, ps, once('tri', n.type === 'splitter' ? 'Light goes between the common port and either branch, never between the two branches. A 99/1 tap sends 1% to port B.' : 'The common port is the one the receiver side hangs off; the switch passes port A or port B to it.')));
-    }
-    for (const n of [node(l.a), node(l.b)]) if (n && (n.type === 'oadm' || n.type === 'roadm') && !(portLink(l) && portLink(l).m === n) && !isEnd(n === node(l.a) ? node(l.b) : node(l.a))) { // a line cable on an OADM or ROADM: which side or degree of it
-      const ss = el('select', { id: 'f-side-' + n.id, 'aria-label': `Side of ${n.name}` }), other = n === node(l.a) ? node(l.b) : node(l.a);
-      for (const sd of lineSides(n)) ss.append(el('option', { value: sd, text: sideLabel(n, sd) }));
-      ss.value = sideOf(l, n) || (n.type === 'roadm' ? lineSides(n)[0] : defSide(n, other)); ss.addEventListener('change', () => { setSide(l, n, ss.value); renderAll(); });
-      box.append(field(n.type === 'roadm' ? `Degree on ${n.name}` : `Line side on ${n.name}`, ss, once('side', n.type === 'roadm' ? 'Each line cable is one degree of the ROADM. If the add/drop is not directionless, a transponder port belongs to one degree and its light only leaves by that one.' : 'West is where the line comes from on the left, East the right. A transponder on a West port talks to the West line only.')));
-    }
+    for (const c of portControls(l)) box.append(field(c.label, c.sel, c.hint));
     if (l.kind === 'fiber') {
       for (const k in linkDefaults('fiber')) if (l.p[k] == null) l.p[k] = linkDefaults('fiber')[k];
       box.append(field('Length (km)', numIn(l.p, 'len', 1, 0, 300)));

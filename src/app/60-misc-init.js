@@ -17,6 +17,23 @@ function recompute() { MODEL.assignSides(S); lastRes = simulate(); settleSwitche
 function renderAll() { for (const id of [...group]) if (!node(id)) group.delete(id); if (group.size < 2) { if (group.size === 1) sel = { kind: 'node', id: [...group][0] }; group.clear(); } MODEL.assignSides(S); lastRes = simulate(); settleSwitches(); refreshHostFaults(); bindGlobals(); renderCanvas(); renderInspector(); renderResults(); renderChallenge(); save(); }
 window.addEventListener('resize', applyView);
 
+// The divider under the bench trades canvas height for results: drag it or use the arrow keys, double-click for the default. The height is kept between visits.
+const BENCH_KEY = 'lightpath-bench-h', bench = $('.bench'), split = $('#split');
+function setBench(h, keep = true) {
+  if (h == null) document.body.style.removeProperty('--bench-h');
+  else { h = Math.round(Math.min(innerHeight - 60, Math.max(300, h))); document.body.style.setProperty('--bench-h', h + 'px'); }
+  if (keep) try { if (h == null) localStorage.removeItem(BENCH_KEY); else localStorage.setItem(BENCH_KEY, h); } catch (e) { /* no storage */ }
+}
+try { const h = +localStorage.getItem(BENCH_KEY); if (h) setBench(h, false); } catch (e) { /* no storage */ }
+split.addEventListener('pointerdown', e => {
+  e.preventDefault(); const y0 = e.clientY, h0 = bench.offsetHeight; split.setPointerCapture(e.pointerId); split.classList.add('on');
+  const move = ev => setBench(h0 + ev.clientY - y0, false);
+  const up = () => { split.classList.remove('on'); split.removeEventListener('pointermove', move); split.removeEventListener('pointerup', up); split.removeEventListener('pointercancel', up); setBench(bench.offsetHeight); };
+  split.addEventListener('pointermove', move); split.addEventListener('pointerup', up); split.addEventListener('pointercancel', up);
+});
+split.addEventListener('dblclick', () => setBench(null));
+split.addEventListener('keydown', e => { const d = { ArrowUp: -24, ArrowDown: 24 }[e.key]; if (d) { e.preventDefault(); setBench(bench.offsetHeight + d); } });
+
 // ---------- first run: a welcome card and a short tour ----------
 const WELCOMED = 'lightpath-welcomed';
 const closeWelcome = () => { $('#welcome').hidden = true; try { localStorage.setItem(WELCOMED, '1'); } catch (e) { /* no storage */ } };
@@ -62,5 +79,5 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && tourAt >= 
 
 load();
 setTool('select');
-requestAnimationFrame(() => { fitView(); renderAll(); let seen = false; try { seen = localStorage.getItem(WELCOMED) === '1'; } catch (e) { /* no storage */ } if (firstRun && !seen) $('#welcome').hidden = false; });
+requestAnimationFrame(async () => { fitView(); renderAll(); if (await openShared()) return; let seen = false; try { seen = localStorage.getItem(WELCOMED) === '1'; } catch (e) { /* no storage */ } if (firstRun && !seen) $('#welcome').hidden = false; });
 })();

@@ -25,13 +25,44 @@ $('#btn-clear').addEventListener('click', () => {
   if (b.dataset.armed) { S.nodes = []; S.links = []; S.svc = { a: null, z: null }; labKey = ''; sel = null; delete b.dataset.armed; b.textContent = 'Clear canvas'; checkpoint(); renderAll(); toast('Cleared the canvas', { label: 'Undo', fn: undo }); }
   else { b.dataset.armed = '1'; b.textContent = 'Click again to clear'; setTimeout(() => { delete b.dataset.armed; b.textContent = 'Clear canvas'; }, 2500); }
 });
-$('#btn-export').addEventListener('click', () => { $('#io').hidden = false; $('#io-text').value = JSON.stringify({ nodes: S.nodes, links: S.links, g: S.g, svc: S.svc }, null, 1); });
+const labData = () => ({ nodes: S.nodes, links: S.links, g: S.g, svc: S.svc, demands: S.demands, flows: S.flows });
+$('#btn-export').addEventListener('click', () => { $('#io').hidden = false; $('#io-text').value = JSON.stringify(labData(), null, 1); });
 $('#io-close').addEventListener('click', () => { $('#io').hidden = true; });
 $('#io-copy').addEventListener('click', () => { const t = $('#io-text'); navigator.clipboard?.writeText(t.value).then(() => toast('Copied topology JSON'), () => { t.select(); toast('Select-all done; press Ctrl/Cmd+C'); }) ?? t.select(); });
 $('#io-load').addEventListener('click', () => {
   try { const o = MODEL.sanitize(JSON.parse($('#io-text').value)); S = { ...S, ...o }; labKey = ''; sel = null; $('#io').hidden = true; fitView(); checkpoint(); renderAll(); toast('Topology loaded', { label: 'Undo', fn: undo }); }
   catch (e) { toast('That text is not a topology export. Paste the JSON from Export.'); }
 });
+
+// A share link carries the lab (not the pan and zoom) in the URL fragment, deflated and base64url-encoded, so it never reaches a server.
+// Opening one is an import: it goes through sanitize, and inflating stops at SHARE_MAX bytes so a crafted link cannot expand without bound.
+const SHARE_MAX = 4e6;
+async function packLab() {
+  const b = new Uint8Array(await new Response(new Blob([JSON.stringify(labData())]).stream().pipeThrough(new CompressionStream('deflate-raw'))).arrayBuffer());
+  let t = ''; for (let i = 0; i < b.length; i += 0x8000) t += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(t).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function unpackLab(t) {
+  const bin = atob(t.replace(/-/g, '+').replace(/_/g, '/'));
+  const r = new Blob([Uint8Array.from(bin, c => c.charCodeAt(0))]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader(), parts = [];
+  for (let n = 0; ;) { const { done, value } = await r.read(); if (done) break; n += value.length; if (n > SHARE_MAX) { r.cancel(); throw new Error('too large'); } parts.push(value); }
+  return MODEL.sanitize(JSON.parse(await new Blob(parts).text()));
+}
+$('#btn-share').addEventListener('click', async () => {
+  const url = location.href.split('#')[0] + '#lab=' + await packLab();
+  try { await navigator.clipboard.writeText(url); toast('Link copied: whoever opens it gets this lab'); }
+  catch (e) { window.prompt('Copy this link to share the lab', url); }
+});
+async function openShared() {
+  const m = /^#lab=([A-Za-z0-9_-]+)$/.exec(location.hash); if (!m) return false;
+  history.replaceState(null, '', location.pathname + location.search); // once opened the lab is saved like any other: a reload must keep the edits made since
+  try {
+    const o = await unpackLab(m[1]);
+    S = { ...S, ...o }; labKey = ''; sel = null; group.clear(); if (chal.active) { chal.active = ''; saveChal(); }
+    fitView(); checkpoint(); renderAll(); toast('Opened a shared lab', { label: 'Undo', fn: undo }); return true;
+  } catch (e) { toast('That link does not hold a lab Lightpath can open'); return false; }
+}
+window.addEventListener('hashchange', openShared);
 
 const csvMode = $('#csv-mode');
 Object.entries(PHY.MODES).forEach(([k, m]) => csvMode.append(el('option', { value: k, text: m.short })));

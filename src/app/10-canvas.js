@@ -157,6 +157,8 @@ function renderCanvas() {
       const arrow = l.p.dir === 'ab' || l.p.dir === 'ba' ? (() => { const dx = b.x - a.x, dy = b.y - a.y, f = l.p.dir === 'ab' ? 1 : -1; return ' ' + (Math.abs(dx) >= Math.abs(dy) ? (dx * f > 0 ? '→' : '←') : (dy * f > 0 ? '↓' : '↑')); })() : '';
       t.textContent = (l.kind === 'fiber' ? `${l.p.len} km · ${f1(fb.att * l.p.len + +l.p.extra)} dB` + (+l.p.raman > 0 ? ` · Raman ${l.p.raman} mW` : '') + (l.p.srlg ? ` · ${l.p.srlg}` : '') + (l.p.single ? ' · single fiber' : '') : 'patch') + arrow;
       g.append(t);
+      const bg = l.kind === 'fiber' && !cutNow ? bgOn(l) : 0;
+      if (bg) { const u = sv('text', { x: mx, y: my + 16, class: 'llabel lbg', 'text-anchor': 'middle' }); u.textContent = `+${bg} background ch`; g.append(u); }
       if (cutNow) { const x = sv('text', { x: mx, y: my + 7, class: 'cutmark', 'text-anchor': 'middle' }); x.textContent = '✕'; g.append(x); }
     }
     { const pl = portLink(l), labelAt = (m, o, text) => { // a small label on the cable, next to the device end
@@ -193,6 +195,11 @@ function hopsOfLink(r, l) {
   let e = H.findIndex((h, k) => k > s && mine(h, b)); if (e < 0) e = H.length;
   return H.slice(s + 1, e);
 }
+// The Line load tops the line up with background channels: on top of the cabled ones (channels from the cabling) or of the service (one uniform line).
+// They follow the service's route, so a fiber on it carries all of them.
+function bgSplit(n) { const D = lastRes && lastRes.derived; if (D) return Math.min(D.fillers || 0, n); return !S.g.plan && n > 1 ? n - 1 : 0; }
+function bgOn(l) { const hs = hopsOfLink(lastRes, l); return hs.length ? bgSplit(Math.max(...hs.map(h => h.nch || 0))) : 0; }
+const loadText = n => { const bg = bgSplit(n); return !bg ? String(n) : lastRes.derived ? `${n} (${n - bg} cabled, ${bg} background)` : `${n} (yours and ${bg} background copies)`; };
 function chanOf(r, id) { // the channel a transponder sends or receives, and its result
   const plan = (r && r.derived && r.derived.plan) || S.g.plan || [];
   const i = plan.findIndex(c => !c.filler && (c.tx === id || c.rx === id || c.from === id || c.to === id));
@@ -201,10 +208,11 @@ function chanOf(r, id) { // the channel a transponder sends or receives, and its
 function tipFor(kind, id) {
   const r = view(), lines = [];
   const row = (k, v) => lines.push(el('div', {}, [k + ' ', el('span', { class: 'hv', text: v })]));
-  const io = hs => { const a = hs[0], z = hs[hs.length - 1]; row('Power in → out:', `${dbmT(a.in.sig)} → ${dbmT(z.out.sig)} per channel`); if (z.osnr != null) row('OSNR / GSNR after:', `${f1(z.osnr)} / ${f1(z.gosnr)} dB`); if (z.nch > 1) row('Channels here:', String(z.nch)); };
+  const io = hs => { const a = hs[0], z = hs[hs.length - 1]; row('Power in → out:', `${dbmT(a.in.sig)} → ${dbmT(z.out.sig)} per channel`); if (z.osnr != null) row('OSNR / GSNR after:', `${f1(z.osnr)} / ${f1(z.gosnr)} dB`); if (z.nch > 1) row('Channels here:', loadText(z.nch)); };
   if (kind === 'node') {
     const n = node(id); if (!n) return null;
     lines.push(el('b', { text: `${n.name} · ${TYPES[n.type].label}` }));
+    { const ps = portSummary(n); if (ps) row('Ports:', ps); }
     const hs = hopsOfNode(r, n);
     if (r && r.mode && r.Z && n.id === r.Z.id) { row('Rx power:', `${f1(r.prx)} dBm`); row('Q margin:', `${r.qMargin > 0 ? '+' : ''}${f1(r.qMargin)} dB · ${STATUS[r.status]}`); }
     else if (hs.length) { const z = hs[hs.length - 1]; if (z.kind === 'tx') row('Tx power:', `${f1(z.out.sig)} dBm`); else io(hs); if (z.gain != null && z.kind !== 'tx') row(z.gain >= 0 ? 'Gain:' : 'Loss:', `${f1(Math.abs(z.out.sig - hs[0].in.sig))} dB`); }
@@ -260,7 +268,7 @@ function followService(n) {
 // pointer interactions
 let drag = null;
 svg.addEventListener('pointerdown', e => {
-  if (!e.isPrimary) return;
+  if (!e.isPrimary || e.button === 2) return; // the right button opens the menu below
   const nEl = e.target.closest('.node'), lEl = e.target.closest('.link');
   const w = toWorld(e.clientX, e.clientY);
   hideTip();
@@ -341,6 +349,62 @@ svg.addEventListener('wheel', e => {
 }, { passive: false });
 svg.addEventListener('dblclick', e => { const nEl = e.target.closest('.node'); if (nEl && isEnd(node(nEl.dataset.id))) setEnd(nEl.dataset.id); });
 
+// Right-click: the actions for what is under the pointer, so breaking and repairing things does not need a trip to the inspector
+const ctx = $('#ctx');
+const closeCtx = () => { ctx.hidden = true; };
+function openCtx(e, items) {
+  ctx.replaceChildren(...items.filter(Boolean).map(it => it === '-' ? el('div', { class: 'msep', role: 'separator' }) : it.head ? el('div', { class: 'mhead', text: it.head })
+    : el('button', { type: 'button', role: 'menuitem', class: 'mi' + (it.danger ? ' danger' : ''), text: it.label, onclick: () => { closeCtx(); it.fn(); } })));
+  while (ctx.lastChild && ctx.lastChild.classList.contains('msep')) ctx.lastChild.remove();
+  ctx.hidden = false;
+  ctx.style.left = Math.max(6, Math.min(e.clientX, innerWidth - ctx.offsetWidth - 6)) + 'px'; ctx.style.top = Math.max(6, Math.min(e.clientY, innerHeight - ctx.offsetHeight - 6)) + 'px';
+  ctx.querySelector('.mi')?.focus();
+}
+const act = (fn, msg) => () => { fn(); checkpoint(); renderAll(); toast(msg, { label: 'Undo', fn: undo }); };
+const pick = s => { group.clear(); sel = s; };
+function nodeMenu(n) {
+  const p = n.p, end = isEnd(n);
+  return [{ head: `${n.name} · ${TYPES[n.type].label}` },
+    end && S.svc.a !== n.id && { label: 'Make it the A end', fn: act(() => { if (S.svc.z === n.id) S.svc.z = S.svc.a; S.svc.a = n.id; }, `${n.name} is the A end`) },
+    end && S.svc.z !== n.id && { label: 'Make it the Z end', fn: act(() => { if (S.svc.a === n.id) S.svc.a = S.svc.z; S.svc.z = n.id; }, `${n.name} is the Z end`) },
+    end && '-',
+    p.fail !== 'dead' && { label: 'Fail it (no light passes)', danger: true, fn: act(() => { p.fail = 'dead'; }, `${n.name} has failed`) },
+    !p.fail && { label: 'Degrade it', fn: act(() => { p.fail = 'degraded'; }, `${n.name} is degraded`) },
+    p.fail && { label: 'Repair it', fn: act(() => { p.fail = ''; }, `${n.name} is working again`) },
+    p.dirty && Object.keys(p.dirty).length && { label: 'Clean its connectors', fn: act(() => { p.dirty = {}; }, `Cleaned the connectors on ${n.name}`) },
+    '-',
+    { label: 'Duplicate', fn: () => { pick({ kind: 'node', id: n.id }); copySel(); pasteClip(); } },
+    { label: 'Delete', danger: true, fn: () => { pick({ kind: 'node', id: n.id }); del(); } }];
+}
+function linkMenu(l) {
+  const cut = !!l.p.cut, name = linkName(l);
+  return [{ head: name },
+    { label: cut ? 'Splice it back' : l.kind === 'fiber' ? 'Cut this fiber' : 'Cut this cable', danger: !cut, fn: act(() => { l.p.cut = !cut; }, `${cut ? 'Spliced' : 'Cut'} ${name}`) },
+    l.kind === 'fiber' && !cut && { label: 'Add an amplifier halfway', fn: () => applyFix({ type: 'insertAmp', id: l.id }) },
+    '-',
+    { label: 'Delete cable', danger: true, fn: () => { pick({ kind: 'link', id: l.id }); del(); } }];
+}
+function canvasMenu(w) {
+  return [clip && { label: 'Paste', fn: pasteClip }, clip && '-',
+    ...[['trx', 'a transponder'], ['edfa', 'an EDFA'], ['roadm', 'a ROADM'], ['mux', 'a mux'], ['panel', 'a patch panel'], ['voa', 'an attenuator']].map(([t, what]) => ({ label: `Add ${what} here`, fn: () => addNode(t, w.x, w.y) })),
+    '-', { label: 'Fit the view', fn: () => { fitView(); applyView(); } }];
+}
+svg.addEventListener('contextmenu', e => {
+  e.preventDefault(); hideTip(); abortDrag();
+  const nEl = e.target.closest('.node'), lEl = e.target.closest('.link');
+  const n = nEl && node(nEl.dataset.id), l = !n && lEl && link(lEl.dataset.id);
+  if (n || l) { const s = { kind: n ? 'node' : 'link', id: (n || l).id }; if (!sel || sel.id !== s.id || group.size) { pick(s); renderAll(); } } // shows what the menu acts on, without making the results follow it
+  openCtx(e, n ? nodeMenu(n) : l ? linkMenu(l) : canvasMenu(toWorld(e.clientX, e.clientY)));
+});
+document.addEventListener('pointerdown', e => { if (!ctx.hidden && !ctx.contains(e.target)) closeCtx(); }, true);
+document.addEventListener('keydown', e => {
+  if (ctx.hidden) return;
+  if (e.key === 'Escape') { closeCtx(); e.stopPropagation(); return; }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { const it = [...ctx.querySelectorAll('.mi')], i = it.indexOf(document.activeElement); it[(i + (e.key === 'ArrowDown' ? 1 : -1) + it.length) % it.length].focus(); e.preventDefault(); }
+  if (e.key.length === 1 || e.key === 'Delete' || e.key === 'Backspace') e.stopPropagation(); // the canvas shortcuts must not act behind an open menu
+}, true);
+window.addEventListener('blur', closeCtx); window.addEventListener('scroll', closeCtx);
+
 // a transponder or muxponder plugged into a passive mux: the cable's `mport` is the mux port it uses (port k passes slot first+k)
 const clientLink = l => { const a = node(l.a), b = node(l.b); return !!a && !!b && l.kind === 'patch' && ((isEnd(a) && b.type === 'host') || (isEnd(b) && a.type === 'host')); }; // host port to transponder or muxponder client port
 const clientCount = e => (e.type === 'mxp' ? e.p.clients.length : 1);
@@ -412,7 +476,45 @@ function connect(a, b, kind) {
     const m = portLink(l).m; plug(l, m); for (const o of S.links) if (o !== l && portLink(o) && portLink(o).m === m && o.p.mport == null) plug(o, m);
     if (l.p.mport == null) toast(`${m.name} has no free port.`);
   }
-  select({ kind: 'link', id: l.id }); toast(`${kind === 'fiber' ? 'Fiber span' : 'Patch cord'}: ${a.name} ↔ ${b.name}`);
+  checkpoint(); select({ kind: 'link', id: l.id }); toast(`${kind === 'fiber' ? 'Fiber span' : 'Patch cord'}: ${a.name} ↔ ${b.name}`);
+  pickPorts(l);
+}
+// A new cable with a port to choose at either end (a ROADM degree, a mux, panel or host port) asks which, with the automatic choice preselected, like
+// EVE-NG asks for the interfaces. Connect (or a click elsewhere) keeps it; Cancel or Esc takes the cable away without leaving a step in the history.
+const picker = $('#portpick');
+function pickPorts(l) {
+  const ctl = portControls(l, renderCanvas).filter(c => c.sel.options.length > 1);
+  if (!ctl.length) return;
+  for (const c of ctl) for (const o of c.sel.options) if (o.dataset.used && !o.selected) o.disabled = true;
+  const a = node(l.a), b = node(l.b);
+  const done = keep => {
+    picker.hidden = true; document.removeEventListener('keydown', key, true); document.removeEventListener('pointerdown', away, true);
+    if (keep) { hist.last = Date.now(); hist.seal = false; renderAll(); } // the ports are part of making the cable: one undo step
+    else { stepHistory(-1); hist.stack.length = hist.i + 1; syncUndo(); toast('Cable not made'); }
+  };
+  const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); e.stopPropagation(); done(true); } else e.stopPropagation(); }; // no canvas shortcut (Delete, undo) acts behind it
+  const away = e => { if (!picker.contains(e.target)) done(true); };
+  picker.replaceChildren(el('div', { class: 'mhead', text: `${a.name} ↔ ${b.name}` }), ...ctl.map(c => el('label', { class: 'pp-row', title: c.hint || '' }, [el('span', { text: c.label }), c.sel])),
+    el('div', { class: 'row pp-btns' }, [el('button', { class: 'btn primary', type: 'button', text: 'Connect', onclick: () => done(true) }), el('button', { class: 'btn quiet', type: 'button', text: 'Cancel', onclick: () => done(false) })]));
+  picker.hidden = false;
+  const r = svg.getBoundingClientRect(), k = S.view.k, x = r.left + ((a.x + b.x) / 2 - S.view.x) * k, y = r.top + ((a.y + b.y) / 2 - S.view.y) * k;
+  picker.style.left = Math.max(6, Math.min(x - picker.offsetWidth / 2, innerWidth - picker.offsetWidth - 6)) + 'px';
+  picker.style.top = Math.max(6, Math.min(y + 18, innerHeight - picker.offsetHeight - 6)) + 'px';
+  document.addEventListener('keydown', key, true); setTimeout(() => document.addEventListener('pointerdown', away, true));
+  ctl[0].sel.focus();
+}
+// what a device's ports are doing, for the hover readout
+function portSummary(n) {
+  const mine = S.links.filter(l => l.a === n.id || l.b === n.id);
+  if (isDev(n)) {
+    const used = mine.filter(l => portLink(l) && portLink(l).m === n).length, tot = deviceSides(n).reduce((t, sd) => t + portCount(n, sd), 0);
+    return `add/drop ${used} of ${tot} in use` + (n.type === 'roadm' ? `, degrees ${mine.filter(l => !portLink(l)).length} of ${n.p.degrees}` : '');
+  }
+  if (n.type === 'panel') return `${new Set(mine.map(l => sideOf2(l, n).slice(1)).filter(Boolean)).size} of ${n.p.ports} patched`;
+  if (n.type === 'host') return `eth ${mine.filter(clientLink).length} of ${n.p.ports} in use`;
+  if (n.type === 'mxp') return `clients ${mine.filter(clientLink).length} of ${clientCount(n)} in use`;
+  if (isTri(n)) return ['c', 'a', 'b'].map(k => `${TRI_NAME[k]} ${mine.some(l => sideOf2(l, n) === k) ? '●' : '○'}`).join(', ');
+  return '';
 }
 const cableKind = MODEL.cableKind;
 // A new device goes in the first free place near the middle of what you are looking at (not on top of another device), then outwards in a spiral

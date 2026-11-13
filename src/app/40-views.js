@@ -174,6 +174,7 @@ function spectrumView(r) {
   const W = 900, H = 300, ml = 46, mr = 16, mt = 16, mb = 40, f0 = PHY.CBAND.f0 / 1e12, f1v = (PHY.CBAND.f0 + PHY.CBAND.width) / 1e12;
   const Rs = r.mode.Rs, dens = 10 * Math.log10(Rs / PHY.BREF); // channel power -> level seen in a 0.1 nm slice
   const plan = r.segments && h.lit ? r.segments.filter((_, k) => h.lit[k]) : null; // a custom channel plan draws every channel lit at this point as itself
+  const isBg = c => !!(r.derived && r.derived.plan[c.idx] && r.derived.plan[c.idx].filler);
   const lvl = c => h.out.sig + c.off - 10 * Math.log10(PHY.MODES[c.modeKey].Rs / PHY.BREF);
   const sigD = h.out.sig - dens, aseD = h.out.ase, nliD = h.out.nli;
   const sigTop = plan ? Math.max(...plan.map(lvl)) : sigD;
@@ -194,8 +195,8 @@ function spectrumView(r) {
     for (const c of plan) {
       const m = PHY.MODES[c.modeKey], fc = c.fTHz, half = Math.min(m.Rs, df * 0.98) / 2e12;
       const sk = lvl(c) + (hi > lo && h.tilt ? h.tilt * (0.5 - (c.slot - lo) / (hi - lo)) : 0);
-      const rect = sv('rect', { x: X(fc - half), y: Y(sk), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sk)), class: c.svc ? 'sp-me' : m.coh === false ? 'sp-nrz' : 'sp-ch' });
-      const tt = sv('title', {}); tt.textContent = `Slot ${c.slot + 1} (CH${PHY.slotChannel(c.slot, +r.g.df * 1e9).ch}): ${m.short}, ${fc.toFixed(2)} THz`; rect.append(tt); s.append(rect);
+      const rect = sv('rect', { x: X(fc - half), y: Y(sk), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sk)), class: c.svc ? 'sp-me' : isBg(c) ? 'sp-bg' : m.coh === false ? 'sp-nrz' : 'sp-ch' });
+      const tt = sv('title', {}); tt.textContent = `Slot ${c.slot + 1} (CH${PHY.slotChannel(c.slot, +r.g.df * 1e9).ch}): ${m.short}, ${fc.toFixed(2)} THz${isBg(c) ? ', background (Line load)' : ''}`; rect.append(tt); s.append(rect);
     }
   } else {
     // lit block centred in the band; the service channel sits in its middle
@@ -204,7 +205,7 @@ function spectrumView(r) {
     for (let k = first; k < first + lit; k++) {
       const fc = f0 + (k + 0.5) * df / 1e12, half = Math.min(Rs, df * 0.92) / 2e12;
       const sk = sigD + (lit > 1 && h.tilt ? h.tilt * (0.5 - (k - first) / (lit - 1)) : 0); // SRS: low-frequency channels gain, high-frequency lose
-      s.append(sv('rect', { x: X(fc - half), y: Y(sk), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sk)), class: k === me ? 'sp-me' : 'sp-ch' }));
+      s.append(sv('rect', { x: X(fc - half), y: Y(sk), width: Math.max(1.5, X(fc + half) - X(fc - half)), height: Math.max(0, Y(ymin) - Y(sk)), class: k === me ? 'sp-me' : 'sp-bg' }));
     }
   }
   if (nliD > -90 && lit > 0) { // NLI is noise-like and sits under the lit channels
@@ -213,7 +214,10 @@ function spectrumView(r) {
     s.append(sv('line', { x1: X(a), x2: X(b), y1: Y(nliD), y2: Y(nliD), class: 'pl l-nli' }));
   }
   const tn = sv('text', { x: W - mr, y: mt + 10, class: 'ax strong', 'text-anchor': 'end' }); tn.textContent = `${lit} ch lit of ${slots} slots (${r.g.df} GHz grid)`; s.append(tn);
-  wrap.append(s, el('div', { class: 'legend' }, [lg('l-sig', 'Neighbouring channels'), el('span', {}, [el('i', { style: 'background:var(--accent)' }), 'Service channel']), lg('l-ase', 'ASE floor'), lg('l-nli', 'NLI under the lit channels'),
+  const sw = (style, text) => el('span', {}, [el('i', { style }), text]), bgSw = 'background:none;border:1px dashed var(--muted)';
+  const chans = !plan ? [sw(bgSw, 'Background: Line load copies of the service channel')]
+    : r.derived ? [sw('background:var(--sig);opacity:.6', 'Cabled channels'), ...(plan.some(isBg) ? [sw(bgSw, 'Background channels (Line load)')] : [])] : [lg('l-sig', 'Neighbouring channels')];
+  wrap.append(s, el('div', { class: 'legend' }, [...chans, sw('background:var(--accent)', 'Service channel'), lg('l-ase', 'ASE floor'), lg('l-nli', 'NLI under the lit channels'),
     el('span', { class: 'muted', text: `Channel power here is ${f1(h.out.sig)} dBm (reads ${f1(sigD)} dBm in a 0.1 nm slice, since a ${(Rs / 1e9).toFixed(0)} GBd signal is ${f1(dens)} dB wider). OSNR = channel power − ASE floor = ${f1(h.out.sig - aseD)} dB. All channels launch at equal power.${h.tilt > 0.05 ? ` SRS has tilted them by ${f1(h.tilt)} dB, lowest to highest frequency.` : ''}` })]));
   return wrap;
 }

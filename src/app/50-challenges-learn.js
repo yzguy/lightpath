@@ -105,6 +105,44 @@ function ituTable() {
   tbl.append(tb); wrap.append(el('div', { style: 'overflow:auto;max-height:340px;max-width:420px' }, [tbl]));
   return wrap;
 }
+// "Try it" under a topic: a scenario that shows it, one change to make and what to watch, and the challenge that practises it. The numbers are what the model gives.
+// [scenario, tab the step needs (Expert mode is switched on for an expert tab), the step, challenge]
+const LEARN_TRY = {
+  osnr: ['dci', null, 'Hover the amplifiers to read the OSNR after each one (30.7 dB at the end). Then drag Amp output down to −4 dBm: each amplifier sees less input power, so the OSNR falls to 29.0 dB.', 'far'],
+  gsnr: ['lh', null, 'Raise Amp output from 0 to +4 dBm. The OSNR improves (27.3 to 29.7 dB) but the GSNR, which counts nonlinear noise too, gets worse (26.0 to 24.3 dB), and so does the margin.', 'launch'],
+  q: ['dci', null, 'Select the 80 km span and make it 120 km. The Q margin falls from 3.5 to 1.8 dB: still up, with less headroom.', 'far'],
+  ber: ['dark', null, 'Select the fiber and lengthen it from 25 to 45 km. The pre-FEC BER climbs past the FEC limit and the link goes down; Hop-by-hop PM shows the BER at the receiver.', 'far'],
+  margin: ['dci', null, 'Lengthen the 80 km span to 100 km, then 120 km: the margin falls from 3.5 to 2.9 to 1.8 dB. Margin is what you have left to spend on ageing, repairs and the unexpected.', 'eol'],
+  rx: ['dark', null, 'The receiver is DEGRADED because 25 km of unamplified fiber leaves −16.5 dBm, under its −12 dBm sensitivity. Shorten the fiber and watch Rx power rise; Too much light practises the other end of the window.', 'hot'],
+  span: ['dci', null, 'Select the span and change its length or its connector loss: span loss is the length times the fiber attenuation plus the connectors, and every dB of it is a dB less at the next amplifier.', 'far'],
+  launch: ['lh', 'sweep', 'Open the Launch sweep tab (Analysis group): it plots the margin against Amp output. Too low and ASE noise wins, too high and nonlinear noise wins; the peak is the best launch power.', 'launch'],
+  aging: ['lh', null, 'Select a span and add 3 dB of connector + splice loss, the kind of loss a span gathers over the years: the margin drops. End-of-life planning keeps that much in reserve on day one.', 'eol'],
+  edfa: ['dci', null, 'Select PRE-B and raise its noise figure from 5 to 9 dB. The OSNR at the receiver falls from 30.7 to 29.1 dB: a noisier amplifier adds more ASE for the same gain.', 'far'],
+  nli: ['lh', null, 'Raise Amp output step by step to +6 dBm. Past about +2 dBm the nonlinear noise grows faster than the signal: the margin falls and at +6 dBm the link is DEGRADED.', 'launch'],
+  cd: ['sfp10', null, 'Select the 60 km span and make it 120 km. The 10G optic cannot undo that much dispersion and the link goes down; the "Switch 10G over 120 km with a DCM" scenario shows the fix.', 'dispersion'],
+  filter: ['ring', null, 'Change the Grid from 75 GHz to 50 GHz. The 60 GBd signal no longer fits its slot: the filtering penalty jumps from 0.2 to 2.6 dB and the service is DEGRADED.', 'filters'],
+  srs: ['lh', null, 'Open the Spectrum tab (Instruments group): the 64 channels slope by about 1 dB. Set Line load to 96 and Amp output to +4 dBm and the tilt grows to nearly 4 dB.', 'tilt'],
+  xpm: ['mix', 'plan', 'Open the Channels tab: the three 10G channels each pay about 0.2 dB of XPM from their wide 400G neighbours, while the coherent channels pay none.', null],
+  raman: ['dci', null, 'Make the 80 km span 110 km, then give it a Raman pump of 500 mW and then 1000 mW. The OSNR rises from 27.9 to 29.1 to 30.6 dB without adding a hut.', 'raman'],
+  raman2: ['dci', 'raman', 'Give the span a Raman pump, set its Raman model to the coupled-wave solver, then open the Raman tab to see the power along the fiber and the gain spectrum.', 'raman'],
+  trans: ['mesh', 'trans', 'Open the Transients tab: it cuts each fiber in turn and shows how far the surviving channels jump while the amplifiers settle.', null],
+  resil: ['protect', 'resil', 'Open the Resilience tab, then cut a fiber on the working route: protected channels switch at once, the others are restored over what is left.', 'cut'],
+  fail: ['srlg', null, 'Cut one of the two fibers in the shared duct: its twin fails with it, and the service has to take the long way round.', 'duct'],
+  odf: ['odf', null, 'The service is DEGRADED by a dirty port on ODF-B. Select ODF-B and clean it, or use the fix button in the results.', 'dirty'],
+  olp: ['olp', null, 'Cut the 60 km fiber and watch the switch move to the protection path. Then set the switch to manual and cut it again.', null],
+  reach: ['reach', 'reach', 'Open the Reachability tab, then break it: change a host\'s port speed, cut the fiber, or mistune a transponder.', null],
+  otdr: ['otdr', 'otdr', 'Open the OTDR tab and change the pulse width: short pulses separate the dirty connector, the joint and the patch cord; long ones merge them into one event.', 'dirty'],
+  b1310: ['osc', null, 'The amplifier regenerates the 1510 nm supervisory channel but blocks the 1310 nm client. Look at the alarms, then clean the dirty connector.', null],
+  ports: ['ports', 'plan', 'Open the Channels tab to see the channels the cabling creates, then select a cable into a mux and move it to another port: the transponder changes wavelength.', 'port'],
+  bidi: ['bidi', null, 'One fiber carries both directions. Flip the role of one end, then load the "BiDi amplifier" scenario and set its amplifier to one-way.', 'onefiber'],
+  client: ['mxp', 'clients', 'Open the Clients tab: four 100G clients ride one 400G line. Cut the line fiber and all four go down together.', null],
+  plan: ['mix', 'plan', 'Open the Channels tab: 10G and 400G channels share the line at different slots and powers. Give a 10G channel a power offset and watch its margin change.', 'repack'],
+};
+function tryIt(lab, tb) {
+  applyPreset(lab);
+  if (tb && !tabAvailable(tb) && !expert) { expert = true; try { localStorage.setItem('lightpath-expert', '1'); } catch (e) { /* no storage */ } syncExpert(); renderAll(); toast(`Loaded: ${PRESETS[lab].name}. Expert mode is on for the ${tb === 'raman' ? 'Raman' : tb === 'trans' ? 'Transients' : tb} tab`, { label: 'Undo', fn: undo }); }
+  renderTabBody(); window.scrollTo({ top: 0, behavior: 'smooth' });
+}
 function learnView() {
   const keys = Object.keys(LEARN), grouped = new Set(LEARN_GROUPS.flatMap(g => g[1])), groups = [...LEARN_GROUPS.map(([n, ks]) => [n, ks.filter(k => LEARN[k])]), ['More', keys.filter(k => !grouped.has(k))]].filter(g => g[1].length);
   const text = {}; for (const k of keys) text[k] = (LEARN[k][0] + ' ' + LEARN[k][1].replace(/<[^>]+>/g, ' ')).toLowerCase();
@@ -129,6 +167,13 @@ function learnView() {
   };
   find.addEventListener('input', () => { learnFilter = find.value; apply(); }); apply();
   const art = el('article', {}, [el('h3', { text: LEARN[learnTopic][0] }), el('div', { html: LEARN[learnTopic][1] })]); if (learnTopic === 'itu') art.append(ituTable());
+  const tr = LEARN_TRY[learnTopic];
+  if (tr) {
+    const [lab, tb, text, ch] = tr, c = ch && chById(ch);
+    art.append(el('div', { class: 'tryit' }, [el('h4', { text: 'Try it' }), el('p', { text }), el('div', { class: 'row' }, [
+      el('button', { class: 'btn primary', type: 'button', text: labKey === lab ? `Reload "${PRESETS[lab].name}"` : `Load "${PRESETS[lab].name}"`, onclick: () => tryIt(lab, tb) }),
+      c ? el('button', { class: 'btn', type: 'button', text: `Practise: ${c.title}${chal.done[ch] ? ' ✓' : ''}`, onclick: () => startChallenge(ch) }) : null])]));
+  }
   return el('div', { class: 'learn' }, [nav, art]);
 }
 

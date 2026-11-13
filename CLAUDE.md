@@ -1,6 +1,6 @@
 # Lightpath
 
-Single-page browser app, no dependencies. Edit files in `src/`, then run `./build.sh` to produce `dist/lightpath.html`. Run `npm test` (Node's built-in runner, no installs) before finishing any change.
+Single-page browser app, no dependencies. Edit files in `src/`, then run `./build.sh` to produce `dist/lightpath.html`. Run `npm test` (Node's built-in runner, no installs) before finishing any change. For UI changes also run `npm run test:ui` (builds, then a Python Playwright smoke test of the page in `test/ui_smoke.py`) and add a check there for new interactions.
 
 - `src/engine.js` is pure physics and must stay DOM-free so it can be tested in Node.
 - `src/model/*.js` is the topology model: device/preset definitions, challenges, `sanitize()` for untrusted JSON, `route()` and `simulate(S, launchOverride)` (in `95-simulate.js`). Also DOM-free and unit-tested; uses global `PHY`. Keep simulation logic here, not in the app. The channel plan (`g.plan`, `buildChans`, event-log replay for per-channel results) lives here too. The files are consecutive parts of ONE closure (the first opens `const MODEL = (() => {`, the last closes it), joined in file-name order by build.sh; they are not standalone modules, so a part need not parse on its own. `src/model.js` is only the Node loader (`require('./src/model.js')`); errors in Node point at line numbers in the joined text (`cat src/model/*.js`).

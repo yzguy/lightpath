@@ -1,6 +1,4 @@
 <title>Lightpath</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
 /* Layout: lab bench. Toolbar on top, palette | canvas | inspector, readouts and scopes below. */
 :root {
@@ -8,7 +6,7 @@
   --accent: #b88400; --accent-text: #8a6200; --accent-ink: #1a1400; --jacket: #e2b100;
   --sig: #087a72; --ase: #c2413a; --nli: #6b4fbf; --mpi: #a8742b;
   --good: #1d8048; --warn: #956000; --bad: #c0352b; --gap: rgba(8,122,114,.10);
-  --f-ui: 'Archivo', 'Helvetica Neue', Arial, sans-serif; --f-mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  --f-ui: 'Archivo', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; --f-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0c1311; --panel: #121b19; --raised: #18231f; --ink: #e2ebe7; --muted: #8b9d97; --line: #26332f; --grid: #1b2622;
@@ -57,6 +55,11 @@ body:not(.expert) .adv { display: none }
 .btn.primary { background: var(--ink); color: var(--bg); border-color: var(--ink) } .btn.primary:hover { opacity: .9 }
 #tour { position: fixed; z-index: 40; width: 320px; padding: 14px 16px; display: grid; gap: 8px; background: var(--raised); box-shadow: 0 10px 40px rgba(0,0,0,.22); font-size: 13px; line-height: 1.5 }
 #tour h3 { font-size: 14px; margin: 0 } #tour p { margin: 0 } #tour .row { justify-content: space-between; align-items: center }
+.menu { position: fixed; z-index: 45; min-width: 200px; padding: 4px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.18); display: grid }
+.menu .mhead { padding: 6px 10px 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); white-space: nowrap }
+.menu .mi { text-align: left; background: none; border: 0; border-radius: 5px; padding: 6px 10px; font-size: 13px; cursor: pointer } .menu .mi:hover, .menu .mi:focus-visible { background: var(--panel); outline: none } .menu .mi.danger { color: var(--bad) }
+#portpick { width: 300px; gap: 6px; padding: 6px 8px 8px } .pp-row { display: grid; gap: 3px; font-size: 12px; color: var(--muted) } .pp-row select { width: 100%; color: var(--ink) } .pp-btns { gap: 8px; margin-top: 2px }
+.menu .msep { height: 1px; margin: 4px 6px; background: var(--line) }
 .tour-hi { outline: 3px solid var(--accent) !important; outline-offset: 3px; border-radius: 8px; position: relative; z-index: 35 }
 #btn-expert[aria-pressed=true] { color: var(--ink); text-decoration: none; border-color: var(--line); background: var(--raised) }
 input[aria-invalid=true] { border-color: var(--bad); outline-color: var(--bad) }
@@ -66,7 +69,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .btn.quiet:hover { color: var(--ink); border-color: transparent } .btn.quiet.delbtn:hover { color: var(--bad) } /* only the delete buttons turn red */
 
 /* bench */
-.bench { display: grid; grid-template-columns: 168px minmax(0, 1fr) 270px; gap: 10px; height: min(62vh, 620px); min-height: 440px }
+.bench { display: grid; grid-template-columns: 168px minmax(0, 1fr) 270px; gap: 10px; height: var(--bench-h, min(62vh, 620px)); min-height: 300px }
+.split { height: 14px; display: flex; align-items: center; justify-content: center; cursor: row-resize } .split::before { content: ''; width: 56px; height: 4px; border-radius: 2px; background: var(--line) }
+.split:hover::before, .split:focus-visible::before, .split.on::before { background: var(--muted) } .split:focus-visible { outline: none }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0 }
 .palette { padding: 10px; overflow: auto }
 .paldet { display: flex; flex-direction: column; gap: 6px }
@@ -131,6 +136,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .link.sel .wire { stroke-width: 6 } .link.sel .hit { stroke: var(--ink); stroke-opacity: .2 }
 .link.cut .wire { stroke: var(--bad); stroke-dasharray: 2 6 }
 .llabel { font-family: var(--f-mono); font-size: calc(11px * var(--lf2, 1)); fill: var(--ink); paint-order: stroke; stroke: var(--panel); stroke-width: calc(4px * var(--lf2, 1)); pointer-events: none }
+.llabel.lbg { fill: var(--muted); font-size: calc(10px * var(--lf2, 1)) }
 .cutmark { font-size: 20px; fill: var(--bad); font-weight: 700 }
 .lightpath { stroke: var(--sig); stroke-width: 2.5; stroke-dasharray: 3 9; stroke-linecap: round; fill: none; pointer-events: none; animation: flow 0.9s linear infinite }
 .lightpath.down, .lightpath.los { stroke: var(--bad) }
@@ -177,7 +183,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .keys { display: grid; gap: 6px; font-size: 12px; color: var(--muted) }
 
 /* results */
-.results { margin-top: 10px; padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px }
+.results { padding: 14px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px }
 .svcbar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center }
 .svcbar label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--muted); display: flex; gap: 6px; align-items: center }
 .chbar { border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 5px; background: var(--raised); padding: 10px 12px; display: grid; gap: 7px; font-size: 13px }
@@ -238,6 +244,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .l-sig { stroke: var(--sig); background: var(--sig) } .l-ase { stroke: var(--ase); background: var(--ase) } .l-nli { stroke: var(--nli); background: var(--nli) }
 .sp-nrz { fill: var(--warn); fill-opacity: .4; stroke: var(--warn); stroke-width: 1 }
 .sp-ch { fill: var(--sig); fill-opacity: .35; stroke: var(--sig); stroke-width: 1 } .sp-me { fill: var(--accent); fill-opacity: .55; stroke: var(--accent) }
+.sp-bg { fill: var(--muted); fill-opacity: .12; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 2 }
 .sp-slot { fill: none; stroke: var(--grid) } .sp-ase { fill: var(--ase); fill-opacity: .12 } .sp-sel { margin: 4px 0 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 12px }
 .clients { display: grid; gap: 4px; margin: 8px 0 } .clients h4 { font-size: 13px }
 .crow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px; gap: 4px 6px; align-items: center } .crow select { grid-column: 1 / -1; width: 100%; min-width: 0 } .crow input { width: 100%; min-width: 0 }
@@ -274,6 +281,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 .chip[aria-pressed=true] { background: var(--raised); border-color: var(--line); color: var(--ink); font-weight: 600 }
 .learn article { max-width: 66ch; line-height: 1.55 }
 .learn h3 { font-size: 18px; margin-bottom: 4px }
+.tryit { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--raised); display: grid; gap: 8px } .tryit h4 { margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .06em } .tryit p { margin: 0 }
 .learn code { font-family: var(--f-mono); font-size: 12.5px; background: var(--raised); border: 1px solid var(--line); padding: 1px 5px; border-radius: 3px; white-space: nowrap }
 
 #toast .toast-act { background: none; border: 0; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; padding: 4px 2px; cursor: pointer }
@@ -354,11 +362,11 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
       </div>
       <p class="muted small">The physics uses representative values, not datasheet figures: it's good for trends and intuition, not for planning real links.</p>
     </div>
-    <div class="canvas-tools"><button class="btn" id="btn-undo" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo" disabled>Undo</button><button class="btn" id="btn-redo" title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo" disabled>Redo</button><button class="btn" id="btn-fit">Fit</button><button class="btn" id="btn-export">Export / import</button><button class="btn" id="btn-clear">Clear canvas</button></div>
+    <div class="canvas-tools"><button class="btn" id="btn-undo" title="Undo (Ctrl/Cmd+Z)" aria-label="Undo" disabled>Undo</button><button class="btn" id="btn-redo" title="Redo (Ctrl/Cmd+Shift+Z)" aria-label="Redo" disabled>Redo</button><button class="btn" id="btn-fit">Fit</button><button class="btn" id="btn-share" title="Copy a link that opens this lab">Share link</button><button class="btn" id="btn-export">Export / import</button><button class="btn" id="btn-clear">Clear canvas</button></div>
   </div>
   <aside class="panel insp" id="insp" aria-label="Inspector"></aside>
 </section>
-
+<div class="split" id="split" role="separator" aria-orientation="horizontal" aria-label="Resize the bench" tabindex="0" title="Drag to trade bench height for results; double-click to reset"></div>
 <section class="panel results" id="results" aria-label="Service results">
   <h2 class="sr-only">Service results</h2>
   <div class="chbar" id="challenge" hidden></div>
@@ -395,6 +403,8 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 </section>
 
 <div id="toast" role="status" aria-live="polite" hidden></div>
+<div id="ctx" class="menu" role="menu" aria-label="Actions" hidden></div>
+<div id="portpick" class="menu" role="dialog" aria-label="Choose the ports" hidden></div>
 <div id="tour" class="panel" role="dialog" aria-live="polite" hidden></div>
 <div id="sr-live" class="sr-only" role="status" aria-live="polite"></div>
 <div id="io" hidden><div class="panel"><h2>Export / import topology</h2><p class="muted small">Copy this JSON to save your lab, or paste one in and load it.</p><textarea id="io-text" aria-label="Topology JSON" spellcheck="false"></textarea><div class="row"><button class="btn" id="io-copy">Copy</button><button class="btn" id="io-load">Load pasted JSON</button><button class="btn" id="io-close">Close</button></div>
