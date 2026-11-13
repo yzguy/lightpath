@@ -71,21 +71,57 @@ function faultBadge(n, body) {
   else { const t = sv('text', { x: 0, y: 3.8, class: 'faultmark', 'text-anchor': 'middle' }); t.textContent = '!'; g.append(t); }
   return g;
 }
+// The status light on a transponder or muxponder shows its own line, not the service's: the channel it is paired on, or why it has none.
+// Returns [light, text] with light one of good, warn, bad, off.
+const LAMP = { up: 'good', degraded: 'warn', standby: 'off', none: 'off' };
+function endState(n) {
+  const r = lastRes, lamp = (st, why) => { why = (why || '').replace(/^Up, but (with a warning: )?/, ''); return [LAMP[st] || 'bad', `line ${(STATUS[st] || st).toLowerCase()}${why ? ': ' + why : ''}`]; };
+  if (n.p.fail === 'dead') return ['bad', 'failed'];
+  if (!r) return ['off', 'not carrying a channel'];
+  const D = r.derived, dk = D && D.dark.find(d => d.id === n.id); if (dk) return ['bad', 'no line: ' + dk.why];
+  const i = D ? D.plan.findIndex(c => !c.filler && (c.tx === n.id || c.rx === n.id)) : (r.channels || []).findIndex(c => c.from === n.id || c.to === n.id), c = i >= 0 && r.channels && r.channels[i];
+  const margin = q => Number.isFinite(q) ? `${q.toFixed(1)} dB margin` : '';
+  if (c) return lamp(c.status, c.status === 'up' ? chText(c.slot, true) + ' THz, ' + margin(c.qMargin) : (c.notes || [])[0]);
+  if (S.svc && (S.svc.a === n.id || S.svc.z === n.id)) return lamp(r.status, r.status === 'up' ? margin(r.qMargin) : r.headline);
+  // a lost service ends the simulation before the other channels are worked out, so a pair without a result is simulated as if it were the service
+  const own = (D ? D.plan : S.g.plan || []).find(c => !c.filler && (D ? [c.tx, c.rx] : [c.from, c.to]).includes(n.id));
+  if (own) { const p = pairRes(own, D); return lamp(p.status, p.status === 'up' ? margin(p.qMargin) : p.headline); }
+  return ['off', 'not carrying a channel'];
+}
+let pairCache = { res: null, m: new Map() };
+function pairRes(c, D) {
+  if (pairCache.res !== lastRes) pairCache = { res: lastRes, m: new Map() };
+  const a = D ? c.tx : c.from, z = D ? c.rx : c.to, k = a + '|' + z;
+  if (!pairCache.m.has(k)) pairCache.m.set(k, MODEL.simulate({ ...S, svc: { a, z }, g: D ? S.g : { ...S.g, plan: S.g.plan.map(e => ({ ...e, svc: e === c })) } }));
+  return pairCache.m.get(k);
+}
+// a muxponder client port passes traffic only if its own optic works and the line does
+function clientLamp(n, i, line) {
+  const cl = lastRes && (lastRes.clients || []).find(c => c.node.id === n.id), p = cl && cl.ports[i];
+  if (!p || line === 'off') return [line, `client ${i + 1}`];
+  const own = p.status === 'ok' ? 'good' : p.status === 'down' ? 'bad' : 'warn', worst = [line, own].includes('bad') ? 'bad' : [line, own].includes('warn') ? 'warn' : 'good';
+  return [worst, `client ${i + 1} (${p.optic.name})${p.status === 'ok' ? '' : ': ' + p.notes.join('; ')}`];
+}
+const tip = (elt, text) => { const t = sv('title', {}); t.textContent = text; elt.append(t); return elt; };
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 const weakPorts = n => !!n.p && !!n.p.degPorts && Object.values(n.p.degPorts).some(v => +v > 0);
 function nodeShape(n) {
   const g = sv('g', { class: 'node t-' + n.type + (panelDirty(n) || weakPorts(n) || hostFaults.has(n.id) ? ' faulty' : '') + (n.p && n.p.fail === 'dead' ? ' failed' : n.p && n.p.fail === 'degraded' ? ' degraded' : '') + (sel && sel.id === n.id ? ' sel' : group.has(n.id) ? ' sel msel' : ''), 'data-id': n.id, transform: `translate(${n.x},${n.y})`, tabindex: 0, role: 'button', 'aria-pressed': (sel && sel.id === n.id) || group.has(n.id) ? 'true' : 'false',
     'aria-label': `${n.name}, ${(TYPES[n.type] || {}).label || n.type}${S.svc && S.svc.a === n.id ? ', service A end' : S.svc && S.svc.z === n.id ? ', service Z end' : ''}${n.p && n.p.fail === 'dead' ? ', failed' : n.p && n.p.fail === 'degraded' ? ', degraded' : ''}${panelDirty(n) ? ', dirty connector on port ' + Object.entries(n.p.dirty).filter(([, v]) => +v > 0.3).map(([k]) => k).join(', ') : ''}` });
+  const st = n.type === 'trx' || n.type === 'mxp' ? endState(n) : null;
+  if (st) { g.classList.add('lamp-' + st[0]); tip(g, `${n.name}: ${st[1]}`); g.setAttribute('aria-label', g.getAttribute('aria-label') + ', ' + st[1]); }
+  const linePort = () => tip(sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' }), 'Line port: the fiber, or the cord to a mux port, plugs in here');
   if (n.type === 'trx') {
     g.append(sv('rect', { x: -46, y: -22, width: 92, height: 44, rx: 4, class: 'body' }));
-    g.append(sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' }));
+    g.append(linePort());
     const t = sv('text', { x: -38, y: 4, class: 'glyph' }); t.textContent = PHY.MODES[n.p.mode].short; g.append(t);
-    g.append(sv('circle', { cx: -36, cy: -12, r: 3, class: 'led' }));
+    g.append(sv('circle', { cx: -36, cy: -12, r: 3, class: 'led ' + st[0] }));
   } else if (n.type === 'mxp') {
     g.append(sv('rect', { x: -46, y: -30, width: 92, height: 60, rx: 4, class: 'body' }));
     const nc = n.p.clients.length;
-    n.p.clients.forEach((c, i) => { const y = nc > 1 ? -22 + i * (44 / (nc - 1)) : 0; g.append(sv('line', { x1: -56, y1: y, x2: -46, y2: y, class: 'thin' })); g.append(sv('circle', { cx: -56, cy: y, r: 2.2, class: 'led' })); });
-    g.append(sv('rect', { x: 30, y: -6, width: 10, height: 12, rx: 1, class: 'port' }));
+    n.p.clients.forEach((c, i) => { const y = nc > 1 ? -22 + i * (44 / (nc - 1)) : 0, [cl, ct] = clientLamp(n, i, st[0]); g.append(sv('line', { x1: -56, y1: y, x2: -46, y2: y, class: 'thin' })); g.append(tip(sv('circle', { cx: -56, cy: y, r: 2.6, class: 'led ' + cl }), ct)); });
+    g.append(sv('circle', { cx: -36, cy: -21, r: 3, class: 'led ' + st[0] }));
+    g.append(linePort());
     const t = sv('text', { x: -38, y: -6, class: 'glyph' }); t.textContent = PHY.MODES[n.p.mode].short; g.append(t);
     const t2 = sv('text', { x: -38, y: 10, class: 'glyph small' }); t2.textContent = `${nc} client${nc === 1 ? '' : 's'}`; g.append(t2);
   } else if (n.type === 'mux') {

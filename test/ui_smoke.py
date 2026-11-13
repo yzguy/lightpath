@@ -64,7 +64,7 @@ class UI(unittest.TestCase):
         return (pg or self.page).evaluate("JSON.parse(localStorage.getItem('lightpath-v1')).links.length")
 
     def node(self, name):
-        return self.page.locator('.node', has_text=name).first
+        return self.page.locator('.node', has=self.page.get_by_text(name, exact=True)).first  # exact: a status tooltip can name other devices
 
     def handle_drag(self, frm, to):
         pg = self.page
@@ -210,7 +210,7 @@ class UI(unittest.TestCase):
         self.explore('dci')
         pg.locator('button.tgroup', has_text='Analysis').click()
         self.assertEqual(pg.locator('.tab:visible', has_text='Transients').count(), 0, 'expert tabs hidden by default')
-        self.open_tab('Learn', 'Learn')
+        self.open_tab('Learn', 'Topics')
         pg.locator('.lfind').fill('transients')
         pg.locator('.lnav .chip:visible').first.click()
         pg.locator('.tryit .btn.primary').click()
@@ -239,6 +239,69 @@ class UI(unittest.TestCase):
               shown.forEach((t, i) => { if (bodies.some(b => ov(R[i], b)) || R.some((q, j) => j > i && ov(R[i], q))) hit.push(t.textContent); });
               return hit; })()""")
             self.assertEqual(hits, [], preset)
+
+    def test_scenario_intro_and_reset(self):
+        pg = self.page
+        self.explore()
+        card = pg.locator('#labintro')
+        self.assertIn('DCI: 400ZR over 80 km', card.inner_text())
+        self.assertIn('Try:', card.inner_text())
+        self.node('BST-A').click()
+        self.assertEqual(card.count(), 0, 'a selection replaces the intro')
+        cv = pg.locator('.canvaswrap').bounding_box()
+        pg.mouse.click(cv['x'] + 30, cv['y'] + cv['height'] - 30)
+        self.assertEqual(card.count(), 1)
+        self.explore('mesh')
+        self.assertIn('same four slots', card.inner_text())
+        card.locator('button', has_text='Read:').click()
+        self.assertEqual(pg.locator('.tab[aria-selected=true]').inner_text(), 'Topics')
+        self.assertFalse(pg.locator('#btn-reset').is_visible())
+        header_h = pg.locator('header').bounding_box()['height']
+        pg.locator('.link.k-fiber .hit').nth(1).click()  # a diagonal one: a level line has a zero-height box, which Playwright calls invisible
+        pg.get_by_role('button', name='Cut this fiber').click()
+        self.assertIn('edited', pg.locator('#preset option:checked').inner_text())
+        self.assertEqual(pg.locator('header').bounding_box()['height'], header_h, 'the Reset button wrapped the header')
+        pg.click('#btn-reset')
+        self.assertFalse(pg.locator('#btn-reset').is_visible())
+        self.assertNotIn('edited', pg.locator('#preset option:checked').inner_text())
+        self.assertEqual(pg.locator('.link.cut').count(), 0)
+
+    def test_channel_summary_and_launch_sweep(self):
+        pg = self.page
+        self.explore('dci')
+        self.assertEqual(pg.locator('#chsum').inner_text(), '3 channels: 3 up')
+        pg.click('#chsum')
+        self.assertEqual(pg.locator('.tab[aria-selected=true]').inner_text(), 'Channels')
+        self.explore('dark')
+        self.assertFalse(pg.locator('#chsum').is_visible())
+        self.explore('dci')
+        self.open_tab('Analysis', 'Launch sweep')
+        use = pg.locator('#tabbody button', has_text='Use ')
+        target = use.inner_text().replace('Use ', '').replace(' dBm', '')
+        use.click()
+        self.assertEqual(pg.locator('#g-launch-v').inner_text(), f'{target} dBm/ch')
+        self.assertEqual(pg.locator('#tabbody button', has_text='Use ').count(), 0)
+
+    def test_transponder_lights_show_their_own_line(self):
+        pg = self.page
+        lights = lambda: pg.evaluate("Object.fromEntries([...document.querySelectorAll('.node.t-trx')].map(g => [g.querySelector(':scope > title').textContent.split(':')[0], g.querySelector('.led').getAttribute('class')]))")
+        self.explore('dci')
+        self.assertEqual(set(lights().values()), {'led good'})
+        self.assertIn('Line port', pg.locator('.node.t-trx .port title').first.text_content())
+        pg.locator('.link.k-fiber .hit').first.click(force=True)  # the lab's one span is level: a zero-height box, which Playwright calls invisible
+        pg.get_by_role('button', name='Cut this fiber').click()
+        self.assertEqual(set(lights().values()), {'led bad'}, 'every pair on the cut line goes dark, not just the service')
+        self.assertIn('fiber cut', pg.locator('.node.t-trx > title').nth(1).text_content())
+        self.explore('ring')
+        self.assertEqual(lights()['TRX-B'], 'led off', 'a transponder with no channel is unlit')
+
+    def test_palette_fits_with_its_tools(self):
+        pg = self.page
+        self.explore()
+        self.assertEqual(pg.locator('.palgrp').all_inner_texts(), ['ENDPOINTS', 'LINE', 'PASSIVE & CABLING', 'TEST GEAR'])
+        pal, tool = pg.locator('.palette').bounding_box(), pg.locator('.tool[data-tool=fiber]').bounding_box()
+        self.assertLessEqual(tool['y'] + tool['height'], pal['y'] + pal['height'], 'the cable tools show without scrolling the palette')
+        self.assertIn('ZR, ZR+', pg.locator('.pal-item[data-type=trx]').get_attribute('title'))
 
     def test_starter_lab_names_every_port(self):
         self.explore()

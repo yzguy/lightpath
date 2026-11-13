@@ -28,7 +28,7 @@
       answer: 'The multiplexer port for the service channel had 10 dB of extra loss. Only that channel was affected, so the line looked fine overall. Replacing the port clears it. On the add side the lost power also costs OSNR, because the channel enters the line weaker.',
       build() { const p = PRESETS.mix.build(), slot = p.g.plan.find(c => c.svc).slot; return withNode(p, 'MUX-A', n => { n.p.degPorts = { [slot]: 10 }; }); } },
     { id: 'launch', level: 2, title: 'Turned up too loud', topic: 'launch',
-      story: 'A five-span, 64-channel line ran fine until someone raised the channel launch power to +5 dBm per channel to "gain some margin". The margin got worse.',
+      story: 'A five-span, 48-channel line ran fine until someone raised the channel launch power to +5 dBm per channel to "gain some margin". The margin got worse.',
       goals: [goalUp(2), goalKeep('zrp400')],
       hints: ['Look at the first amplifier\'s alarm: what limit is it hitting?', 'More power drowns the amplifiers\' noise but adds noise from the fiber itself (nonlinearity). The best setting is between the two.', 'The Launch sweep tab plots the margin against the launch power.'],
       answer: 'At +5 dBm per channel the booster hits its 23 dBm total output limit, and the fiber\'s nonlinear noise grows faster than the signal. The margin has a peak (the Launch sweep tab shows it): at the right launch power ASE and nonlinear noise are balanced. Backing off to 0 to +2 dBm restores it.',
@@ -94,7 +94,7 @@
         a3.p.peer = c3.id; c3.p.peer = a3.id; p.nodes.push(a3, c3); p.links.push(L(a3, ra, 'patch', { mport: 2 }), L(c3, rc, 'patch', { mport: 2 }));
         for (const r of [ra, rc]) { r.p.ports = 2; r.p.contentionless = false; } return p; } },
     { id: 'tilt', level: 2, title: 'The edge of the band', topic: 'srs',
-      story: 'A 64-channel line passes its margin test, but the customer on the highest-frequency channel keeps losing frames and the middle channels never do. The amplifiers were reconfigured last month.',
+      story: 'A 48-channel line passes its margin test, but the customer on the highest-frequency channel keeps losing frames and the middle channels never do. The amplifiers were reconfigured last month.',
       goals: [goalUp(), goalKeep('zrp400'), { text: 'Every channel keeps at least 1 dB of margin', ok: (S, r) => r.worstQMargin >= 1 }],
       hints: ['The service bar shows the middle channel. Look at the Channels tab, or the worst-channel readings.', 'Stimulated Raman scattering moves power from the short wavelengths to the long ones, and the tilt builds up span after span.', 'Open an amplifier in the inspector and look at its gain-tilt control.'],
       answer: 'The in-line amplifiers had gain-tilt control switched off, so the SRS tilt added up over five spans and the edge channel lost about 1 dB more than the middle one. Turning it back on re-flattens the band at each amplifier output. A ROADM in the line would also re-equalise it.',

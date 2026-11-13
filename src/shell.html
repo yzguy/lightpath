@@ -30,12 +30,13 @@ kbd { font-family: var(--f-mono); font-size: 12px; border: 1px solid var(--line)
 #cv:focus { outline: none }
 
 /* top bar */
-.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px; margin-bottom: 12px }
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-bottom: 12px }
 .brand { display: flex; align-items: baseline; gap: 10px }
 .brand h1 { font-weight: 800; font-size: 20px; letter-spacing: -.01em }
 .brand h1 span { color: var(--accent-text) }
 .brand small { color: var(--muted); font-family: var(--f-mono); font-size: 12px; letter-spacing: .04em }
 .globals { display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; justify-content: flex-end; margin-left: auto }
+#btn-reset { margin-left: -12px; padding: 2px 7px; font-size: 15px; line-height: 1 }
 .g { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; font-weight: 600 }
 .g output { font-family: var(--f-mono); color: var(--ink); font-size: 13px; min-width: 3.2em; text-transform: none; letter-spacing: 0 }
 .g input[type=range] { width: 80px; accent-color: var(--accent) }
@@ -80,29 +81,36 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .split:hover::before, .split:focus-visible::before, .split.on::before { background: var(--muted) } .split:focus-visible { outline: none }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; min-width: 0 }
 .palette { padding: 10px; overflow: auto }
-.paldet { display: flex; flex-direction: column; gap: 6px }
+.paldet { display: flex; flex-direction: column; gap: 2px }
 .raman { display: grid; gap: 10px } .raman > summary { cursor: pointer; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: 4px 2px; min-height: 24px }
 .assume > summary { cursor: pointer; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: 8px 2px; min-height: 24px }
 .assume > summary + * { margin-top: 4px }
 .assume { display: grid; gap: 10px }
 .palette h2, .insp h2, .palette h3, .insp h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); font-weight: 700; margin: 4px 2px }
-.pal-item { display: grid; grid-template-columns: 34px 1fr; align-items: center; gap: 8px; padding: 6px; border: 1px solid transparent; border-radius: 6px; cursor: grab; background: none; text-align: left; user-select: none }
+.pal-item { display: grid; grid-template-columns: 28px 1fr; align-items: center; gap: 8px; padding: 3px 6px; border: 1px solid transparent; border-radius: 6px; cursor: grab; background: none; text-align: left; user-select: none }
 .pal-item:hover { background: var(--raised); border-color: var(--line) }
-.pal-item svg { width: 34px; height: 26px }
+.pal-item svg { width: 28px; height: 21px }
+.palette h3.palgrp { margin: 8px 2px 0; font-size: 11px }
 .pal-item b { display: block; font-size: 13px; font-weight: 600 }
-.pal-item small { display: block; color: var(--muted); font-size: 12px; line-height: 1.2 }
-.tools { display: grid; gap: 4px; margin-top: 4px }
-.tool { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); cursor: pointer; font-size: 13px; text-align: left }
+.tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin: 2px 0 6px }
+.tool { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 6px 2px; border: 1px solid var(--line); border-radius: 6px; background: var(--raised); cursor: pointer; font-size: 12px; text-align: center }
 .tool[aria-pressed=true] { background: var(--ink); color: var(--bg); border-color: var(--ink) }
 .tool i { width: 22px; height: 0; border-top: 3px solid var(--jacket); display: inline-block }
 .tool i.patch { border-top: 2px dashed var(--muted) }
-.tool i.sel { border: 0; width: 22px; height: auto; font-style: normal; text-align: center }
+.tool i.sel { border: 0; width: 22px; height: auto; font-style: normal; text-align: center; line-height: 1; margin: -6px 0 -3px }
 .tool kbd { margin-left: auto; color: inherit; background: transparent }
 
 .canvaswrap { position: relative; overflow: hidden; background-color: var(--panel);
   background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 20px 20px }
 #cv { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab }
 #cv[data-tool=patch], #cv[data-tool=fiber] { cursor: crosshair }
+.labintro { margin: 4px 0 10px; padding: 10px 12px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; line-height: 1.45 }
+.insp .labintro h3 { margin: 0 0 4px; font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--ink) }
+.labintro p { margin: 0 0 6px }
+.labintro .try { color: var(--muted) }
+.labintro .try b { color: var(--ink) }
+.labintro .acts { display: flex; gap: 8px; flex-wrap: wrap }
+.chsum { margin-left: 6px; font-size: 12px }
 #emptyhint { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); pointer-events: none; text-align: center; padding: 20px }
 .canvas-tools { position: absolute; right: 8px; top: 8px; display: flex; gap: 6px }
 .canvas-tools .btn { padding: 4px 8px; font-size: 12px }
@@ -112,6 +120,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .node .thin { stroke: var(--ink); stroke-width: 1.4; fill: none }
 .node .port { fill: var(--jacket); stroke: var(--ink); stroke-width: 1 }
 .node .led { fill: var(--good) }
+.node .led.warn { fill: var(--warn) } .node .led.bad { fill: var(--bad) } .node .led.off { fill: var(--panel); stroke: var(--muted); stroke-width: 1 }
 .node .glyph { font-family: var(--f-mono); font-size: 12px; font-weight: 600; fill: var(--ink) }
 .node .glyph.small { font-size: 10px }
 .node .nlabel { font-family: var(--f-mono); font-size: calc(11.5px * var(--lf1, 1)); fill: var(--muted); font-weight: 500 }
@@ -219,7 +228,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 #diag > div { padding: 6px 2px; font-size: 13px; border-top: 1px solid var(--line) } /* flat: it already sits in the results panel */
 .planwrap p, .learn p, p.muted.small { max-width: 60ch } /* explanatory text keeps a readable line length */ /* explanatory text keeps a readable measure on a wide screen */
 .labrow { display: flex; flex-wrap: nowrap; gap: 8px 18px; align-items: center } /* the line settings stay together on one row, or drop below the lab menu as a group */
-#preset { width: 230px; text-overflow: ellipsis }
+#preset { width: 205px; text-overflow: ellipsis }
 .kgroup { grid-column: 1 / -1; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); margin-top: 4px } .kgroup:first-child { margin-top: 0 }
 .tabsep { align-self: stretch; width: 1px; margin: 8px 6px; background: var(--line); flex: none }
 #headfix { align-self: center } #alarms .alfix { margin-left: 10px; padding: 2px 10px; min-height: 0 }
@@ -318,11 +327,11 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <span class="headbtns"><button class="btn" id="btn-chal" type="button" title="Broken labs to fix, from warm-up to hard">Challenges</button><button class="btn quiet" id="btn-tour" type="button" title="A short walk around the screen">Tour</button><button class="btn quiet" id="btn-expert" type="button" aria-pressed="false" title="Show the advanced settings and the Planner, Resilience, Transients and Raman tabs">Expert mode</button></span></div>
   <div class="globals">
     <label class="g" for="preset">Lab
-      <select id="preset"><option value="">Load a scenario…</option><optgroup label="Point-to-point links"><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="dark">Dark fiber: unamplified ZR</option><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="mix">Mixed line: 10G beside 400G</option></optgroup><optgroup label="Clients and traffic"><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="mxp2">Two muxponders per side on passive muxes</option><option value="reach">Hosts reaching each other over a muxponder link</option></optgroup><optgroup label="ROADMs and mesh"><option value="mesh">Mesh: channels on different routes</option><option value="adddrop">ROADM line with add/drop at the middle node</option><option value="roadmports">ROADM ring with transponders on add/drop ports</option></optgroup><optgroup label="Restoration and protection"><option value="ring">ROADM triangle with restoration</option><option value="srlg">Shared duct: two fibers that fail together</option><option value="protect">Protection and converters on a triangle</option><option value="client">Dual-homed transponders with spare modules</option><option value="olp">Optical line protection: splitter, tap and switch</option><option value="cabprot">Protection and a converter on cabled channels</option></optgroup><optgroup label="Passive optics and cabling"><option value="oadm">Passive OADM bus: transponders on add/drop ports</option><option value="ports">Transponders on mux ports: the cabling sets the channels</option><option value="bidi">Single-fiber (BiDi) bus: OADM between two muxes</option><option value="bidiamp">Single-fiber (BiDi) bus with a BiDi amplifier</option><option value="osc">Supervisory channel (1510 nm) and 1310 nm client ports</option><option value="odf">Patch panels: connector loss and a dirty port</option><option value="otdr">OTDR and power meter at a patch panel</option></optgroup></select></label>
+      <select id="preset"><option value="">Load a scenario…</option><optgroup label="Start here"><option value="dark">Dark fiber: unamplified ZR</option><option value="dci">DCI: 400ZR over 80 km</option><option value="lh">Long haul: 5 spans with ILAs</option><option value="ports">Transponders on mux ports: the cabling sets the channels</option></optgroup><optgroup label="Point-to-point links"><option value="sfp10">Switch 10G DWDM optics over 60 km</option><option value="sfp10dcm">Switch 10G over 120 km with a DCM</option><option value="mix">Mixed line: 10G beside 400G</option></optgroup><optgroup label="Clients and traffic"><option value="mxp">Muxponder: 4x100G over 400G ZR+</option><option value="mxp2">Two muxponders per side on passive muxes</option><option value="reach">Hosts reaching each other over a muxponder link</option></optgroup><optgroup label="ROADMs and mesh"><option value="mesh">Mesh: channels on different routes</option><option value="adddrop">ROADM line with add/drop at the middle node</option><option value="roadmports">ROADM ring with transponders on add/drop ports</option></optgroup><optgroup label="Restoration and protection"><option value="ring">ROADM triangle with restoration</option><option value="srlg">Shared duct: two fibers that fail together</option><option value="protect">Protection and converters on a triangle</option><option value="client">Dual-homed transponders with spare modules</option><option value="olp">Optical line protection: splitter, tap and switch</option><option value="cabprot">Protection and a converter on cabled channels</option></optgroup><optgroup label="Passive optics and cabling"><option value="oadm">Passive OADM bus: transponders on add/drop ports</option><option value="bidi">Single-fiber (BiDi) bus: OADM between two muxes</option><option value="bidiamp">Single-fiber (BiDi) bus with a BiDi amplifier</option><option value="osc">Supervisory channel (1510 nm) and 1310 nm client ports</option><option value="odf">Patch panels: connector loss and a dirty port</option><option value="otdr">OTDR and power meter at a patch panel</option></optgroup></select></label><button class="btn quiet" id="btn-reset" type="button" title="Reset: load the scenario again as it was" aria-label="Reset the lab" hidden>↺</button>
     <div class="labset" id="labset"><div class="labrow">
     <label class="g" for="g-nch" id="g-nch-l">Line load <input type="range" id="g-nch" min="1" max="96" step="1"><output id="g-nch-v"></output></label>
     <label class="g" for="g-df">Grid <select id="g-df"><option value="50">50 GHz</option><option value="75">75 GHz</option><option value="100">100 GHz</option><option value="150">150 GHz</option></select></label><button class="btn quiet" id="btn-itu" type="button" title="ITU grid and channel numbers: every channel at each spacing">ITU grid</button>
-    <label class="g" for="g-launch" title="The power per channel every amplifier puts out, unless it has its own output target. A transponder's own Tx power is set on the transponder.">Amp output <input type="range" id="g-launch" min="-6" max="6" step="0.5"><output id="g-launch-v"></output></label>
+    <label class="g" for="g-launch" title="The power per channel every amplifier puts out, unless it has its own output target. A transponder's own Tx power is set on the transponder.">Amp output <input type="range" id="g-launch" min="-6" max="6" step="0.25"><output id="g-launch-v"></output></label>
     </div></div>
   </div>
 </header>
@@ -330,28 +339,32 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
 <section class="bench">
   <aside class="panel palette" aria-label="Component palette">
   <div class="paldet" id="paldet">
-    <h2>Devices</h2>
-    <div class="pal-item" draggable="true" data-type="trx" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="2" y="5" width="30" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="5" height="6" fill="var(--jacket)"/></svg><span><b>Transponder</b><small>ZR, ZR+, 100G, 800G</small></span></div>
-    <div class="pal-item" draggable="true" data-type="mxp" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="6" y="3" width="24" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M1 7h5M1 11h5M1 15h5M1 19h5" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="4" height="6" fill="var(--jacket)"/></svg><span><b>Muxponder</b><small>Client ports into one ZR line</small></span></div>
-    <div class="pal-item" draggable="true" data-type="meter" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="3" y="4" width="28" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="7" y="8" width="20" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span><b>Power meter</b><small>Reads the light at a test point</small></span></div>
-    <div class="pal-item" draggable="true" data-type="otdr" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="3" y="4" width="28" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 9 H12 V13 H20 V16 H24 V10 H26 V18 H29" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span><b>OTDR</b><small>Traces a fiber: loss, events, breaks</small></span></div>
-    <div class="pal-item" draggable="true" data-type="host" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="3" y="4" width="28" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 10 H31 M8 16 H12 M16 16 H20" stroke="currentColor" stroke-width="1.4"/></svg><span><b>Host / router</b><small>Traffic endpoint, Ethernet ports</small></span></div>
-    <div class="pal-item" draggable="true" data-type="mux" role="button" tabindex="0"><svg viewBox="0 0 34 26"><path d="M4 2 L30 8 L30 18 L4 24 Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span><b>Mux / Demux</b><small>Passive DWDM filter</small></span></div>
-    <div class="pal-item" draggable="true" data-type="oadm" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="3" y="5" width="28" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 13 H31 M13 13 V5 M21 13 V21" stroke="currentColor" stroke-width="1.4"/></svg><span><b>OADM</b><small>Passive add/drop filter</small></span></div>
-    <div class="pal-item" draggable="true" data-type="panel" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="3" y="7" width="28" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 11 V15 M13 11 V15 M18 11 V15 M23 11 V15" stroke="currentColor" stroke-width="1.6"/></svg><span><b>Patch panel / ODF</b><small>Connector loss, dirty ports</small></span></div>
-    <div class="pal-item" draggable="true" data-type="splitter" role="button" tabindex="0"><svg viewBox="0 0 34 26"><path d="M3 13 H12 M12 13 L30 6 M12 13 L30 20" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span><b>Splitter / tap</b><small>50/50 up to a 99/1 monitor tap</small></span></div>
-    <div class="pal-item" draggable="true" data-type="switch" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="4" y="4" width="26" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 13 H14 L24 8 M24 18 H30" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span><b>Optical switch</b><small>1x2, one common and two ports</small></span></div>
-    <div class="pal-item" draggable="true" data-type="edfa" role="button" tabindex="0"><svg viewBox="0 0 34 26"><path d="M6 2 L30 13 L6 24 Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span><b>EDFA</b><small>Booster, ILA, preamp</small></span></div>
-    <div class="pal-item" draggable="true" data-type="roadm" role="button" tabindex="0"><svg viewBox="0 0 34 26"><circle cx="17" cy="13" r="11" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 10 H24 M10 16 H24" stroke="currentColor" stroke-width="1.4"/></svg><span><b>ROADM</b><small>WSS degree node</small></span></div>
-    <div class="pal-item" draggable="true" data-type="dcm" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="4" y="5" width="26" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 17 C13 17 13 9 17 9 S21 17 25 17" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span><b>Dispersion comp.</b><small>DCM / FBG</small></span></div>
-    <div class="pal-item" draggable="true" data-type="voa" role="button" tabindex="0"><svg viewBox="0 0 34 26"><rect x="4" y="5" width="26" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 18 L24 8" stroke="currentColor" stroke-width="1.4"/></svg><span><b>VOA / pad</b><small>Attenuator</small></span></div>
-    <h2>Cables &amp; tools</h2>
+    <h2>Tools</h2>
     <div class="tools">
-      <button class="tool" data-tool="select"><i class="sel">↖</i>Select / move<kbd>V</kbd></button>
-      <button class="tool" data-tool="patch"><i class="patch"></i>Patch cord<kbd>P</kbd></button>
-      <button class="tool" data-tool="fiber"><i></i>Fiber span<kbd>F</kbd></button>
+      <button class="tool" data-tool="select" title="Select and move (V)"><i class="sel">↖</i>Select</button>
+      <button class="tool" data-tool="patch" title="Draw a patch cord between two devices (P)"><i class="patch"></i>Patch</button>
+      <button class="tool" data-tool="fiber" title="Draw a fiber span between two devices (F)"><i></i>Fiber</button>
     </div>
-    <p class="muted small" style="margin:6px 2px 0">Drag devices onto the bench (or click to add). To cable two devices, drag the <b>+</b> beside one onto the other: the cable type is chosen for you. The tools above force a patch cord or a fiber.</p>
+    <h2>Devices</h2>
+    <h3 class="palgrp">Endpoints</h3>
+    <div class="pal-item" draggable="true" data-type="trx" role="button" tabindex="0" title="Transponder: ZR, ZR+, 100G, 800G"><svg viewBox="0 0 34 26"><rect x="2" y="5" width="30" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="5" height="6" fill="var(--jacket)"/></svg><span><b>Transponder</b></span></div>
+    <div class="pal-item" draggable="true" data-type="mxp" role="button" tabindex="0" title="Muxponder: Client ports into one ZR line"><svg viewBox="0 0 34 26"><rect x="6" y="3" width="24" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M1 7h5M1 11h5M1 15h5M1 19h5" stroke="currentColor" stroke-width="1.6"/><rect x="25" y="10" width="4" height="6" fill="var(--jacket)"/></svg><span><b>Muxponder</b></span></div>
+    <div class="pal-item" draggable="true" data-type="host" role="button" tabindex="0" title="Host / router: Traffic endpoint, Ethernet ports"><svg viewBox="0 0 34 26"><rect x="3" y="4" width="28" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 10 H31 M8 16 H12 M16 16 H20" stroke="currentColor" stroke-width="1.4"/></svg><span><b>Host / router</b></span></div>
+    <h3 class="palgrp">Line</h3>
+    <div class="pal-item" draggable="true" data-type="edfa" role="button" tabindex="0" title="EDFA: Booster, ILA, preamp"><svg viewBox="0 0 34 26"><path d="M6 2 L30 13 L6 24 Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span><b>EDFA</b></span></div>
+    <div class="pal-item" draggable="true" data-type="roadm" role="button" tabindex="0" title="ROADM: WSS degree node"><svg viewBox="0 0 34 26"><circle cx="17" cy="13" r="11" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 10 H24 M10 16 H24" stroke="currentColor" stroke-width="1.4"/></svg><span><b>ROADM</b></span></div>
+    <div class="pal-item" draggable="true" data-type="mux" role="button" tabindex="0" title="Mux / Demux: Passive DWDM filter"><svg viewBox="0 0 34 26"><path d="M4 2 L30 8 L30 18 L4 24 Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span><b>Mux / Demux</b></span></div>
+    <div class="pal-item" draggable="true" data-type="oadm" role="button" tabindex="0" title="OADM: Passive add/drop filter"><svg viewBox="0 0 34 26"><rect x="3" y="5" width="28" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 13 H31 M13 13 V5 M21 13 V21" stroke="currentColor" stroke-width="1.4"/></svg><span><b>OADM</b></span></div>
+    <div class="pal-item" draggable="true" data-type="dcm" role="button" tabindex="0" title="Dispersion comp.: DCM / FBG"><svg viewBox="0 0 34 26"><rect x="4" y="5" width="26" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 17 C13 17 13 9 17 9 S21 17 25 17" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span><b>Dispersion comp.</b></span></div>
+    <div class="pal-item" draggable="true" data-type="voa" role="button" tabindex="0" title="VOA / pad: Attenuator"><svg viewBox="0 0 34 26"><rect x="4" y="5" width="26" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 18 L24 8" stroke="currentColor" stroke-width="1.4"/></svg><span><b>VOA / pad</b></span></div>
+    <h3 class="palgrp">Passive &amp; cabling</h3>
+    <div class="pal-item" draggable="true" data-type="panel" role="button" tabindex="0" title="Patch panel / ODF: Connector loss, dirty ports"><svg viewBox="0 0 34 26"><rect x="3" y="7" width="28" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 11 V15 M13 11 V15 M18 11 V15 M23 11 V15" stroke="currentColor" stroke-width="1.6"/></svg><span><b>Patch panel / ODF</b></span></div>
+    <div class="pal-item" draggable="true" data-type="splitter" role="button" tabindex="0" title="Splitter / tap: 50/50 up to a 99/1 monitor tap"><svg viewBox="0 0 34 26"><path d="M3 13 H12 M12 13 L30 6 M12 13 L30 20" fill="none" stroke="currentColor" stroke-width="1.6"/></svg><span><b>Splitter / tap</b></span></div>
+    <div class="pal-item" draggable="true" data-type="switch" role="button" tabindex="0" title="Optical switch: 1x2, one common and two ports"><svg viewBox="0 0 34 26"><rect x="4" y="4" width="26" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4 13 H14 L24 8 M24 18 H30" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span><b>Optical switch</b></span></div>
+    <h3 class="palgrp">Test gear</h3>
+    <div class="pal-item" draggable="true" data-type="meter" role="button" tabindex="0" title="Power meter: Reads the light at a test point"><svg viewBox="0 0 34 26"><rect x="3" y="4" width="28" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="7" y="8" width="20" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span><b>Power meter</b></span></div>
+    <div class="pal-item" draggable="true" data-type="otdr" role="button" tabindex="0" title="OTDR: Traces a fiber: loss, events, breaks"><svg viewBox="0 0 34 26"><rect x="3" y="4" width="28" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 9 H12 V13 H20 V16 H24 V10 H26 V18 H29" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span><b>OTDR</b></span></div>
+    <p class="muted small" style="margin:6px 2px 0">Drag devices onto the bench (or click to add). To cable two devices, drag the <b>+</b> beside one onto the other: the cable type is chosen for you. The Patch and Fiber tools force a patch cord or a fiber.</p>
     </div>
   </aside>
   <div class="panel canvaswrap">
@@ -383,7 +396,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <label for="svc-z">Z <select id="svc-z"></select></label>
     <span id="dirsw" role="group" aria-label="Direction shown" hidden></span>
     <span id="status" class="status"></span>
-    <span id="headline"></span><button class="btn" id="headfix" hidden></button>
+    <span id="headline"></span><button class="btn" id="headfix" hidden></button><button class="btn quiet chsum" id="chsum" type="button" title="Every channel on the line: open the Channels table" hidden></button>
   </div>
   <ul id="alarms"></ul>
   <div class="kpis" id="kpis"></div>
@@ -404,7 +417,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <button class="tab" data-tab="resil" data-group="ana" role="tab">Resilience</button>
     <button class="tab" data-tab="trans" data-group="ana" role="tab">Transients</button>
     <button class="tab" data-tab="challenges" data-group="learn" role="tab">Challenges</button>
-    <button class="tab" data-tab="learn" data-group="learn" role="tab">Learn</button>
+    <button class="tab" data-tab="learn" data-group="learn" role="tab">Topics</button>
   </div>
   <div id="tabbody"></div>
 </section>

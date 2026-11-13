@@ -14,6 +14,7 @@ $('#g-df').addEventListener('change', e => { const old = +S.g.df; S.g.df = +e.ta
   const max = PHY.cBandSlots(S.g.df * 1e9); if (S.g.nch > max) { S.g.nch = max; toast(`Only ${max} channels fit the C band at ${S.g.df} GHz: the line now carries ${max}`); } renderAll(); });
 $('#g-launch').addEventListener('input', e => { S.g.launch = +e.target.value; $('#g-launch-v').textContent = (S.g.launch > 0 ? '+' : '') + S.g.launch + ' dBm/ch'; recompute(); });
 $('#preset').addEventListener('change', e => { if (e.target.value) applyPreset(e.target.value); else syncLab(); });
+$('#btn-reset').addEventListener('click', () => { if (labKey) applyPreset(labKey); });
 $('#btn-fit').addEventListener('click', () => { fitView(); applyView(); });
 $('#btn-itu').addEventListener('click', () => learn('itu'));
 const syncExpert = () => { document.body.classList.toggle('expert', expert); $('#btn-expert').setAttribute('aria-pressed', expert); };
@@ -116,6 +117,13 @@ function renderResults() {
   }
   $('#status').className = 'status s-' + lastRes.status; $('#status').textContent = STATUS[lastRes.status];
   $('#headline').textContent = lastRes.headline;
+  { // more than one channel: a count by status, so the channels besides the service are not missed; it opens the Channels table
+    const D = lastRes.derived, chans = (lastRes.channels || []).filter((c, i) => !(D && D.plan[i] && D.plan[i].filler)), cs = $('#chsum'), by = {};
+    chans.forEach(c => { by[c.status] = (by[c.status] || 0) + 1; });
+    cs.hidden = chans.length < 2;
+    cs.textContent = `${chans.length} channels: ` + Object.entries(by).map(([st, n]) => `${n} ${(STATUS[st] || st).toLowerCase()}`).join(', ');
+    cs.classList.toggle('bad', !!(by.down || by.los || by.blocked)); cs.onclick = () => { tab = 'plan'; renderTabBody(); };
+  }
   { const msg = `${STATUS[lastRes.status]}. ${lastRes.headline}`; if (msg !== srLast) { srLast = msg; $('#sr-live').textContent = msg; } } // announced only when it changes
   const k = $('#kpis'); k.innerHTML = ''; $('#diag').innerHTML = '';
   if (!r.mode) { $('#tabbody').innerHTML = ''; renderAlarms(r); renderTabBody(); return; }
