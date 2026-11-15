@@ -285,15 +285,15 @@ function otdrView() {
   wrap.append(el('div', { style: 'overflow:auto' }, [tbl]));
   return wrap;
 }
-// 1310 nm ports: what each OADM's 1310 nm port carries and whether the light gets across
+// 1310 nm ports: what each mux's or OADM's 1310 nm port carries and whether the light gets across
 function b1310View() {
   const B = lastRes && lastRes.b1310, O = lastRes && lastRes.osc; if (!(B && B.links.length) && !(O && O.links.length)) return null;
   const wrap = el('div', { class: 'pad' }), stt = r => el('span', { class: r.status === 'up' ? 'st-up' : r.status === 'warn' ? 'st-degraded' : 'st-down', text: (r.status === 'up' ? 'UP' : r.status === 'warn' ? 'WARN' : r.status === 'blocked' ? 'BLOCKED' : 'DOWN') + (r.why ? ': ' + r.why : '') });
   const table = (title, rows, carries) => {
-    const tbl = el('table', { class: 'tbl' }), th = el('tr'); ['From', 'To', ...(carries ? ['Carries'] : []), 'Fiber km', 'Loss dB', 'Rx dBm', 'Margin dB', 'Status'].forEach(h => th.append(el('th', { text: h })));
+    const tbl = el('table', { class: 'tbl' }), th = el('tr'); ['From', 'To', ...(carries ? ['Carries'] : []), 'Fiber km', 'Tx dBm', 'Loss dB', 'Rx dBm', 'Margin dB', 'Status'].forEach(h => th.append(el('th', { text: h })));
     tbl.append(el('thead', {}, [th]));
     const tb = el('tbody');
-    for (const r of rows) tb.append(el('tr', {}, [r.aName, r.bName || 'stops', ...(carries ? [r.opticName || ''] : []), r.km != null ? f1(r.km) : '', r.loss != null ? f1(r.loss) : '', r.rx != null ? f1(r.rx) : '', r.margin != null ? f1(r.margin) : '', stt(r)].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: String(x) })))));
+    for (const r of rows) tb.append(el('tr', {}, [r.aName, r.bName || 'stops', ...(carries ? [r.opticName || ''] : []), r.km != null ? f1(r.km) : '', r.tx != null && r.loss != null ? f1(r.tx) : '', r.loss != null ? f1(r.loss) : '', r.rx != null ? f1(r.rx) : '', r.margin != null ? f1(r.margin) : '', stt(r)].map(x => (x instanceof Node ? el('td', {}, [x]) : el('td', { text: String(x) })))));
     tbl.append(tb); wrap.append(el('h3', { text: title }), el('div', { style: 'overflow:auto' }, [tbl]));
   };
   if (O && O.links.length) { table('Supervisory channel (1510 nm), span by span', O.links, false); wrap.append(el('p', { class: 'small', text: 'Management domains: ' + (O.domains.map(d => d.join(' + ')).join('; ') || 'none') })); }

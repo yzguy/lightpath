@@ -22,6 +22,12 @@ function field(label, input, hint) {
   lab.append(el('span', { class: 'flab' }, [label, q].filter(Boolean)), input); if (hint) lab.append(el('small', { text: hint })); return lab;
 }
 let helpAll = false; try { helpAll = localStorage.getItem('lightpath-help') === '1'; } catch (e) { /* no storage */ }
+// the optic and insertion loss of a mux's or OADM's 1310 nm port, shown when the port is on
+function port1310(p) {
+  if (!p.p1310) return [];
+  return [field('1310 nm client', selIn(p, 'o1310', Object.entries(PHY.CLIENT_OPTICS).filter(([, o]) => o.nm === 1310).map(([k, o]) => [k, o.name])), 'The grey optic on this port. It travels only over fiber and patch panels to the next mux or OADM with a 1310 nm port, which must have the same optic; amplifiers (no gain at 1310 nm), ROADMs and units without the port block it.'),
+    field('1310 nm port loss (dB)', numIn(p, 'il1310', 0.1, 0, 5), 'Insertion loss from the 1310 nm port to the line port, on the data sheet of the unit (often 0.5 to 1.2 dB). The 1310 nm link pays it at each end.')];
+}
 function numIn(obj, key, step = 0.5, min, max, allowBlank, placeholder) {
   const i = el('input', { type: 'number', step, value: obj[key], id: 'f-' + key }); if (min != null) i.min = min; if (max != null) i.max = max; if (placeholder) i.placeholder = placeholder;
   const out = v => (min != null && v < +min) || (max != null && v > +max);
@@ -174,8 +180,8 @@ function renderInspectorBody() {
         box.append(field('Line sides', selIn(p, 'sides', [['ew', 'East and West (a node in the line)'], ['e', 'East only (line terminal)'], ['w', 'West only (line terminal)']]), 'East and West: a line port each way; channels it does not serve pass straight through. One side: the line ends here, like a mux with add/drop ports.'));
         for (const sd of p.sides.split('')) box.append(field(`${SIDE[sd]} channels`, numIn(p, sd + 'Ports', 1, 0, 64), `How many channels the ${SIDE[sd].toLowerCase()} filter adds and drops: its ports.`), ...(p.bidi ? [field(`${SIDE[sd]} band this side transmits`, selIn(p, sd + 'Role', [['low', 'Low band'], ['high', 'High band']]), 'The neighbour on this side has to transmit the other band.')] : []), field(`${SIDE[sd]} first slot`, slotBox(p, sd + 'First', 'f-' + sd + 'First'), `The slot (numbered as in the Channels tab) of ${SIDE[sd].toLowerCase()} port 1; port k passes the slot k − 1 further on.`));
         box.append(field('Supervisory channel (1510 nm)', selIn(p, 'osc', [['false', 'No'], ['true', 'Yes: an OSC filter on the line']]), 'An optical supervisory channel at 1510 nm, outside the C band. Every amplifier and ROADM on the line regenerates it, so it reaches from site to site span by span; passive muxes, splitters and switches block it. The filter costs 0.6 dB on the line path. See the Reachability tab for each span.'));
-        if (p.p1310) box.append(field('1310 nm client', selIn(p, 'o1310', Object.entries(PHY.CLIENT_OPTICS).filter(([, o]) => o.nm === 1310).map(([k, o]) => [k, o.name])), 'The grey optic on this port. It travels only over fiber and patch panels to the next OADM with a 1310 nm port, which must have the same optic; amplifiers, ROADMs and muxes block it.'));
-        box.append(field('1310 nm port', selIn(p, 'p1310', [['false', 'No'], ['true', 'Yes: a 1310 nm coupler on the line']]), `A coupler for 1310 nm light (a legacy grey client) sits on the line path and costs 0.6 dB.`),
+        box.append(field('1310 nm port', selIn(p, 'p1310', [['false', 'No'], ['true', 'Yes: a 1310 nm coupler on the line']]), `A coupler for 1310 nm light (a legacy grey client) sits on the line path and costs 0.6 dB.`), ...port1310(p));
+        box.append(
           field('Pass-through loss (dB)', numIn(p, 'thru', 0.1, 0, 10)), field('Add/drop loss (dB)', numIn(p, 'ad', 0.1, 0, 10)), field('Local transmitter power (dBm)', numIn(p, 'tx', 0.5, -20, 10), 'For channels a plan adds here without a transponder: they leave at this power less the add loss, with no equalisation.'));
         box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the OADM to plug it into a port.' }), portTable(n));
       }
@@ -234,6 +240,7 @@ function renderInspectorBody() {
       box.append(field('Single fiber (BiDi)', selIn(p, 'bidi', [['false', 'No: a pair of fibers, the same slot both ways'], ['true', 'Yes: one fiber, a different slot each way']]), 'A BiDi mux passes a low and a high band of slots. A transponder on port k transmits one and listens on the other, so the two ends of a link must be on opposite bands.'));
       if (p.bidi) box.append(field('Band this end transmits', selIn(p, 'role', [['low', 'Low band (receives the high band)'], ['high', 'High band (receives the low band)']]), 'The far end has to be on the other band.'));
       box.append(field('Channel ports', numIn(p, 'ports', 1, 1, 64), 'A real mux is 8, 16, 40, 48 or 64 channels. Port 1 is the lowest slot.'), field('First slot', slotBox(p, 'first', 'f-first'), 'The slot (numbered as in the Channels tab) that port 1 passes; port k passes the slot k − 1 further on.'));
+      box.append(field('1310 nm port', selIn(p, 'p1310', [['false', 'No'], ['true', 'Yes: a 1310 nm upgrade port']]), 'Many CWDM/DWDM filter units have a 1310 nm port beside the channel ports: a wideband filter on the common port adds a grey 1310 nm client to the line. The filter costs the DWDM channels 0.6 dB more.'), ...port1310(p));
       box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the mux to give it a port.' }), portTable(n));
     } else if (n.type === 'edfa') {
       const two = !oneWayAmp(n), R = ampRoles(n);

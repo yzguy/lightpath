@@ -278,6 +278,16 @@
           g: { nch: plan.length, df: 100, launch: 0, plan }, svc: { a: a.id, z: z.id } };
       }
     },
+    mux1310: {
+      name: 'Passive muxes with a 1310 nm port over dark fiber', build() {
+        // Two passive DWDM muxes with a 1310 nm upgrade port, as on many CWDM/DWDM filter units: 10G DWDM switch optics on channel ports, and a 10GBASE-LR
+        // client on the 1310 nm port of each mux, all over one 12 km pair of dark fiber. The 1310 nm light skips the channel filters and pays only the fiber
+        // (0.35 dB/km at 1310 nm) and the 1310 nm port loss at each end; the filter on the common port costs the DWDM channels 0.6 dB more per mux.
+        const a = N('trx', 'SW-A', 80, 220, { mode: 'dwdm10f' }), ma = N('mux', 'MUX-A', 260, 220, { ports: 8, first: 28, il: 3.5, p1310: true });
+        const mb = N('mux', 'MUX-B', 700, 220, { ports: 8, first: 28, il: 3.5, p1310: true }), z = N('trx', 'SW-B', 880, 220, { mode: 'dwdm10f' });
+        return { nodes: [a, ma, mb, z], links: [L(a, ma, 'patch', { mport: 3 }), L(ma, mb, 'fiber', { len: 12 }), L(mb, z, 'patch', { mport: 3 })], g: { nch: 1, df: 100, launch: 0 }, svc: { a: a.id, z: z.id } };
+      }
+    },
     dark: {
       name: 'Dark fiber: unamplified ZR', build() {
         const a = N('trx', 'TRX-A', 150, 220), z = N('trx', 'TRX-Z', 800, 220);
