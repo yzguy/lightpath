@@ -237,8 +237,10 @@ function renderCanvas() {
   for (const l of S.links) {
     const a0 = node(l.a), b0 = node(l.b); if (!a0 || !b0) continue;
     // cables between the same two devices are drawn side by side instead of on top of each other
-    const grp = pairs.get([l.a, l.b].sort().join('|')), dxn = b0.x - a0.x, dyn = b0.y - a0.y, dn = Math.hypot(dxn, dyn) || 1, off = (grp.indexOf(l) - (grp.length - 1) / 2) * 16;
-    const a = { ...a0, x: a0.x - dyn / dn * off, y: a0.y + dxn / dn * off }, b = { ...b0, x: b0.x - dyn / dn * off, y: b0.y + dxn / dn * off };
+    // (the side is worked out from the pair in a fixed order, so a cable drawn B to A does not land on top of one drawn A to B)
+    const grp = pairs.get([l.a, l.b].sort().join('|')), [p0, p1] = l.a < l.b ? [a0, b0] : [b0, a0], pdx = p1.x - p0.x, pdy = p1.y - p0.y, pd = Math.hypot(pdx, pdy) || 1, off = (grp.indexOf(l) - (grp.length - 1) / 2) * 16;
+    const nx = -pdy / pd * off, ny = pdx / pd * off, dxn = b0.x - a0.x, dyn = b0.y - a0.y, dn = Math.hypot(dxn, dyn) || 1;
+    const a = { ...a0, x: a0.x + nx, y: a0.y + ny }, b = { ...b0, x: b0.x + nx, y: b0.y + ny };
     const cutNow = MODEL.isCut(S, l);
     const g = sv('g', { class: 'link k-' + l.kind + (cutNow ? ' cut' : '') + (sel && sel.id === l.id ? ' sel' : ''), 'data-id': l.id, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === l.id ? 'true' : 'false',
       'aria-label': `${l.kind === 'fiber' ? `Fiber span, ${l.p.len} km` : 'Patch cord'}: ${a0.name} to ${b0.name}${cutNow ? ', cut' : ''}` });
