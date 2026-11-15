@@ -281,6 +281,17 @@ class UI(unittest.TestCase):
         self.assertEqual(pg.locator('#f-p1310').input_value(), 'true', 'cabling a host turns the 1310 nm port on')
         self.assertIn('400GBASE-LR4-10', pg.locator('#insp').inner_text())
 
+    def test_router_1310_link_draws_a_service_line(self):
+        pg = self.page
+        self.explore('mux1310')
+        self.assertEqual(pg.locator('.lightpath.l1310.up').count(), 3, 'router, patch, fiber, patch, router: one moving line per cable')
+        # cut the fiber: the line turns red up to the cut, and nothing lights the far side
+        pg.locator('.link.k-fiber .hit').first.click(force=True)
+        pg.get_by_role('button', name='Cut this fiber').click()
+        pg.wait_for_timeout(100)
+        self.assertEqual(pg.locator('.lightpath.l1310.up').count(), 0)
+        self.assertGreater(pg.locator('.lightpath.l1310.down').count(), 0)
+
     def test_any_port_takes_a_cable_and_a_wrong_one_says_why(self):
         pg = self.page
         pg.click('#w-blank')

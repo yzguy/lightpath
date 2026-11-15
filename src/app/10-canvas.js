@@ -52,8 +52,10 @@ function applyView() {
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
 
 // a host whose traffic cannot get through is outlined on the canvas, like any other faulty device (computed once per change, not per drag)
-let hostFaults = new Set();
+let hostFaults = new Set(), greyRoutes = [];
 function refreshHostFaults() {
+  // the 1310 nm links between routers (or units) are drawn on the canvas like a service: the simulation reports them unless it stopped early (no service, say)
+  greyRoutes = (lastRes && lastRes.b1310) ? lastRes.b1310.links : S.links.some(l => MODEL.cableRole(S, l).role === 'grey') || S.nodes.some(n => (n.type === 'mux' || n.type === 'oadm') && n.p.p1310) ? MODEL.band1310(S).links : [];
   hostFaults = new Set(); if (!(S.flows || []).length) return;
   const R = MODEL.reach(S, lastRes);
   for (const f of S.flows) { const r = R.find(x => (x.a === f.a && x.z === f.z) || (x.a === f.z && x.z === f.a)); if (r && !r.ok) { hostFaults.add(f.a); hostFaults.add(f.z); } }
@@ -220,6 +222,8 @@ function renderCanvas() {
   const vr = view(), onPath = new Set(vr && vr.path ? vr.path.links : []);
   const lg = sv('g'), ng = sv('g'), og = sv('g');
   const hplan = vr && vr.derived ? vr.derived.plan : S.g.plan, hc = hiChan && hplan && vr && vr.channels ? vr.channels[hplan.indexOf(hiChan)] : null, hiLinks = new Set(hc ? hc.routeLinks : []), hiNodes = new Set(hc ? hc.routeNodes : []), sb = hc && hc.protection ? (hc.protection.active === 'work' ? hc.protection.protect : hc.protection.work) : null, stbyLinks = new Set(sb ? sb.routeLinks : []);
+  // each cable a 1310 nm link runs over, with the device the light leaves from and the link's state (a link that stops short is drawn down as far as it gets)
+  const grey = new Map(); for (const r of greyRoutes) (r.routeLinks || []).forEach((id, i) => { if (!grey.has(id)) grey.set(id, []); grey.get(id).push({ from: r.routeNodes[i], cls: !r.b || r.status === 'down' ? 'down' : r.status === 'warn' ? 'degraded' : 'up' }); });
   const pairs = new Map(); for (const l of S.links) { const k = [l.a, l.b].sort().join('|'); if (!pairs.has(k)) pairs.set(k, []); pairs.get(k).push(l); }
   for (const l of S.links) {
     const a0 = node(l.a), b0 = node(l.b); if (!a0 || !b0) continue;
@@ -238,6 +242,12 @@ function renderCanvas() {
       const ri = vr.path.links.indexOf(l.id), from = node(vr.path.nodes[ri]);
       const rev = from.id !== a.id;
       og.append(sv('line', { x1: rev ? b.x : a.x, y1: rev ? b.y : a.y, x2: rev ? a.x : b.x, y2: rev ? a.y : b.y, class: 'lightpath ' + (vr.status || '') }));
+    }
+    for (const [k, gr] of (grey.get(l.id) || []).entries()) {
+      // beside the DWDM service when both ride the same fiber; the return direction flows the other way
+      const rev = (gr.from !== a.id) !== (dir === 'rev'), o = onPath.has(l.id) || k ? 5 * (k + 1) : 0, ox = -dyn / dn * o, oy = dxn / dn * o;
+      const p = rev ? [b, a] : [a, b];
+      og.append(sv('line', { x1: p[0].x + ox, y1: p[0].y + oy, x2: p[1].x + ox, y2: p[1].y + oy, class: 'lightpath l1310 ' + gr.cls }));
     }
     if (l.kind === 'fiber' || cutNow) {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
