@@ -224,7 +224,10 @@ function renderCanvas() {
   const lg = sv('g'), ng = sv('g'), og = sv('g');
   const hplan = vr && vr.derived ? vr.derived.plan : S.g.plan, hc = hiChan && hplan && vr && vr.channels ? vr.channels[hplan.indexOf(hiChan)] : null, hiLinks = new Set(hc ? hc.routeLinks : []), hiNodes = new Set(hc ? hc.routeNodes : []), sb = hc && hc.protection ? (hc.protection.active === 'work' ? hc.protection.protect : hc.protection.work) : null, stbyLinks = new Set(sb ? sb.routeLinks : []);
   // each cable a 1310 nm link runs over, with the device the light leaves from and the link's state (a link that stops short is drawn down as far as it gets)
-  const grey = new Map(); for (const r of greyRoutes) (r.routeLinks || []).forEach((id, i) => { if (!grey.has(id)) grey.set(id, []); grey.get(id).push({ from: r.routeNodes[i], cls: !r.b || r.status === 'down' ? 'down' : r.status === 'warn' ? 'degraded' : 'up' }); });
+  // the moving service lines show only for what is selected (a device or cable on the route, or a box of devices); a down or degraded route stays drawn because it is an alarm
+  const picked = new Set(group.size ? group : sel ? [sel.id] : []), onRoute = (nodes, links) => (nodes || []).some(id => picked.has(id)) || (links || []).some(id => picked.has(id));
+  if (vr && vr.path && !['down', 'los', 'degraded'].includes(vr.status) && !onRoute(vr.path.nodes, vr.path.links)) onPath.clear();
+  const grey = new Map(); for (const r of greyRoutes) { const cls = !r.b || r.status === 'down' ? 'down' : r.status === 'warn' ? 'degraded' : 'up'; if (cls === 'up' && !onRoute(r.routeNodes, r.routeLinks)) continue; (r.routeLinks || []).forEach((id, i) => { if (!grey.has(id)) grey.set(id, []); grey.get(id).push({ from: r.routeNodes[i], cls }); }); }
   const pairs = new Map(); for (const l of S.links) { const k = [l.a, l.b].sort().join('|'); if (!pairs.has(k)) pairs.set(k, []); pairs.get(k).push(l); }
   for (const l of S.links) {
     const a0 = node(l.a), b0 = node(l.b); if (!a0 || !b0) continue;

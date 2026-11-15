@@ -295,7 +295,17 @@ class UI(unittest.TestCase):
     def test_router_1310_link_draws_a_service_line(self):
         pg = self.page
         self.explore('mux1310')
+        dwdm = '.lightpath:not(.l1310)'
+        self.assertEqual(pg.locator('.lightpath').count(), 0, 'with nothing selected no healthy service draws a moving line')
+        self.node('RTR-A').click()
         self.assertEqual(pg.locator('.lightpath.l1310.up').count(), 3, 'router, patch, fiber, patch, router: one moving line per cable')
+        self.assertEqual(pg.locator(dwdm).count(), 0, 'selecting a router shows only its own link, not the DWDM service')
+        self.node('SW-A').click()
+        self.assertEqual(pg.locator('.lightpath.l1310').count(), 0)
+        self.assertEqual(pg.locator(dwdm).count(), 3, 'selecting a transponder shows its service')
+        pg.locator('.link.k-fiber .hit').first.click(force=True)
+        self.assertEqual(pg.locator('.lightpath.l1310.up').count(), 3, 'a selected cable shows every service riding it')
+        self.assertEqual(pg.locator(dwdm).count(), 3)
         # cut the fiber: the line turns red up to the cut, and nothing lights the far side
         pg.locator('.link.k-fiber .hit').first.click(force=True)
         pg.get_by_role('button', name='Cut this fiber').click()
