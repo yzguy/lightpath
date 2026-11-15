@@ -111,14 +111,15 @@ function clientLamp(n, i, line) {
   const own = p.status === 'ok' ? 'good' : p.status === 'down' ? 'bad' : 'warn';
   return [RANK[Math.max(RANK.indexOf(line), RANK.indexOf(own))], p.status === 'ok' ? '' : `Client ${i + 1} (${p.optic.name}): ${p.notes.join('; ')}`];
 }
-// An amplifier unit holds an amplifier for each direction (the return one uses the settings marked return). Its role in each follows the cables either
-// side of it along the service path: fiber out is a booster, fiber in a preamp, fiber both sides in-line. Null off the path.
-const ROLE = { pf: 'Booster', fp: 'Preamp', ff: 'In-line', pp: 'Amplifier' }, ROLE_ABBR = { Booster: 'BST', Preamp: 'PRE', 'In-line': 'ILA', Amplifier: 'AMP' };
+// An amplifier card has a stage each way. A booster + pre-amp card: the booster amplifies COM to LINE, the pre-amp LINE to COM. An in-line amplifier:
+// Line A to Line B and back. fwd is the first stage (into its first port), rev the second; right: the first stage points right on the canvas.
+const ROLE_ABBR = { Booster: 'BST', 'Pre-amp': 'PRE', 'A→B': 'ILA', 'B→A': 'ILA' };
 function ampRoles(n) {
-  const p = lastRes && lastRes.path, k = p ? p.nodes.indexOf(n.id) : -1; if (k <= 0 || k >= p.nodes.length - 1) return null;
-  const kind = id => (link(id).kind === 'fiber' ? 'f' : 'p'), i = kind(p.links[k - 1]), o = kind(p.links[k]);
-  return { fwd: ROLE[i + o], rev: ROLE[o + i], right: node(p.nodes[k + 1]).x >= node(p.nodes[k - 1]).x };
+  const term = n.p.role !== 'ila', far = id => { const l = S.links.find(x => (x.a === n.id || x.b === n.id) && MODEL.endPort(S, x, n) === id); return l ? node(l.a === n.id ? l.b : l.a) : null; };
+  const i = far('IN'), o = far('OUT'), right = i && o ? o.x >= i.x : i ? i.x <= n.x : o ? o.x >= n.x : true;
+  return { fwd: term ? 'Booster' : 'A→B', rev: term ? 'Pre-amp' : 'B→A', right };
 }
+const stageOf = (n, h) => { const R = ampRoles(n); return h && h.port === 'OUT' ? R.rev : R.fwd; }; // the stage a hop's light went through
 const oneWayAmp = n => !n.p.bidi && S.links.some(l => (l.a === n.id || l.b === n.id) && l.p.single); // isolators pass one direction of a single fiber
 const panelDirty = n => n.type === 'panel' && !!n.p.dirty && Object.values(n.p.dirty).some(v => +v > 0.3);
 const weakPorts = n => !!n.p && !!n.p.degPorts && Object.values(n.p.degPorts).some(v => +v > 0);
@@ -326,10 +327,9 @@ function tipFor(kind, id) {
       if (n.type === 'mxp') n.p.clients.forEach((c, i) => { const bad = clientLamp(n, i, lt)[1]; if (bad) note(bad); });
     }
     else if (n.type === 'edfa' && !oneWayAmp(n) && hopsOfNode(lastRes, n).length) { // both amplifiers of the unit, each with its role
-      const R = ampRoles(n) || {};
-      for (const [res, d, role] of [[lastRes, 'A→Z', R.fwd], [lastRes.rev && lastRes.rev.mode ? lastRes.rev : null, 'Z→A', R.rev]]) {
-        const h = hopsOfNode(res, n); if (!h.length) continue; const a = h[0].in.sig, z = h[h.length - 1].out.sig;
-        row(d + (role ? ' · ' + role : ''), a > -90 && z > -90 ? `${f1(a)} → ${f1(z)} dBm/ch, gain ${sgn(z - a)} dB` : 'no light', true);
+      for (const [res, d] of [[lastRes, 'A→Z'], [lastRes.rev && lastRes.rev.mode ? lastRes.rev : null, 'Z→A']]) {
+        const h = hopsOfNode(res, n); if (!h.length) continue; const a = h[0].in.sig, z = h[h.length - 1].out.sig, role = stageOf(n, h[0]);
+        row(d + (role ? ' · ' + (n.p.role === 'ila' ? 'stage ' : '') + role : ''), a > -90 && z > -90 ? `${f1(a)} → ${f1(z)} dBm/ch, gain ${sgn(z - a)} dB` : 'no light', true);
       }
       if (hs.length) tail(hs[hs.length - 1]); // OSNR and load: the direction the results show
     }

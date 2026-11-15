@@ -171,6 +171,7 @@
       if (isEnd(n)) p.spare = ['switch', 'ycable'].includes(n.p && n.p.spare) ? n.p.spare : '';
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
       if (isEnd(n) && !(p.tx === null || p.tx === '' || Number.isFinite(+p.tx))) p.tx = null;
+      if (n.type === 'edfa') p.role = p.role === 'term' || p.role === 'ila' ? p.role : ''; // '' (an older lab): settleAmps works it out from the cabling
       if (n.type === 'edfa') { p.bidi = p.bidi === true; p.bidiLoss = Number.isFinite(+p.bidiLoss) && p.bidiLoss !== '' && p.bidiLoss !== null && typeof p.bidiLoss !== 'boolean' ? Math.min(6, Math.max(0, +p.bidiLoss)) : 1.2; }
       if (n.type === 'edfa') p.pinMax = Number.isFinite(+p.pinMax) && p.pinMax !== null && typeof p.pinMax !== 'boolean' ? Math.min(20, Math.max(-10, +p.pinMax)) : 10;
       if (n.type === 'edfa') for (const k of ['target', 'targetRev', 'gainRev', 'nfRev', 'gminRev', 'gmaxRev', 'pmaxRev', 'agcUs']) if (!(p[k] === '' || (p[k] !== null && typeof p[k] !== 'boolean' && Number.isFinite(+p[k])))) p[k] = '';
@@ -237,6 +238,7 @@
       ? { a: d.a, z: d.z, mode: PHY_.MODES[d.mode] ? d.mode : 'zrp400', count: Math.min(96, Math.max(1, Math.round(num(d.count, 1)))), prot: d.prot === '1+1' ? '1+1' : '', target: Number.isFinite(+d.target) && d.target !== '' && d.target !== null && typeof d.target !== 'boolean' && +d.target >= 90 && +d.target < 100 ? +d.target : '' } : null)).filter(Boolean);
     const out = { nodes, links, g, svc, demands, flows };
     ensurePorts(out); // every cable end in a port; an older save gets the ports its cabling implies
+    if (settleAmps(out)) syncPorts(out);
     return out;
   }
 

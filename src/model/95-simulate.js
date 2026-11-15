@@ -200,7 +200,11 @@
       const onSingle = t === 'edfa' && [path.links[i], path.links[i + 1]].some(id => { const q = link(id); return q && q.kind === 'fiber' && q.p.single; });
       if (onSingle && rv && !nxt.p.bidi) { losAt = { node: nxt, oneWay: true }; hops.push({ name: nxt.name, kind: 'cut', in: snap(), out: { sig: -99, ase: -99, nli: -99 }, km, nch, note: 'One-way amplifier on a single fiber' }); break; }
       if (onSingle && nxt.p.bidi) { const lo = +nxt.p.bidiLoss || 0; if (lo > 0) { const b0 = snap(); loss(lo); rec(nxt.name + ' band filters', 'bidi', b0, { gain: -lo, note: `BiDi amplifier: circulators and band filters, ${f1(lo)} dB each way` }); } }
-      const tv = pd(nxt.p, 'target'), target = tv === '' || tv == null ? +g.launch : +tv;
+      // an amplifier card has a stage each way: light that enters by its second port (LINE, or Line B) goes through the second stage (the pre-amp), whose
+      // settings are the ...Rev ones; a blank one copies the first stage
+      const ampIn = t === 'edfa' ? endPort(S, link(path.links[i]), nxt) : '', st2 = ampIn === 'OUT';
+      const pdn = (p, k) => (t !== 'edfa' ? pd(p, k) : st2 && p[k + 'Rev'] !== '' && p[k + 'Rev'] != null && Number.isFinite(+p[k + 'Rev']) ? p[k + 'Rev'] : p[k]);
+      const tv = pdn(nxt.p, 'target'), target = tv === '' || tv == null ? +g.launch : +tv;
       if (t === 'mux') {
         const joins = isEnd(prv), drops = isEnd(nnext);
         // a 1310 nm port puts a wideband filter on the common port, which costs the C-band channels a little more loss
@@ -237,7 +241,7 @@
         rec(nxt.name, t, b, { inP, outP: inP === 'c' ? branch : 'c', gain: -lo, note: t === 'splitter' ? `${nxt.p.ratio} splitter, port ${branch.toUpperCase()}: ${f1(lo)} dB` : `switch passing port ${branch.toUpperCase()}${nxt.p.pos === branch ? '' : ' (it switched away from the selected port)'}` });
       } else if (t === 'dcm') { const b = snap(); const dil = +pd(nxt.p, 'il') + degOf(nxt), dcd = +pd(nxt.p, 'cd'); loss(dil); cd += dcd; dgd2 += 1; if (planOn) ev.push({ k: 'C', dcd, dg2: 1 }); rec(nxt.name, 'dcm', b, { gain: -dil, note: `${dcd} ps/nm` }); }
       else if (t === 'voa') { const b = snap(), att = +nxt.p.att + degOf(nxt); loss(att); rec(nxt.name, 'voa', b, { gain: -att }); }
-      else if (t === 'edfa') { amp(nxt.name, pd(nxt.p, 'nf'), nxt.p.ctl, target, pd(nxt.p, 'gain'), +pd(nxt.p, 'gmin'), +pd(nxt.p, 'gmax'), +pd(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs, degOf(nxt), +pd(nxt.p, 'pinMax')); }
+      else if (t === 'edfa') { const h0 = hops.length; amp(nxt.name, pdn(nxt.p, 'nf'), nxt.p.ctl, target, pdn(nxt.p, 'gain'), +pdn(nxt.p, 'gmin'), +pdn(nxt.p, 'gmax'), +pdn(nxt.p, 'pmax'), nxt.p.tiltCtl !== false, tv === '' || tv == null ? i + 1 : -1, nxt.p.agcUs, degOf(nxt), +nxt.p.pinMax); for (let j = h0; j < hops.length; j++) { hops[j].port = ampIn; hops[j].stage = st2 ? 2 : 1; } } // which port the light came in by, and so which stage
       else if (t === 'roadm') {
         const add = isEnd(prv) || prv.type === 'mux', drop = isEnd(nnext) || nnext.type === 'mux';
         const p = nxt.p, np = add || drop ? 1 : 2;
@@ -497,7 +501,6 @@
     if (Z.p.mode !== modeKey) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
     if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} ${mode.coh === false ? 'dispersion tolerance' : 'DSP range'} of ${mode.cdTol} ps/nm.`);
     if (ber > mode.berThr) bad.push(`Pre-FEC BER ${ber.toExponential(2)} is above the ${mode.fec} limit ${mode.berThr.toExponential(2)}: uncorrectable errors, link down.`);
-    if (!eol && !rv && !W) path.nodes.forEach((id, i) => { const n = node(id); if (i > 0 && n && n.type === 'edfa' && endPort(S, link(path.links[i - 1]), n) === 'OUT') bad.push(`${n.name} is cabled backwards: the service light reaches its Line Out port, and an EDFA's isolators pass light only from Line In to Line Out. Swap its two cables.`); });
     bad.push(...clientFatal);
     bad.forEach(t => alarms.unshift({ sev: 'bad', text: t }));
     if (prx < mode.rxMin) { const sp = ampSpot(S, path); alarms.push({ sev: 'warn', text: `Rx power ${f1(prx)} dBm is below the ${mode.rxMin} dBm sensitivity spec (Rx LOW alarm). Receiver noise is now eating SNR.`, fix: sp && !W ? fixAmp(S, sp) : null }); }

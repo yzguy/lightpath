@@ -375,7 +375,7 @@ class UI(unittest.TestCase):
         self.add('trx')
         self.assertEqual(lights(), ['port off'], 'a transponder with no partner is unlit')
 
-    def test_amplifier_shows_both_directions(self):
+    def test_amplifier_is_a_booster_and_preamp_card(self):
         pg = self.page
         self.explore('dci')
         glyphs = lambda name: self.node(name).locator('text.glyph').all_text_contents()
@@ -383,12 +383,16 @@ class UI(unittest.TestCase):
         self.assertEqual(glyphs('PRE-B'), ['PRE', 'BST'])
         self.node('BST-A').hover()
         tip = pg.locator('#hovtip').inner_text()
-        self.assertIn('A→Z · Booster', tip); self.assertIn('Z→A · Preamp', tip)
+        self.assertIn('A→Z · Booster', tip); self.assertIn('Z→A · Pre-amp', tip)
+        self.node('PRE-B').hover()
+        tip = pg.locator('#hovtip').inner_text()
+        self.assertIn('A→Z · Pre-amp', tip); self.assertIn('Z→A · Booster', tip)
         self.node('BST-A').click()
-        self.assertEqual(pg.locator('.dirgrid b').all_inner_texts(), ['A→Z · Booster', 'Z→A · Preamp'])
+        self.assertEqual(pg.eval_on_selector_all('select:has(option[value="ila"]) option', 'os => os.map(o => o.value)'), ['term', 'ila'], 'a booster + pre-amp card, or an in-line amplifier')
+        self.assertEqual([h.split()[0] for h in pg.locator('.dirgrid b').all_inner_texts()], ['Booster', 'Pre-amp'])
         pg.locator('#f-targetRev').fill('-3')
         self.node('BST-A').hover()
-        self.assertIn('-17.0 → -3.0 dBm/ch', pg.locator('#hovtip').inner_text(), 'the Z to A column sets the return amplifier')
+        self.assertIn('-17.0 → -3.0 dBm/ch', pg.locator('#hovtip').inner_text(), 'the pre-amp column sets the stage the Z to A light goes through')
 
     def test_palette_fits_with_its_tools(self):
         pg = self.page
@@ -402,7 +406,7 @@ class UI(unittest.TestCase):
         self.explore()
         self.page.select_option('#preset', 'dci')
         shown = self.page.evaluate("[...document.querySelectorAll('.plabel')].filter(t => t.getAttribute('visibility') !== 'hidden').map(t => t.textContent)")
-        for name in ['CH45', 'CH46', 'CH47', 'LINE', 'IN', 'OUT']:
+        for name in ['CH45', 'CH46', 'CH47', 'LINE', 'COM']:
             self.assertIn(name, shown)
 
     def test_box_select_then_drag_the_group(self):

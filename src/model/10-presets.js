@@ -1,5 +1,5 @@
   // ---------- presets ----------
-  function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...p } }; }
+  function N(type, name, x, y, p = {}) { return { id: uid('n'), type, name, x, y, p: { ...TYPES[type].def(), ...(type === 'edfa' ? { role: '' } : {}), ...p } }; } // an amplifier's type follows its cabling (settleAmps)
   function L(a, b, kind, p = {}) { return { id: uid('l'), a: a.id, b: b.id, kind, p: { ...linkDefaults(kind), ...p } }; }
   // Transponders on a passive mux are plugged in by port; with the defaults (16 ports from slot 24) port 8 (mport 7) passes slot 31, the usual service channel.
   const PRESETS = {

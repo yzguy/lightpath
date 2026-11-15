@@ -122,9 +122,9 @@
     else if (f.type === 'insertAmp') { // split a fiber span in two with an amplifier in the middle
       const l = link(f.id), a = l && node(l.a), b = l && node(l.b); if (!l || l.kind !== 'fiber' || !a || !b) return '';
       let name = `${PREFIX.edfa}-${S.nodes.filter(n => n.type === 'edfa').length + 1}`; while (S.nodes.some(n => n.name === name)) name += "'";
-      const amp = { id: uid('n'), type: 'edfa', name, x: Math.round((a.x + b.x) / 20) * 10, y: Math.round((a.y + b.y) / 20) * 10, p: { ...TYPES.edfa.def(), bidi: !!l.p.single } }, half = +(+l.p.len / 2).toFixed(2); // on a single fiber the amplifier has to pass both directions
-      const tail = { id: uid('l'), a: amp.id, b: b.id, kind: 'fiber', p: { ...l.p, len: half, sa: '', sb: l.p.sb ?? '', pa: 'E', pb: l.p.pb || '', cut: false } };
-      l.b = amp.id; l.p = { ...l.p, len: half, sb: '', pb: 'W' }; S.nodes.push(amp); S.links.push(tail);
+      const amp = { id: uid('n'), type: 'edfa', name, x: Math.round((a.x + b.x) / 20) * 10, y: Math.round((a.y + b.y) / 20) * 10, p: { ...TYPES.edfa.def(), role: 'ila', bidi: !!l.p.single } }, half = +(+l.p.len / 2).toFixed(2); // on a single fiber the amplifier has to pass both directions
+      const tail = { id: uid('l'), a: amp.id, b: b.id, kind: 'fiber', p: { ...l.p, len: half, sa: '', sb: l.p.sb ?? '', pa: 'OUT', pb: l.p.pb || '', cut: false } };
+      l.b = amp.id; l.p = { ...l.p, len: half, sb: '', pb: 'IN' }; S.nodes.push(amp); S.links.push(tail);
       return `Added ${name} halfway along ${a.name}–${b.name}`;
     }
     return '';
