@@ -142,7 +142,7 @@
           if (legacy && legacy.length) { p.eFirst = p.wFirst = legacy[0]; p.ePorts = p.wPorts = Math.min(64, legacy[legacy.length - 1] - legacy[0] + 1); }
           else { p.eFirst = num(raw.eFirst, 24, 0, 127); p.ePorts = num(raw.ePorts, 4, 0, 64); p.wFirst = num(raw.wFirst, 24, 0, 127); p.wPorts = num(raw.wPorts, 4, 0, 64); }
           if (raw.sides === 'e') { p.wFirst = p.eFirst; p.wPorts = p.ePorts; p.wRole = raw.eRole === 'high' ? 'high' : 'low'; flipped.add(n.id); } // an older east-only OADM: turned round, so its channels and its line cable are on West
-          p.side1310 = p.sides === 'ew' && raw.side1310 === 'e' ? 'e' : 'w'; // the line the 1310 nm filter sits on
+          p.side1310 = p.sides === 'ew' && ['e', 'ew'].includes(raw.side1310) ? raw.side1310 : 'w'; // which line ports have a 1310 nm filter: W, E or both (a single-sided OADM only W; a lab from before the per-side ports keeps its one)
           p.osc = raw.osc === true || (raw.p1310 === true && raw.o1310 === 'osc'); p.p1310 = raw.p1310 === true && raw.o1310 !== 'osc'; delete p.slots;
         }
         if (n.type === 'mux' || n.type === 'oadm') { // the optional 1310 nm port: a grey 1310 nm optic only, and its own insertion loss
@@ -201,6 +201,7 @@
         if ((inst(A0) || inst(B0)) && !((inst(A0) && test(B0)) || (inst(B0) && test(A0)))) continue; // an instrument plugs into a patch panel, splitter or switch port and nothing else
         if ((inst(A0) || inst(B0)) && links.some(q => [q.a, q.b].some(id => id === (inst(A0) ? A0 : B0).id))) continue; }
       for (const k of ['pa', 'pb']) p[k] = typeof p[k] === 'string' && /^[A-Za-z0-9]{1,8}$/.test(p[k]) ? p[k] : ''; // the port at each end; ensurePorts checks it against the device
+      for (const [k, id] of [['pa', l.a], ['pb', l.b]]) if (p[k] === '1310') { const u = nodes.find(n => n.id === id); if (u && u.type === 'oadm') p[k] = u.p.side1310 === 'e' ? '1310E' : '1310W'; } // an older OADM had one port named 1310, on the line side1310 named
       if (!['both', 'ab', 'ba'].includes(p.dir)) p.dir = 'both';
       p.ramanFull = p.ramanFull === true; p.single = kind === 'fiber' && p.single === true; // one fiber carrying both directions
       p.srlg = typeof p.srlg === 'string' && /^[\w-]{0,24}$/.test(p.srlg) ? p.srlg : '';

@@ -16,7 +16,7 @@ const MODEL = (() => {
     switch: { label: 'Optical switch', hint: '1x2 switch: one common port, two inputs', maxLinks: 3, def: () => ({ il: 1, pos: 'a', auto: true, revertive: true, wtrMin: 5, switchMs: 20 }) },
     panel: { label: 'Patch panel / ODF', hint: 'Fiber panel: connector loss per port, dirty-connector faults', maxLinks: 96, def: () => ({ ports: 12, il: 0.5, rl: 50, dirty: {} }) },
     mux: { label: 'Mux / Demux', hint: 'Passive DWDM filter', maxLinks: 99, def: () => ({ il: 5, ports: 16, first: 24, bidi: false, role: 'low', p1310: false, o1310: '10g-lr', il1310: 1 }) },
-    oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, osc: false, p1310: false, side1310: 'w', o1310: '10g-lr', il1310: 0.6, bidi: false, eRole: 'low', wRole: 'high' }) },
+    oadm: { label: 'OADM', hint: 'Passive add/drop filter', maxLinks: 99, def: () => ({ thru: 1.5, ad: 3, tx: 0, sides: 'ew', eFirst: 24, ePorts: 4, wFirst: 24, wPorts: 4, osc: false, p1310: false, side1310: 'ew', o1310: '10g-lr', il1310: 0.6, bidi: false, eRole: 'low', wRole: 'high' }) },
     edfa: { label: 'EDFA', hint: 'Booster + pre-amp card, or in-line amplifier', maxLinks: 2, def: () => ({ role: 'term', bidi: false, bidiLoss: 1.2, ctl: 'auto', target: '', targetRev: '', gain: 20, gainRev: '', nf: 5, nfRev: '', gmin: 10, gminRev: '', gmax: 30, gmaxRev: '', pmax: 23, pinMax: 10, pmaxRev: '', tiltCtl: true, agcUs: '' }) },
     roadm: { label: 'ROADM', hint: 'WSS node, any degree', maxLinks: 99, def: () => ({ wss: 6, ad: 4, amps: true, nf: 5.5, degrees: 4, ports: 16, first: 24, colorless: true, directionless: true, contentionless: true }) },
     dcm: { label: 'Dispersion comp.', hint: 'DCF module or FBG, cancels CD', maxLinks: 2, def: () => ({ cd: -1360, cdRev: '', il: 7, ilRev: '' }) },
@@ -29,8 +29,12 @@ const MODEL = (() => {
   const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', pa: '', pb: '', single: false } : { il: 0.5, len: 3, dir: 'both', cut: false, mport: null, sa: '', sb: '', pa: '', pb: '', cport: null, hport: null, optic: '' });
   // A grey cable: a host / router port with a grey 1310 nm optic, patched into the 1310 nm port of a passive mux or OADM. The optic is the cable's (p.optic).
   const isUnit1310 = n => !!n && (n.type === 'mux' || n.type === 'oadm');
-  // the line port a unit's 1310 nm filter sits on: a mux's COM; an OADM's Line W, or Line E when an East and West OADM has it set that way (a single-sided OADM faces West)
-  const line1310 = n => (n.type === 'oadm' ? (n.p.sides === 'ew' && n.p.side1310 === 'e' ? 'LE' : 'LW') : 'COM');
+  // The 1310 nm ports a unit has, each with the line port its filter sits on: a mux has one (1310, on COM). An East and West OADM has one per direction,
+  // 1310 W on Line W and 1310 E on Line E, and side1310 says which are fitted (w, e or ew); an East or West OADM has only 1310 W, on Line W with its channels.
+  // `fitted` is false for a port whose filter is not there (module off, or that side not fitted): a host cabled into it goes nowhere.
+  const sides1310 = n => (n.p.sides === 'ew' ? String(n.p.side1310 || 'w') : 'w');
+  const ports1310 = n => (n.type === 'mux' ? [{ id: '1310', line: 'COM', side: '', fitted: !!n.p.p1310 }]
+    : n.type === 'oadm' ? (n.p.sides === 'ew' ? ['w', 'e'] : ['w']).map(s => ({ id: '1310' + s.toUpperCase(), line: 'L' + s.toUpperCase(), side: s, fitted: !!n.p.p1310 && sides1310(n).includes(s) })) : []);
   const greyEnds = (A, B) => (A && B && A.type === 'host' && isUnit1310(B) ? { h: A, u: B } : A && B && B.type === 'host' && isUnit1310(A) ? { h: B, u: A } : null);
   // the 1310 nm optic a host port of this speed would take by default
   const greyFor = speed => ({ 400: '400g-lr4', 100: '100g-lr4', 25: '25g-lr' })[+speed] || '10g-lr';

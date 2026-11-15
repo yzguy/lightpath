@@ -174,8 +174,8 @@
         const ma = N('mux', 'MUX-A', 200, 300, { ports: 16, first: 24 }), mz = N('mux', 'MUX-Z', 1200, 300, { ports: 16, first: 24 }), ba = N('edfa', 'BST-A', 330, 300, { gmin: 5 });
         const sd = { wFirst: 24, wPorts: 2, eFirst: 24, ePorts: 2, osc: true };
         const o1 = N('oadm', 'OADM-1', 470, 300, { ...sd, p1310: true, side1310: 'e' }), od = N('panel', 'ODF-1', 620, 300, { ports: 12, dirty: { 1: 1.5 } });
-        const o2 = N('oadm', 'OADM-2', 770, 300, { ...sd, p1310: true }), ac = N('edfa', 'AMP-C', 910, 300, { gmin: 5 });
-        const o3 = N('oadm', 'OADM-3', 1050, 300, { ...sd, p1310: true });
+        const o2 = N('oadm', 'OADM-2', 770, 300, { ...sd, p1310: true, side1310: 'w' }), ac = N('edfa', 'AMP-C', 910, 300, { gmin: 5 });
+        const o3 = N('oadm', 'OADM-3', 1050, 300, { ...sd, p1310: true, side1310: 'w' });
         // TRX-A to TRX-Z is the service in slot 32, passing all three OADMs. Each OADM has the supervisory channel (1510 nm) on, so the amplifiers and the OADMs form one
         // management domain, each span with its own budget. OADM-1 and OADM-2 also have a 1310 nm port with a 10GBASE-LR client over 15 km of fiber and a patch panel
         // port with a dirty connector (little margin left). The amplifier between OADM-2 and OADM-3 regenerates the OSC but blocks the 1310 nm client.
