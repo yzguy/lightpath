@@ -135,6 +135,30 @@ class UI(unittest.TestCase):
         bg = self.page.evaluate("getComputedStyle(document.body).backgroundColor")
         self.assertEqual(bg, 'rgb(12, 19, 17)')
 
+    def test_theme_switch_light_dark_system(self):
+        self.ctx.close()
+        self.ctx = self.browser.new_context(viewport=SIZE, color_scheme='dark')
+        pg = self.page = self.open(self.ctx)
+        self.explore('lh')
+        bg = lambda: pg.evaluate("getComputedStyle(document.body).backgroundColor")
+        checked = lambda: pg.locator('#theme-sw [aria-checked=true]').get_attribute('data-theme')
+        self.assertEqual(checked(), 'system', 'System is the default')
+        self.assertEqual(bg(), 'rgb(12, 19, 17)')
+        pg.click('#theme-sw [data-theme=light]')
+        self.assertEqual(bg(), 'rgb(233, 238, 236)', 'Light wins over a dark OS')
+        pg.reload(); pg.wait_for_selector('.node')
+        self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), 'light', 'remembered across a reload')
+        self.assertEqual(checked(), 'light')
+        pg.click('#theme-sw [data-theme=system]')
+        self.assertEqual(bg(), 'rgb(12, 19, 17)', 'System follows the OS again')
+        self.assertIsNone(pg.evaluate("localStorage.getItem('lightpath-theme')"))
+        pg.emulate_media(color_scheme='light')
+        self.assertEqual(bg(), 'rgb(233, 238, 236)')
+        pg.click('#theme-sw [data-theme=dark]')
+        self.assertEqual(bg(), 'rgb(12, 19, 17)', 'Dark wins over a light OS')
+        pg.focus('#theme-sw [data-theme=dark]'); pg.keyboard.press('ArrowRight')
+        self.assertEqual(checked(), 'system', 'arrow keys move along the switch')
+
     def test_cable_from_handle_then_fix_with_amplifier(self):
         pg = self.page
         pg.click('#w-blank')
