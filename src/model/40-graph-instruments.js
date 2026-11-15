@@ -139,7 +139,7 @@
     const { node, link } = mkGraph(S), out = [], seen = new Set(), has1310 = n => isUnit1310(n) && n.p.p1310, ends = S.nodes.filter(has1310);
     const sideOf = (l, id) => (l.a === id ? l.p.sa : l.p.sb);
     // a host cabled into a mux or OADM that has no 1310 nm port: its light goes nowhere
-    for (const l of S.links) { const g = cableRole(S, l); if (g && g.role === 'grey' && !g.u.p.p1310) out.push({ a: g.u.id, b: null, aName: g.u.name, bName: '', aHost: g.h.name, bHost: '', status: 'blocked', why: `${g.u.name} has no 1310 nm port: turn it on in its settings`, km: patchKm(l), hops: [g.h.name, g.u.name], optic: l.p.optic, opticName: optic1310(l.p.optic).name }); }
+    for (const l of S.links) { const g = cableRole(S, l); if (g && g.role === 'grey' && !g.u.p.p1310) out.push({ a: g.u.id, b: null, aName: g.u.name, bName: '', aHost: g.h.name, bHost: '', routeLinks: [l.id], routeNodes: [g.h.id, g.u.id], status: 'blocked', why: `${g.u.name} has no 1310 nm port: turn it on in its settings`, km: patchKm(l), hops: [g.h.name, g.u.name], optic: l.p.optic, opticName: optic1310(l.p.optic).name }); }
     for (const a of ends) {
       if (isDead(a)) continue;
       const pa = port1310(S, a, node);
@@ -148,10 +148,11 @@
         if ((l0.kind !== 'fiber' && l0.kind !== 'patch') || (l0.a !== a.id && l0.b !== a.id) || l0 === pa.cable) { continue; }
         { const o = node(l0.a === a.id ? l0.b : l0.a), k = portKind(a, endPort(S, l0, a)); if (!o || (k !== 'com' && k !== 'oline')) continue; } // only the line side (COM, or an OADM's Line W/E) carries the 1310 nm band
         let l = l0, cur = a.id, km = 0, extra = +a.p.il1310, why = '', hops = [a.name], b = null;
+        const rl = [l0.id], rn = [a.id]; // the cables and devices the light goes through, in order, for the canvas
         for (let guard = 0; guard < 40; guard++) {
-          if (isCut(S, l)) { why = `the fiber ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; break; }
+          if (isCut(S, l)) { why = `the fiber ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; rn.push(l.a === cur ? l.b : l.a); break; }
           km += l.kind === 'fiber' ? +l.p.len : patchKm(l);
-          const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid); hops.push(n.name);
+          const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid); hops.push(n.name); rn.push(nid);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
           if (has1310(n)) { b = n; extra += +n.p.il1310; break; }
           if (n.type === 'panel') {
@@ -159,19 +160,21 @@
             const outSide = (m[1] === 'r' ? 'f' : 'r') + m[2], nx = S.links.find(x => x !== l && (x.a === nid || x.b === nid) && sideOf(x, nid) === outSide);
             extra += (+n.p.il || 0) + ((n.p.dirty && +n.p.dirty[+m[2]]) || 0);
             if (!nx) { why = `nothing is cabled to ${n.name} ${outSide.toUpperCase()}`; break; }
-            cur = nid; l = nx; continue;
+            cur = nid; l = nx; rl.push(nx.id); continue;
           }
           why = n.type === 'oadm' || n.type === 'mux' ? `${n.name} has no 1310 nm port`
             : n.type === 'edfa' ? `${n.name} (EDFA) blocks 1310 nm: erbium has no gain there, and its input filter and isolators reject it`
             : `${n.name} (${(TYPES[n.type] || {}).label || n.type}) does not pass 1310 nm light`; break;
         }
-        const hn = p => (p.host ? p.host.name : '');
+        const hn = p => (p.host ? p.host.name : ''), wrap = (pa, pb) => ({ // the whole route, with the host patch cords at the ends
+          routeLinks: [...(pa.cable ? [pa.cable.id] : []), ...rl, ...(pb && pb.cable ? [pb.cable.id] : [])],
+          routeNodes: [...(pa.host ? [pa.host.id] : []), ...rn, ...(pb && pb.host ? [pb.host.id] : [])] });
         if (b) {
           const key = [a.id, b.id].sort().join('|') + '|' + [l0.id, l.id].sort().join('|'); if (seen.has(key)) continue; seen.add(key);
           const pb = port1310(S, b, node), oa = optic1310(pa.key), ob = optic1310(pb.key);
           // a host's patch cord into the 1310 nm port counts like any other: its connector loss and length
           for (const p of [pa, pb]) if (p.cable) { km += patchKm(p.cable); extra += +p.cable.p.il || 0; }
-          const row = { a: a.id, b: b.id, aName: a.name, bName: b.name, aHost: hn(pa), bHost: hn(pb), hostA: pa.host && pa.host.id, hostB: pb.host && pb.host.id, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops, ...(pb.host ? [pb.host.name] : [])] };
+          const row = { ...wrap(pa, pb), a: a.id, b: b.id, aName: a.name, bName: b.name, aHost: hn(pa), bHost: hn(pb), hostA: pa.host && pa.host.id, hostB: pb.host && pb.host.id, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops, ...(pb.host ? [pb.host.name] : [])] };
           if (pa.key !== pb.key) { out.push({ ...row, status: 'down', why: `${pa.host ? pa.host.name : a.name} has ${oa.name} and ${pb.host ? pb.host.name : b.name} has ${ob.name}: the ends do not match`, loss: null }); continue; }
           const cut = [pa, pb].find(p => p.cable && isCut(S, p.cable));
           if (cut) { out.push({ ...row, optic: pa.key, opticName: oa.name, status: 'down', why: `the cable from ${cut.host.name} is cut`, loss: null }); continue; }
@@ -186,7 +189,7 @@
           out.push({ ...row, optic: pa.key, opticName: oa.name, rate: oa.rate, loss, tx: oa.tx, rx, margin, rxMin: oa.rxMin, status, why: w });
         } else if (why) {
           const key = a.id + '|' + l0.id; if (seen.has(key)) continue; seen.add(key);
-          out.push({ a: a.id, b: null, aName: a.name, bName: '', aHost: hn(pa), bHost: '', hostA: pa.host && pa.host.id, status: 'blocked', why, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops], optic: pa.key, opticName: optic1310(pa.key).name });
+          out.push({ ...wrap(pa, null), a: a.id, b: null, aName: a.name, bName: '', aHost: hn(pa), bHost: '', hostA: pa.host && pa.host.id, status: 'blocked', why, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops], optic: pa.key, opticName: optic1310(pa.key).name });
         }
       }
     }

@@ -2654,3 +2654,19 @@ test('an older lab\'s amplifiers become booster + pre-amp cards or in-line ampli
   const na = V.nodes.find(n => n.type === 'edfa' && !['BST-A', 'PRE-B'].includes(n.name)); assert.equal(na.p.role, 'ila');
   assert.equal(M.simulate(V).hops.find(h => h.name === na.name).port, 'IN');
 });
+
+test('a 1310 nm link reports its route from router to router, so the canvas can draw it like a service', () => {
+  const S = M.sanitize(build('mux1310')), id = n => S.nodes.find(x => x.name === n).id, fiber = S.links.find(l => l.kind === 'fiber');
+  const r = M.simulate(S).b1310.links.find(x => x.b);
+  assert.equal(r.status, 'up');
+  assert.deepEqual(r.routeNodes, [id('RTR-A'), id('MUX-A'), id('MUX-B'), id('RTR-B')]);
+  assert.equal(r.routeLinks.length, 3); assert.equal(r.routeLinks[1], fiber.id);
+  // a cut stops the light at the fiber: the route runs up to and across the cut, and nothing reaches the far router
+  const c = clone(S); c.links.find(l => l.kind === 'fiber').p.cut = true;
+  const d = M.band1310(c).links.find(x => x.hostA === id('RTR-A'));
+  assert.equal(d.status, 'blocked');
+  assert.deepEqual(d.routeNodes, [id('RTR-A'), id('MUX-A'), id('MUX-B')]); assert.equal(d.routeLinks.length, 2);
+  // an amplifier in the way blocks it there
+  const e = M.sanitize(build('osc')), blk = M.simulate(e).b1310.links.find(l => l.status === 'blocked');
+  assert.equal(blk.routeLinks.length, blk.routeNodes.length - 1);
+});
