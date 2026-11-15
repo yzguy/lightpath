@@ -1,5 +1,14 @@
   const STATUS_RANK = { up: 0, degraded: 1, down: 2, nopath: 2, los: 3 };
+  // A service that is not up because one of its own ends is cabled into the wrong kind of port says so first: that is the thing to fix
   function simulate(S, launchOverride, opts = {}) {
+    const r = simulate0(S, launchOverride, opts);
+    if (r && !opts.reverse && !opts.single && r.status !== 'up' && r.status !== 'degraded' && S.svc && !(r.headline || '').includes('is cabled')) {
+      const f = cablingFaults(S).find(x => x.nodes.includes(S.svc.a) || x.nodes.includes(S.svc.z));
+      if (f) r.headline = `${f.text} (${r.headline})`;
+    }
+    return r;
+  }
+  function simulate0(S, launchOverride, opts = {}) {
     useGrid(S);
     S = effective(S);
     if (S._derived && S._derived.svcWhy && !opts.walk) return { status: 'los', headline: S._derived.svcWhy, derived: S._derived };
@@ -25,7 +34,7 @@
       else if (ok(pp.P0)) { path = pp.P0; svcOnProt = true; protWhy = pp.W0 && routeCut(S, pp.W0) ? 'cut' : 'forced'; }
       else { path = pp.W0 || route(S, A.id, Z.id, true); rerouteCut = routeCut(S, path); }
     } else { path = route(S, A.id, Z.id, false); if (!path) { path = route(S, A.id, Z.id, true); rerouteCut = true; } }
-    if (!path) return { status: 'nopath', headline: `No physical path from ${A.name} to ${Z.name}. Cable them together.` };
+    if (!path) { const fs = cablingFaults(S), f = fs.find(x => x.nodes.includes(A.id) || x.nodes.includes(Z.id)) || fs[0]; return { status: 'nopath', headline: `No physical path from ${A.name} to ${Z.name}. ${f ? f.text : 'Cable them together.'}` }; }
 
     const eolSpan = Number.isFinite(+g.eolSpan) && g.eolSpan !== '' && g.eolSpan != null ? +g.eolSpan : PHY_.EOL.spanLoss;
     const eolTrx = Number.isFinite(+g.eolTrx) && g.eolTrx !== '' && g.eolTrx != null ? +g.eolTrx : PHY_.EOL.trxPen;
@@ -269,7 +278,7 @@
     if (isEnd(Z) && spareLoss(Z)) loss(spareLoss(Z)); // the switch or y-cable in front of the receiver
     for (const f of failovers) alarms.push({ sev: 'info', text: `${f.name} moved from port ${f.from.toUpperCase()} to port ${f.to.toUpperCase()}: the light is on the protection path. ${f.revertive ? `It goes back to port ${f.from.toUpperCase()} after the repair and ${f.wtrMin} min of stable light (wait-to-restore), with a second short hit.` : `It stays on port ${f.to.toUpperCase()} after the repair (non-revertive), and port ${f.from.toUpperCase()} becomes the standby.`}` });
     const res = { failovers, mode, modeKey, A, Z, path, raman: ramanViews, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
-    if (!eol && !rv && !W && (S.nodes.some(n => (n.type === 'oadm' && (n.p.p1310 || n.p.osc)) || (n.type === 'mux' && n.p.p1310)) || S.links.some(l => greyEnds(node(l.a), node(l.b))))) {
+    if (!eol && !rv && !W && (S.nodes.some(n => (n.type === 'oadm' && (n.p.p1310 || n.p.osc)) || (n.type === 'mux' && n.p.p1310)) || S.links.some(l => cableRole(S, l).role === 'grey'))) {
       res.b1310 = band1310(S); res.osc = oscSpans(S);
       for (const r of res.b1310.links) if (r.status === 'down' || (r.status === 'warn' && /overload/.test(r.why))) alarms.push({ sev: 'warn', text: `The 1310 nm link ${r.aName} to ${r.bName} ${r.status === 'down' ? 'is down' : 'is overloaded'}: ${r.why}.` });
       if (res.osc) {
@@ -515,7 +524,7 @@
         alarms.unshift(restAlarm);
       }
     }
-    if (!eol && !rv && !W && !opts.single) for (const o of overCabled(S)) if (o.role !== 'adddrop') alarms.push({ sev: path.nodes.includes(o.id) ? 'warn' : 'info', text: `${o.name} has ${o.used} ${o.role === 'line' ? 'line' : o.role === 'grey' ? '1310 nm' : 'client'} cables but ${o.max === 0 ? 'no such port' : o.max === 1 ? 'one port for them' : `${o.max} ports for them`}.${o.role === 'line' ? ' ' + o.why + '.' : ''} Delete the extra cable.` }); // an import, or line protection turned off after dual-homing (a missing add/drop port shows on its channel)
+    if (!eol && !rv && !W && !opts.single) for (const f of cablingFaults(S)) alarms.push({ sev: f.nodes.some(id => path.nodes.includes(id)) ? 'warn' : 'info', text: f.text }); // miscabling: a port of the wrong kind, a port that is gone, two cables in one port
     if (!eol && !W) for (const n of [A, Z]) if (onSpare(n)) alarms.push({ sev: 'warn', text: `${n.name}'s primary module has failed: traffic is on the spare (${n.p.spare === 'ycable' ? 'y-cable' : 'optical switch'}). There is no module protection left.` });
     if (!eol && !rv && !W) for (const id of path.nodes) {
       const n = node(id), d = degOf(n);
@@ -542,6 +551,6 @@
     return res;
   }
 
-  return { TYPES, PREFIX, cableKind, greyEnds, portRole, portUse, cableFits, overCabled, lineProtected, greyFor, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, cableKind, greyEnds, portsOf, portKind, portLabel, shortLabel, endPort, cableRole, ensurePorts, syncPorts, cableFits, cablingFaults, lineProtected, greyFor, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

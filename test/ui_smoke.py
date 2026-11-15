@@ -78,6 +78,17 @@ class UI(unittest.TestCase):
         pg.mouse.up()
         pg.wait_for_timeout(150)
 
+    def cable(self, frm, to, pa=None, pb=None):
+        """Drag a cable from one device to another and pick its ports (by id; default: the first free one at each end)."""
+        pg = self.page
+        self.handle_drag(frm, to)
+        pick = pg.locator('#portpick')
+        self.assertTrue(pick.is_visible(), 'the picker asks for the ports')
+        for sel, want in zip(pick.locator('select').all(), [pa, pb]):
+            sel.select_option(want if want else sel.evaluate("s => [...s.options].find(o => o.value && !o.disabled).value"))
+        pick.locator('button', has_text='Connect').click()
+        pg.wait_for_timeout(100)
+
     def add(self, kind):
         self.page.locator(f'.pal-item[data-type={kind}]').click()
         return self.page.locator('#f-name').input_value()
@@ -126,7 +137,7 @@ class UI(unittest.TestCase):
         pg = self.page
         pg.click('#w-blank')
         a, z = self.add('trx'), self.add('trx')
-        self.handle_drag(a, z)
+        self.cable(a, z, 'L', 'L')
         self.assertEqual(self.links(), 1)
         pg.fill('#insp input[type=number]', '120')
         pg.keyboard.press('Tab')
@@ -141,13 +152,15 @@ class UI(unittest.TestCase):
         n0 = self.links()
         self.handle_drag(self.add('trx'), 'ROADM-A')
         self.assertTrue(pg.locator('#portpick').is_visible())
-        used = pg.eval_on_selector_all('#portpick option', 'os => os.filter(o => o.dataset.used).every(o => o.disabled)')
-        self.assertTrue(used, 'ports in use cannot be picked')
-        pg.locator('#portpick select').first.select_option(index=6)
+        self.assertTrue(pg.locator('#portpick button', has_text='Connect').is_disabled(), 'nothing is picked for you')
+        self.assertTrue(pg.eval_on_selector_all('#portpick option', "os => os.filter(o => o.textContent.includes('in use')).every(o => o.disabled)"), 'ports in use cannot be picked')
+        sels = pg.locator('#portpick select')
+        sels.nth(0).select_option('L')
+        sels.nth(1).select_option(sels.nth(1).evaluate("s => [...s.options].find(o => o.value.startsWith('A') && !o.disabled).value"))
         pg.keyboard.press('Enter')
         self.assertEqual(self.links(), n0 + 1)
         pg.click('#btn-undo')
-        self.assertEqual(self.links(), n0, 'the cable and its port are one undo step')
+        self.assertEqual(self.links(), n0, 'the cable and its ports are one undo step')
         self.handle_drag(self.add('trx'), 'ROADM-B')
         pg.keyboard.press('Escape')
         self.assertTrue(pg.locator('#portpick').is_hidden())
@@ -232,8 +245,9 @@ class UI(unittest.TestCase):
         self.node('MUX-A').click()
         table = pg.locator('#insp .ptable')
         self.assertGreater(table.bounding_box()['height'], 150, 'the inspector must not squash its scroll boxes')
-        self.assertEqual(table.locator('tbody tr').count(), 16)
-        table.locator('tr.on').first.click()
+        self.assertEqual(table.locator('tbody tr').count(), 18, 'COM, 16 channel ports and the 1310 nm port')
+        self.assertIn('COM', table.locator('tbody tr').first.inner_text())
+        table.locator('tr.on', has_text='TRX-A1').first.click()
         self.assertEqual(pg.locator('#f-name').input_value(), 'TRX-A1')
 
     def test_mux_1310_port(self):
@@ -257,9 +271,7 @@ class UI(unittest.TestCase):
         self.explore('dark')
         a = self.add('mux')
         b = self.add('host')
-        self.handle_drag(b, a)
-        if pg.locator('#portpick').is_visible():
-            pg.locator('#portpick button', has_text='Connect').click()
+        self.cable(b, a, 'eth1', '1310')
         self.assertEqual(self.links(), 2)
         pg.locator('.link .hit').last.click(force=True)
         self.assertGreater(pg.locator('#f-optic option').count(), 3)
@@ -269,28 +281,24 @@ class UI(unittest.TestCase):
         self.assertEqual(pg.locator('#f-p1310').input_value(), 'true', 'cabling a host turns the 1310 nm port on')
         self.assertIn('400GBASE-LR4-10', pg.locator('#insp').inner_text())
 
-    def test_transponder_takes_one_line_cable(self):
+    def test_any_port_takes_a_cable_and_a_wrong_one_says_why(self):
         pg = self.page
         pg.click('#w-blank')
-        t, m1, m2 = self.add('trx'), self.add('mux'), self.add('mux')
-        self.handle_drag(t, m1)
-        if pg.locator('#portpick').is_visible():
-            pg.locator('#portpick button', has_text='Connect').click()
-        self.assertEqual(self.links(), 1)
-        self.handle_drag(t, m2)
-        self.assertEqual(self.links(), 1, 'a second line cable is refused')
-        self.assertIn('has no free line port', pg.locator('#toast').inner_text())
+        t, m = self.add('trx'), self.add('mux')
+        self.cable(t, m, 'L', '1310')
+        self.assertTrue(pg.evaluate("MODEL.cablingFaults(JSON.parse(localStorage.getItem('lightpath-v1'))).some(f => /only passes 1310 nm light/.test(f.text))"))
+        self.handle_drag(t, m)
+        opts = pg.eval_on_selector_all('#portpick select >> nth=0 >> option', 'os => os.map(o => [o.value, o.disabled])')
+        self.assertIn(['L', True], opts, 'the line port is taken')
+        self.assertIn(['C1', False], opts, 'the client port is free')
+        pg.keyboard.press('Escape')
 
     def test_oadm_line_ports_are_named_by_side(self):
         pg = self.page
         pg.click('#w-blank')
         o, a1, a2 = self.add('oadm'), self.add('edfa'), self.add('edfa')
-        self.handle_drag(a1, o)
-        if pg.locator('#portpick').is_visible():
-            pg.locator('#portpick button', has_text='Connect').click()
-        self.handle_drag(a2, o)
-        if pg.locator('#portpick').is_visible():
-            pg.locator('#portpick button', has_text='Connect').click()
+        self.cable(a1, o, 'E', 'LW')
+        self.cable(a2, o, 'W', 'LE')
         self.assertEqual(self.links(), 2)
         labels = sorted(pg.eval_on_selector_all('.plabel', 'ts => ts.map(t => t.textContent)'))
         self.assertIn('Line E', labels)
