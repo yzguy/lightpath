@@ -101,7 +101,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 
 .canvaswrap { position: relative; overflow: hidden; background-color: var(--panel);
   background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 20px 20px }
-#cv { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab }
+#cv { width: 100%; height: 100%; display: block; touch-action: none; cursor: default }
+#cv.space, #cv.space .node, #cv.space .link .hit { cursor: grab } #cv.grabbing, #cv.grabbing * { cursor: grabbing }
 #cv[data-tool=patch], #cv[data-tool=fiber] { cursor: crosshair }
 .labintro { margin: 4px 0 10px; padding: 10px 12px; background: var(--raised); border: 1px solid var(--line); border-radius: 8px; font-size: 13px; line-height: 1.45 }
 .insp .labintro h3 { margin: 0 0 4px; font-size: 13px; text-transform: none; letter-spacing: 0; color: var(--ink) }
@@ -128,6 +129,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .node.sel .body, .node.faulty.sel .body { stroke: var(--ink); stroke-width: 3; filter: drop-shadow(0 0 3px var(--ink)) } /* selection is ink, not amber: amber is fibers and warnings */
 .node.sel .nlabel { fill: var(--ink) }
 #cv { user-select: none; -webkit-user-select: none }
+.node.mhit .body { stroke: var(--sig); stroke-width: 2.5 }
 .marq { fill: var(--gap); stroke: var(--sig); stroke-width: 1.5; stroke-dasharray: 5 4; pointer-events: none }
 .t-roadm .body, .t-oadm .body { fill: var(--raised) }
 .t-host .body, .t-panel .body { fill: var(--raised); stroke-dasharray: 0 }

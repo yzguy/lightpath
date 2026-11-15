@@ -337,6 +337,54 @@ class UI(unittest.TestCase):
         for name in ['CH45', 'CH46', 'CH47', 'LINE', 'IN', 'OUT']:
             self.assertIn(name, shown)
 
+    def test_box_select_then_drag_the_group(self):
+        pg = self.page
+        self.explore()
+        boxes = sorted(((b['x'] + b['width'] / 2, b['y'] + b['height'] / 2, b) for b in (n.bounding_box() for n in pg.locator('.node').all())), key=lambda c: c[0])
+        self.assertGreater(len(boxes), 3)
+        left = boxes[:3]
+        cut = (boxes[2][0] + boxes[3][0]) / 2
+        x0 = min(b['x'] for _, _, b in left) - 12
+        y0 = min(b['y'] for _, _, b in left) - 12
+        y1 = max(b['y'] + b['height'] for _, _, b in left) + 12
+        self.assertEqual(pg.evaluate(f"document.elementFromPoint({x0}, {y0}).closest('.node, .link')"), None, 'the box must start on empty canvas')
+        pg.mouse.move(x0, y0)
+        pg.mouse.down()
+        pg.mouse.move(cut, y1, steps=8)
+        self.assertEqual(pg.locator('.node.mhit').count(), 3, 'the box previews what it will take')
+        pg.mouse.up()
+        self.assertEqual(pg.locator('.node.msel').count(), 3)
+        self.assertIn('3 devices selected', pg.locator('#insp').inner_text().lower())
+        before = pg.evaluate("Object.fromEntries(JSON.parse(localStorage.getItem('lightpath-v1')).nodes.map(n => [n.id, [n.x, n.y]]))")
+        ids = pg.evaluate("[...document.querySelectorAll('.node.msel')].map(g => g.dataset.id)")
+        _, _, b = left[0]
+        pg.mouse.move(b['x'] + b['width'] / 2, b['y'] + b['height'] / 2)
+        pg.mouse.down()
+        pg.mouse.move(b['x'] + b['width'] / 2 + 60, b['y'] + b['height'] / 2 + 40, steps=6)
+        pg.mouse.up()
+        pg.wait_for_timeout(100)
+        after = pg.evaluate("Object.fromEntries(JSON.parse(localStorage.getItem('lightpath-v1')).nodes.map(n => [n.id, [n.x, n.y]]))")
+        moved = {i for i in after if after[i] != before[i]}
+        self.assertEqual(moved, set(ids), 'only the selected devices move')
+        deltas = {(after[i][0] - before[i][0], after[i][1] - before[i][1]) for i in ids}
+        self.assertEqual(len(deltas), 1, 'they move together')
+        self.assertEqual(pg.locator('.node.msel').count(), 3, 'still selected after the move')
+        # a middle-button drag pans without touching the selection
+        view = pg.evaluate("document.querySelector('#world').getAttribute('transform')")
+        pg.mouse.move(x0, y0)
+        pg.mouse.down(button='middle')
+        pg.mouse.move(x0 + 80, y0 + 30, steps=4)
+        pg.mouse.up(button='middle')
+        self.assertNotEqual(pg.evaluate("document.querySelector('#world').getAttribute('transform')"), view)
+        self.assertEqual(pg.locator('.node.msel').count(), 3)
+        # Shift-click takes one out, Esc clears
+        pg.keyboard.down('Shift')
+        self.node(pg.evaluate(f"document.querySelector('.node[data-id=\"{ids[0]}\"] .nlabel').textContent")).click()
+        pg.keyboard.up('Shift')
+        self.assertEqual(pg.locator('.node.msel').count(), 2)
+        pg.keyboard.press('Escape')
+        self.assertEqual(pg.locator('.node.sel').count(), 0)
+
     def test_hover_readout(self):
         pg = self.page
         self.explore('dci')
