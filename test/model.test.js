@@ -747,6 +747,34 @@ test('explicit routing: a waypoint no route can reach says why', () => {
   assert.equal(e.status, 'nopath'); assert.match(e.notes[0], /waypoint/);
 });
 
+test('routing: a route through one patch panel twice (both line fibers of a site on one ODF) is ordinary cabling, not a loop', () => {
+  const S = build('oadm'), nm = n => S.nodes.find(x => x.name === n), ab = nm('AMP-B'), ob = nm('OADM-B'), ac = nm('AMP-C');
+  const odf = { id: 'odfb', type: 'panel', name: 'ODF-B', x: 680, y: 200, p: { ports: 12, il: 0.5, rl: 50, dirty: {} } };
+  S.nodes.push(odf);
+  S.links = S.links.filter(l => !((l.a === ab.id && l.b === ob.id) || (l.a === ob.id && l.b === ac.id)));
+  S.links.push({ id: 'o1', a: ab.id, b: odf.id, kind: 'patch', p: { sb: 'r1' } }, { id: 'o2', a: odf.id, b: ob.id, kind: 'patch', p: { sa: 'f1', sb: 'w' } },
+    { id: 'o3', a: ob.id, b: odf.id, kind: 'patch', p: { sa: 'e', sb: 'f2' } }, { id: 'o4', a: odf.id, b: ac.id, kind: 'fiber', p: { len: 40, sa: 'r2' } });
+  const r = M.simulate(M.sanitize(S));
+  assert.equal(r.status, 'up');
+  assert.ok(!r.alarms.some(a => /twice|revisit|failing/.test(a.text)), r.alarms.map(a => a.text).join(' | '));
+  const c = r.channels.find(x => x.fromName === 'TRX-A4' || x.toName === 'TRX-A4'); // A4 to C1 runs through ODF-B on two of its ports
+  assert.equal(c.status, 'up'); assert.ok(c.route.filter(n => n === 'ODF-B').length === 2);
+});
+
+test('explicit routing: a waypoint that makes the route double back names the device and the fix', () => {
+  const S = build('srlg'), nm = n => S.nodes.find(x => x.name === n), ra = nm('ROADM-A'), rb = nm('ROADM-B');
+  const re = { id: 'spur', type: 'roadm', name: 'ROADM-E', x: 520, y: 0, p: clone(rb.p) };
+  S.nodes.push(re); S.links.push({ id: 'be', a: rb.id, b: re.id, kind: 'fiber', p: { len: 20 } });
+  S.g.plan.push({ slot: 40, mode: 'zrp400', off: 0, svc: false, from: ra.id, to: rb.id, via: re.id, conv: '', slot2: 40, prot: '' }); // A to B via a spur off B: A-B-E-B
+  S.g.plan.push({ slot: 41, mode: 'zrp400', off: 0, svc: false, from: ra.id, to: rb.id, via: re.id, conv: '', slot2: 41, prot: '1+1' }); // a protected one says the same
+  const r = M.simulate(M.sanitize(S)), bad = r.channels.filter(x => x.slot === 40 || x.slot === 41);
+  assert.equal(bad.length, 2);
+  for (const e of bad) { assert.equal(e.status, 'nopath'); assert.match(e.notes[0], /Route via.*ROADM-E.*pass ROADM-B twice.*Shortest/); }
+  const al = r.alarms.find(a => /failing/.test(a.text)).text;
+  assert.match(al, /slot 41 \(CH\d+\), ROADM-A to ROADM-B \(400G ZR\+\): its .Route via. ROADM-E/);
+  assert.match(al, /slot 42 \(CH\d+\), ROADM-A to ROADM-B/);
+});
+
 // ---- wavelength assignment: slot reuse, blocking, first-fit ----
 test('wavelength reuse: channels on routes that share no fiber can use the same slot', () => {
   const S = build('mesh'), r = M.simulate(S);

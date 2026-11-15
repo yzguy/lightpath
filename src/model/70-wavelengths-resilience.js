@@ -2,6 +2,20 @@
   const reqCache = {};
   const reqOsnr = k => (reqCache[k] ??= PHY_.requiredOsnr(PHY_.MODES[k]));
 
+  // A route stitched together at a waypoint (x to via, then via to y) can double back: the two legs meet again before the waypoint, so the light
+  // would pass a device or a fiber twice. Patch panels, splitters and switches do not count: a route may go in at one panel port and come back
+  // out at another (both line fibers of a site on one ODF), which is ordinary cabling, not a loop. Returns '' or why the route cannot be used.
+  const PASS_THROUGH = new Set(['panel', 'splitter', 'switch']);
+  function revisitWhy(S, r, via) {
+    if (!r) return '';
+    const byId = id => S.nodes.find(n => n.id === id), seen = new Set();
+    let twice = null;
+    for (const id of r.nodes) { const n = byId(id); if (!n || PASS_THROUGH.has(n.type)) continue; if (seen.has(id)) { twice = n; break; } seen.add(id); }
+    const dup = r.links.find((id, i) => r.links.indexOf(id) !== i), dl = dup && S.links.find(l => l.id === dup);
+    if (!twice && !dl) return '';
+    const vn = (byId(via) || {}).name || 'the waypoint', what = twice ? `pass ${twice.name} twice` : `use the cable ${[byId(dl.a), byId(dl.b)].map(n => (n || {}).name).join('\u2013')} twice`;
+    return via ? `its \u2018Route via\u2019 ${vn} makes the route double back: going through ${vn} it would ${what}. Pick another Route via, or set it to Shortest` : `its route would ${what}`;
+  }
   // Working and protection routes for a 1+1 protected channel, planned on the intact network: the shortest route (through `via` if given)
   // and the shortest route that shares no fiber with it. x, y are in the direction of the run.
   function plannedPair(S, x, y, via) {
@@ -10,7 +24,7 @@
     if (x === y) return { W0, P0: null, why: 'its add and drop nodes are the same' };
     if (!via || via === x || via === y) W0 = leg(x, y);
     else { const r1 = leg(x, via), r2 = leg(via, y); if (r1 && r2) W0 = { nodes: [...r1.nodes, ...r2.nodes.slice(1)], links: [...r1.links, ...r2.links] }; }
-    if (W0 && (new Set(W0.nodes).size !== W0.nodes.length || new Set(W0.links).size !== W0.links.length)) return { W0: null, P0: null, why: 'a route through that waypoint would revisit a node or fiber' };
+    { const rw = revisitWhy(S, W0, via && via !== x && via !== y ? via : ''); if (rw) return { W0: null, P0: null, why: rw }; }
     if (!W0) return { W0, P0: null, why: via ? 'no route through that waypoint' : 'no route between its add and drop nodes' };
     // the protection route avoids the fibers of the working route; the patch cords at a single-homed transponder are shared by necessity
     const fibers = new Set(W0.links.filter(id => (S.links.find(l => l.id === id) || {}).kind === 'fiber'));
@@ -85,7 +99,8 @@
           if (!via) r = leg(x, y);
           else if (via === x || via === y) r = leg(x, y);
           else { const r1 = leg(x, via), r2 = leg(via, y); if (r1 && r2) r = { nodes: [...r1.nodes, ...r2.nodes.slice(1)], links: [...r1.links, ...r2.links] }; }
-          if (r && (new Set(r.nodes).size !== r.nodes.length || new Set(r.links).size !== r.links.length)) { why = 'a route through that waypoint would revisit a node or fiber'; r = null; }
+          const rw = revisitWhy(S, r, via && via !== x && via !== y ? via : '');
+          if (rw) { why = rw; r = null; }
           else if (!r) why = via ? 'no route through that waypoint' : 'no route between its add and drop nodes';
         }
         memo.set(key, { r, why });

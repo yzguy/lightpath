@@ -487,7 +487,11 @@
       const sp = res.channels.find(c => c.svc && c.protection);
       if (sp && !svcOnProt && STATUS_RANK[sp.protection.protect.status] >= 2) alarms.push({ sev: 'warn', text: `The service is 1+1 protected but its protection route is unusable: ${sp.protection.protect.notes[0] || 'it is down'}.` });
       if (sp && sp.protection.protect.qMargin != null && sp.protection.protect.qMargin < 0 && !svcOnProt) alarms.push({ sev: 'warn', text: `The service's protection route would not carry it: Q margin ${f1(sp.protection.protect.qMargin)} dB on the protection route.` });
-      if (failing.length) alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${failing.slice(0, 3).map(c => `${slotLbl(c.slot)} (${c.short}): ${c.notes[0]}`).join('; ')}${failing.length > 3 ? '…' : ''}.` });
+      if (failing.length) { // name each channel by its ends, so two channels reusing a slot on different routes read apart; identical lines are listed once
+        const endName = (id, dflt) => (node(id || dflt) || {}).name, who = c => { const a = c.fromName || endName(c.from, S.svc.a), z = c.toName || endName(c.to, S.svc.z); return a && z ? `, ${a} to ${z}` : ''; };
+        const lines = [...new Set(failing.map(c => `${slotLbl(c.slot)}${who(c)} (${c.short}): ${c.notes[0]}`))];
+        alarms.push({ sev: 'warn', text: `${failing.length} other channel${failing.length > 1 ? 's' : ''} failing: ${lines.slice(0, 3).join('; ')}${lines.length > 3 ? '…' : ''}.` });
+      }
     }
     if (!eol && !W) { const e = simulate(S, launchOverride, { eol: true, reverse: rv, useProtect: svcOnProt }); res.eol = { qMargin: e.qMargin ?? -Infinity, worstQMargin: e.worstQMargin ?? -Infinity, status: e.status }; }
     // alarms & status
