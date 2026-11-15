@@ -220,7 +220,9 @@
         const p = nxt.p, k = i + 1, leaving = members.filter(m => m.hi === k && k < lastPos).map(m => m.k), joining = members.filter(m => m.lo === k).map(m => m.k);
         const joinsX = isEnd(prv), dropsX = isEnd(nnext);
         if (leaving.length) ev.push({ k: 'D', idx: leaving, G: 1, nfe: 0, f: lin(-(+p.ad)) });
-        const b = snap(), lo = (joinsX || dropsX ? +p.ad : +p.thru) + (p.p1310 || p.osc ? P1310_LOSS : 0) + degOf(nxt); loss(lo);
+        // the 1310 nm filters the channel passes: the one on each line port it goes in or out of (an express channel passes both of an East and West OADM's), one shared with the OSC filter
+        const ends = [path.links[i], path.links[i + 1]].map(id => (link(id) ? endPort(S, link(id), nxt) : '')), f1310 = ports1310(nxt).filter(q => q.fitted && ends.includes(q.line)).length;
+        const b = snap(), lo = (joinsX || dropsX ? +p.ad : +p.thru) + (p.osc || f1310 ? P1310_LOSS : 0) + Math.max(0, f1310 - 1) * P1310_LOSS + degOf(nxt); loss(lo);
         if (joinsX && !planOn) nch = nchLine;
         if (dropsX) nch = 1;
         if (planOn) { if (joining.length) ev.push({ k: 'J', idx: joining, padd: lin(+p.tx - +p.ad) / 1000 }); if (!dropsX) nch = litCount(k); curAct = maskAt(k); }
@@ -555,6 +557,6 @@
     return res;
   }
 
-  return { TYPES, PREFIX, cableKind, greyEnds, portsOf, portKind, portLabel, shortLabel, endPort, cableRole, line1310, ensurePorts, syncPorts, cableFits, cablingFaults, lineProtected, greyFor, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, cableKind, greyEnds, portsOf, portKind, portLabel, shortLabel, endPort, cableRole, ports1310, ensurePorts, syncPorts, cableFits, cablingFaults, lineProtected, greyFor, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

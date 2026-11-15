@@ -186,7 +186,12 @@ function nodeShape(n) {
     g.append(sv('path', { d: 'M-34,0 H34 M0,0 V20', class: 'thin' }));
     const t = sv('text', { x: 0, y: -6, class: 'glyph small', 'text-anchor': 'middle' }); t.textContent = 'OADM'; g.append(t);
     for (const [sd, x] of [['w', -17], ['e', 17]]) { const e = sv('text', { x, y: 14, class: 'glyph small' + (n.p.sides.includes(sd) ? '' : ' oside-dim'), 'text-anchor': 'middle' }); e.textContent = sd.toUpperCase(); g.append(e); }
-    if (n.p.p1310 || n.p.osc) { const x = n.p.p1310 && !n.p.osc ? (MODEL.line1310(n) === 'LE' ? 17 : -17) : 0; /* the 1310 nm port hangs under the line it sits on */ g.append(sv('line', { x1: x, y1: 20, x2: x, y2: 30, class: 'thin' }), sv('circle', { cx: x, cy: 32, r: 2.5, class: 'led' })); const e = sv('text', { x: x + 8, y: 36, class: 'glyph small' }); e.textContent = n.p.osc && n.p.p1310 ? 'OSC 1310' : n.p.osc ? 'OSC' : '1310'; g.append(e); }
+    { // each fitted 1310 nm port hangs under the W or E box of the line it sits on; the OSC filter hangs in the middle
+      const stub = (x, label, anchor) => { g.append(sv('line', { x1: x, y1: 20, x2: x, y2: 30, class: 'thin' }), sv('circle', { cx: x, cy: 32, r: 2.5, class: 'led' })); const e = sv('text', { x: anchor === 'end' ? x - 5 : anchor === 'start' ? x + 5 : x, y: anchor === 'middle' ? 45 : 36, class: 'glyph small', 'text-anchor': anchor }); e.textContent = label; g.append(e); };
+      const q = MODEL.ports1310(n).filter(x => x.fitted);
+      for (const p of q) stub(p.side === 'e' ? 17 : -17, '1310', p.side === 'e' ? 'start' : 'end');
+      if (n.p.osc) stub(0, 'OSC', 'middle');
+    }
   } else if (n.type === 'edfa') {
     if (oneWayAmp(n)) { g.append(sv('path', { d: 'M-26,-26 L30,0 L-26,26 Z', class: 'body' })); const t = sv('text', { x: -18, y: 4, class: 'glyph small' }); t.textContent = 'EDFA'; g.append(t); }
     else { // two amplifiers, one per direction: the top one points right, each named by its role in the direction it points
@@ -205,7 +210,7 @@ function nodeShape(n) {
     g.append(sv('path', { d: 'M-16,12 L16,-12 M8,-12 L16,-12 L16,-4', class: 'thin' }));
   }
   if ((n.type === 'mux' || n.type === 'oadm') && n.p.bidi) { const t = sv('text', { x: 0, y: n.type === 'mux' ? -36 : -28, class: 'endtag', 'text-anchor': 'middle' }); t.textContent = 'BiDi'; g.append(t); }
-  const lab = sv('text', { x: 0, y: n.type === 'roadm' ? 50 : 44, class: 'nlabel', 'text-anchor': 'middle' }); lab.textContent = n.name; g.append(lab);
+  const lab = sv('text', { x: 0, y: n.type === 'roadm' ? 50 : n.type === 'oadm' && n.p.osc ? 58 : n.type === 'oadm' && n.p.p1310 ? 50 : 44, class: 'nlabel', 'text-anchor': 'middle' }); /* below an OADM's 1310 nm and OSC stubs */ lab.textContent = n.name; g.append(lab);
   if (isEnd(n) && (S.svc.a === n.id || S.svc.z === n.id)) {
     const b = sv('text', { x: 0, y: n.type === 'mxp' ? -38 : -30, class: 'endtag', 'text-anchor': 'middle' }); b.textContent = S.svc.a === n.id ? 'A end' : 'Z end'; g.append(b);
   }
@@ -613,7 +618,10 @@ function portSelect(n, value, except, probe, id) {
 function afterPorts(l) {
   const r = roleOf(l);
   if (r && r.role === 'port' && S.g.table) S.g.table = false;
-  if (r && r.role === 'grey' && !r.u.p.p1310) { r.u.p.p1310 = true; toast(`${r.u.name}: 1310 nm module turned on`); }
+  if (r && r.role === 'grey') { // a host in a 1310 nm port whose filter is not there fits it: the module, and on an East and West OADM that side
+    const pid = MODEL.endPort(S, l, r.u), q = MODEL.ports1310(r.u).find(x => x.id === pid);
+    if (q && !q.fitted) { const was = r.u.p.p1310; if (r.u.type === 'oadm' && r.u.p.sides === 'ew') r.u.p.side1310 = !was ? q.side : 'ew'; r.u.p.p1310 = true; toast(`${r.u.name}: ${q.side ? '1310 nm ' + q.side.toUpperCase() + ' port fitted' : '1310 nm module turned on'}`); }
+  }
   MODEL.assignSides(S);
 }
 // The port picker for a new cable: one select per end, nothing chosen until you choose (a one-port instrument excepted). Connect makes the cable;

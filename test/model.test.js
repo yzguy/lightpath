@@ -1625,7 +1625,8 @@ test('passive OADM: add/drop ports cost the add/drop loss, through channels the 
   ob.p.ad = 9; const r1 = M.simulate(S), b = pick(r1);
   assert.ok(Math.abs((a.drop - b.drop) - 6) < 0.5, `drop port lost ${a.drop - b.drop} dB, wanted 6`);
   assert.ok(Math.abs(a.thru - b.thru) < 0.01);
-  ob.p.p1310 = true; assert.ok(Math.abs(hop(M.simulate(S)) + 2.1) < 1e-9, 'the 1310 coupler adds 0.6 dB on the line');
+  ob.p.p1310 = true; ob.p.side1310 = 'w'; assert.ok(Math.abs(hop(M.simulate(S)) + 2.1) < 1e-9, 'the 1310 coupler adds 0.6 dB on the line');
+  ob.p.side1310 = 'ew'; assert.ok(Math.abs(hop(M.simulate(S)) + 2.7) < 1e-9, 'an express channel passes both the W and the E 1310 nm filter');
 });
 
 test('passive OADM: sides, port counts and old slot lists survive sanitize', () => {
@@ -2544,8 +2545,8 @@ test('routers with grey optics cabled into the 1310 nm ports reach each other: r
 test('a 1310 nm port on an OADM reaches a mux with one', () => {
   const S = M.sanitize(build('osc')), nm = n => S.nodes.find(x => x.name === n);
   nm('MUX-Z').p.p1310 = true; const pair = X => X.b1310.links.find(x => [x.aName, x.bName].sort().join() === 'MUX-Z,OADM-3');
-  // MUX-Z is on OADM-3's Line E, but its 1310 nm port is on Line W (the default): the light arriving there is blocked
-  const r0 = M.simulate(S); assert.ok(!pair(r0)); assert.ok(r0.b1310.links.some(x => x.aName === 'MUX-Z' && x.status === 'blocked' && /OADM-3's 1310 nm port is on Line W, but this fiber arrives on Line E/.test(x.why)));
+  // MUX-Z is on OADM-3's Line E, but OADM-3 only has its 1310 W port fitted: the light arriving there is blocked
+  const r0 = M.simulate(S); assert.ok(!pair(r0)); assert.ok(r0.b1310.links.some(x => x.aName === 'MUX-Z' && x.status === 'blocked' && /OADM-3 has no 1310 nm filter on Line E, where this fiber arrives \(it has only 1310 W\)/.test(x.why)));
   nm('OADM-3').p.side1310 = 'e'; const r = M.simulate(S), l = pair(r);
   assert.ok(l && l.status === 'up'); assert.ok(Math.abs(l.loss - (0.6 + 1 + 0.35 * l.km)) < 1e-9);
 });
@@ -2560,7 +2561,7 @@ test('an OADM\'s 1310 nm port goes out one line only: a host on it is not drawn 
   // flipped to Line E: the route toward OADM-1 goes, and the one toward the amplifier is blocked by it
   const e = clone(S); e.nodes.find(x => x.name === 'OADM-2').p.side1310 = 'e';
   const re = M.simulate(e).b1310.links; assert.ok(!re.some(x => x.b && [x.aName, x.bName].includes('OADM-2'))); assert.ok(re.some(x => x.aName === 'OADM-2' && x.status === 'blocked' && /AMP-C/.test(x.why)));
-  assert.match(M.portsOf(S, nm('OADM-2')).find(p => p.id === '1310').label, /on Line W/);
+  assert.match(M.portsOf(S, nm('OADM-2')).find(p => p.id === '1310W').label, /to Line W/); assert.match(M.portsOf(S, nm('OADM-2')).find(p => p.id === '1310E').label, /not fitted/);
 });
 
 test('ports: every device has a fixed list of duplex ports, and an older lab gets the ports its cabling implies', () => {
@@ -2685,4 +2686,37 @@ test('a 1310 nm link reports its route from router to router, so the canvas can 
   // an amplifier in the way blocks it there
   const e = M.sanitize(build('osc')), blk = M.simulate(e).b1310.links.find(l => l.status === 'blocked');
   assert.equal(blk.routeLinks.length, blk.routeNodes.length - 1);
+});
+
+test('an East and West OADM has a 1310 nm port per direction: 1310 W goes out Line W, 1310 E out Line E, each with its own router', () => {
+  const N = (id, type, x, p = {}) => ({ id, type, name: id, x, y: 200, p: { ...M.TYPES[type].def(), ...p } });
+  const F = (id, a, b, pa, pb) => ({ id, a, b, kind: 'fiber', p: { ...M.linkDefaults('fiber'), len: 5, pa, pb } });
+  const H = (id, h, u, pb) => ({ id, a: h, b: u, kind: 'patch', p: { ...M.linkDefaults('patch'), pa: 'eth1', pb, optic: '10g-lr' } });
+  const base = { nodes: [N('OA', 'oadm', 100, { p1310: true }), N('OB', 'oadm', 400, { p1310: true }), N('OC', 'oadm', 700, { p1310: true }), ...['H1', 'H2', 'H3', 'H4'].map((h, i) => N(h, 'host', 100 + i * 200, { speed: 10 }))],
+    links: [F('f1', 'OA', 'OB', 'LE', 'LW'), F('f2', 'OB', 'OC', 'LE', 'LW'), H('c1', 'H1', 'OA', '1310E'), H('c2', 'H2', 'OB', '1310W'), H('c3', 'H3', 'OB', '1310E'), H('c4', 'H4', 'OC', '1310W')] };
+  const S = M.sanitize(base), ob = S.nodes.find(n => n.id === 'OB');
+  assert.equal(ob.p.side1310, 'ew', 'a new East and West OADM has both ports');
+  assert.deepEqual(M.portsOf(S, ob).filter(p => p.kind === '1310').map(p => [p.id, p.label]), [['1310W', '1310 nm W (to Line W)'], ['1310E', '1310 nm E (to Line E)']]);
+  const r = { b1310: M.band1310(S) }, up = r.b1310.links.filter(x => x.b).map(x => [x.aHost, x.bHost].sort().join('-') + ':' + [x.aName + ' ' + x.aPort, x.bName + ' ' + x.bPort].sort().join('/')).sort();
+  assert.deepEqual(up, ['H1-H2:OA 1310 E/OB 1310 W', 'H3-H4:OB 1310 E/OC 1310 W']);
+  assert.ok(r.b1310.links.every(x => x.status === 'up'));
+  const R = M.reach(S, r), ok = R.filter(x => x.ok).length; assert.deepEqual(R.filter(x => x.ok).map(x => [x.a, x.z].sort().join()).sort(), ['H1,H2', 'H3,H4']);
+  assert.equal(ok, 2, 'H1 reaches H2 and H3 reaches H4, nothing else: each port only sees its own line');
+  // OADM-B with only 1310 W fitted: H3's port has no filter, and OC's 1310 W light arriving on OB's Line E is not passed to a port
+  const w = clone(S); w.nodes.find(n => n.id === 'OB').p.side1310 = 'w'; const rw = M.band1310(w).links;
+  assert.ok(rw.some(x => x.aHost === 'H3' && x.status === 'blocked' && /OB has no 1310 nm filter on Line E: fit that side/.test(x.why)));
+  assert.ok(rw.some(x => x.aName === 'OC' && x.status === 'blocked' && /OB has no 1310 nm filter on Line E, where this fiber arrives \(it has only 1310 W\)/.test(x.why)));
+  // an East or West OADM has only 1310 W: a cable in 1310 E is not in a port of the device
+  assert.deepEqual(M.portsOf(S, { ...ob, p: { ...ob.p, sides: 'w' } }).filter(p => p.kind === '1310').map(p => p.id), ['1310W']);
+});
+
+test('a saved lab from before the per-side 1310 nm ports keeps its one port, on the line it was on', () => {
+  const N = (id, type, x, p = {}) => ({ id, type, name: id, x, y: 200, p: { ...M.TYPES[type].def(), ...p } });
+  const old = { nodes: [N('OA', 'oadm', 100, { p1310: true, side1310: 'e' }), N('OB', 'oadm', 400, { p1310: true, side1310: 'w' }), N('OC', 'oadm', 700, { p1310: true }), N('H1', 'host', 100, { speed: 10 }), N('H2', 'host', 400, { speed: 10 }), N('H3', 'host', 700, { speed: 10 })],
+    links: [{ id: 'f1', a: 'OA', b: 'OB', kind: 'fiber', p: { ...M.linkDefaults('fiber'), len: 5, pa: 'LE', pb: 'LW' } }, ...[['H1', 'OA'], ['H2', 'OB'], ['H3', 'OC']].map(([h, u], i) => ({ id: 'c' + i, a: h, b: u, kind: 'patch', p: { ...M.linkDefaults('patch'), pa: 'eth1', pb: '1310', optic: '10g-lr' } }))] };
+  delete old.nodes[2].p.side1310; // from before PR 13: no side at all, so its port was on Line W
+  const S = M.sanitize(old), n = id => S.nodes.find(x => x.id === id), port = id => S.links.find(l => l.id === id).p.pb;
+  assert.deepEqual(['OA', 'OB', 'OC'].map(id => n(id).p.side1310), ['e', 'w', 'w']);
+  assert.deepEqual(['c0', 'c1', 'c2'].map(port), ['1310E', '1310W', '1310W']);
+  const l = M.band1310(S).links.find(x => x.b); assert.equal([l.aHost, l.bHost].sort().join(), 'H1,H2'); assert.equal(l.status, 'up');
 });

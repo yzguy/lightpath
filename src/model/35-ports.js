@@ -42,7 +42,7 @@
         // both line ports are always there (traffic it does not add or drop passes Line W to Line E); `sides` says which way its add/drop filters face
         const sides = String(n.p.sides || '').split('').filter(s => s === 'e' || s === 'w').sort().reverse(), out = ['w', 'e'].map(s => P('L' + s.toUpperCase(), 'Line ' + s.toUpperCase(), 'oline', { side: s }));
         for (const s of sides) range1(iOf(n.p[s + 'Ports'], 0)).forEach(i => out.push(P(s.toUpperCase() + i, adLabel(S, n, s, i - 1), 'ad', { side: s, k: i - 1 })));
-        out.push(P('1310', '1310 nm' + (n.p.p1310 ? ` (on Line ${line1310(n)[1]})` : ' (module off)'), '1310'));
+        for (const q of ports1310(n)) out.push(P(q.id, `1310 nm ${q.side.toUpperCase()}` + (q.fitted ? ` (to Line ${q.side.toUpperCase()})` : n.p.p1310 ? ' (not fitted)' : ' (module off)'), '1310', { side: q.side }));
         return out;
       }
       case 'roadm': {
@@ -68,7 +68,7 @@
       case 'trx': case 'mxp': return /^L2?$/.test(id) ? 'line' : /^C\d+$/.test(id) ? 'client' : '';
       case 'host': return /^eth\d+$/.test(id) ? 'eth' : '';
       case 'mux': return id === 'COM' ? 'com' : id === '1310' ? '1310' : /^P\d+$/.test(id) ? 'ad' : '';
-      case 'oadm': return /^L[EW]$/.test(id) ? 'oline' : id === '1310' ? '1310' : /^[EW]\d+$/.test(id) ? 'ad' : '';
+      case 'oadm': return /^L[EW]$/.test(id) ? 'oline' : id === '1310W' || (id === '1310E' && n.p.sides === 'ew') ? '1310' : /^[EW]\d+$/.test(id) ? 'ad' : '';
       case 'roadm': return /^D\d$/.test(id) ? 'deg' : /^(D\dA|A)\d+$/.test(id) ? 'ad' : '';
       case 'edfa': return /^(IN|OUT)$/.test(id) ? 'amp' : id === 'MON' ? 'mon' : '';
       case 'dcm': case 'voa': return /^(IN|OUT)$/.test(id) ? 'amp' : '';
@@ -82,7 +82,7 @@
     const k = portKind(n, id), p = portsOf(S, n).find(x => x.id === id);
     if (k === 'line') return id === 'L2' ? 'LINE 2' : 'LINE';
     if (k === 'client') return n.type === 'trx' ? 'CLIENT' : id;
-    if (k === 'com') return 'COM'; if (k === '1310') return '1310'; if (k === 'oline') return 'Line ' + id[1];
+    if (k === 'com') return 'COM'; if (k === '1310') return id.length > 4 ? '1310 ' + id[4] : '1310'; if (k === 'oline') return 'Line ' + id[1];
     if (k === 'amp') return p ? p.label.toUpperCase() : id; if (k === 'deg' || k === 'mon') return id; if (k === 'panel' || k === 'tri') return id.toUpperCase(); if (k === 'test') return '';
     if (k === 'ad') return id === 'AD' ? 'A/D' : p ? p.label.replace(/^D(\d) A\/D /, 'D$1·').replace(/^A\/D /, 'A/D') : id;
     return p ? p.label : id;
@@ -103,7 +103,7 @@
       case 'trx': case 'mxp': return o.type === 'host' ? 'C' + ((Number.isInteger(l.p.cport) ? l.p.cport : 0) + 1) : mine.filter(x => { const y = S.nodes.find(q => q.id === (x.a === n.id ? x.b : x.a)); return y && y.type !== 'host'; }).indexOf(l) > 0 ? 'L2' : 'L';
       case 'host': return 'eth' + ((Number.isInteger(l.p.hport) ? l.p.hport : Math.max(0, mine.indexOf(l))) + 1);
       case 'mux': return isEnd(o) ? (mp == null ? 'AD' : 'P' + (mp + 1)) : o.type === 'host' ? '1310' : 'COM';
-      case 'oadm': { const s = (sd || (isEnd(o) && String(n.p.sides || 'w').length === 1 ? n.p.sides : o.x < n.x ? 'w' : 'e')).toUpperCase(); return isEnd(o) ? (mp == null ? 'AD' : s + (mp + 1)) : o.type === 'host' ? '1310' : 'L' + s; }
+      case 'oadm': { const s = (sd || (isEnd(o) && String(n.p.sides || 'w').length === 1 ? n.p.sides : o.x < n.x ? 'w' : 'e')).toUpperCase(); return isEnd(o) ? (mp == null ? 'AD' : s + (mp + 1)) : o.type === 'host' ? '1310' + (ports1310(n).find(q => q.fitted && q.side === s.toLowerCase()) || ports1310(n).find(q => q.fitted) || { id: '1310W' }).id.slice(4) : 'L' + s; }
       case 'roadm': return isEnd(o) ? (mp == null ? 'AD' : n.p.directionless ? 'A' + (mp + 1) : `D${sd || 1}A${mp + 1}`) : 'D' + (sd || (mine.filter(x => { const y = S.nodes.find(q => q.id === (x.a === n.id ? x.b : x.a)); return y && !isEnd(y); }).indexOf(l) + 1));
       case 'edfa': case 'dcm': case 'voa': { const taken = new Set(mine.filter(x => x !== l).map(x => (x.a === n.id ? x.p.pa : x.p.pb)).filter(Boolean)); if (taken.has('IN')) return 'OUT'; if (taken.has('OUT')) return 'IN'; const f = feedOf(S, n); return f ? (f === l.id ? 'IN' : 'OUT') : mine.indexOf(l) > 0 ? 'OUT' : 'IN'; }
       case 'panel': case 'splitter': case 'switch': return sd;

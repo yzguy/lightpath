@@ -128,33 +128,40 @@
   // splitters and switches have no such filter and block it.
   const OSC = { name: 'Supervisory channel (1510 nm, 1.25 Gb/s)', nm: 1510, att: 0.25, tx: -3, rxMin: -28, rxMax: -8, filter: 1.0 };
   const optic1310 = k => PHY_.CLIENT_OPTICS[k];
-  // What drives a unit's 1310 nm port: a host cabled into it (its grey optic, plus the patch cord), or else the unit's own o1310 setting (older labs).
-  function port1310(S, u, node) {
-    const c = S.links.find(l => (l.a === u.id || l.b === u.id) && cableRole(S, l).role === 'grey');
+  // What drives one 1310 nm port of a unit: a host cabled into it (its grey optic, plus the patch cord), or else the unit's own o1310 setting (older labs).
+  function port1310(S, u, node, pid) {
+    const c = S.links.find(l => (l.a === u.id || l.b === u.id) && cableRole(S, l).role === 'grey' && endPort(S, l, u) === pid);
     if (!c) return { key: u.p.o1310, host: null, cable: null };
     const h = node(c.a === u.id ? c.b : c.a);
     return { key: c.p.optic, host: h, cable: c };
   }
   function band1310(S) {
-    const { node, link } = mkGraph(S), out = [], seen = new Set(), has1310 = n => isUnit1310(n) && n.p.p1310, ends = S.nodes.filter(has1310);
-    const sideOf = (l, id) => (l.a === id ? l.p.sa : l.p.sb);
-    // a host cabled into a mux or OADM that has no 1310 nm port: its light goes nowhere
-    for (const l of S.links) { const g = cableRole(S, l); if (g && g.role === 'grey' && !g.u.p.p1310) out.push({ a: g.u.id, b: null, aName: g.u.name, bName: '', aHost: g.h.name, bHost: '', routeLinks: [l.id], routeNodes: [g.h.id, g.u.id], status: 'blocked', why: `${g.u.name} has no 1310 nm port: turn it on in its settings`, km: patchKm(l), hops: [g.h.name, g.u.name], optic: l.p.optic, opticName: optic1310(l.p.optic).name }); }
-    for (const a of ends) {
+    const { node, link } = mkGraph(S), out = [], seen = new Set(), has1310 = n => isUnit1310(n) && n.p.p1310, fitted = n => ports1310(n).filter(q => q.fitted);
+    const sideOf = (l, id) => (l.a === id ? l.p.sa : l.p.sb), pName = (n, q) => (n.type === 'oadm' ? '1310 ' + q.side.toUpperCase() : ''); // an OADM port's name, as it has one per side
+    // a host cabled into a 1310 nm port that has no filter behind it (the module off, or that side of an OADM not fitted): its light goes nowhere
+    for (const l of S.links) {
+      const g = cableRole(S, l); if (!g || g.role !== 'grey') continue;
+      const q = ports1310(g.u).find(x => x.id === endPort(S, l, g.u)); if (q && q.fitted) continue;
+      out.push({ a: g.u.id, b: null, aName: g.u.name, bName: '', aPort: q ? pName(g.u, q) : '', bPort: '', aHost: g.h.name, bHost: '', routeLinks: [l.id], routeNodes: [g.h.id, g.u.id], status: 'blocked', why: g.u.p.p1310 ? `${g.u.name} has no 1310 nm filter on Line ${q ? q.side.toUpperCase() : ''}: fit that side in its settings` : `${g.u.name} has no 1310 nm port: turn it on in its settings`, km: patchKm(l), hops: [g.h.name, g.u.name], optic: l.p.optic, opticName: optic1310(l.p.optic).name });
+    }
+    for (const a of S.nodes) for (const qa of has1310(a) ? fitted(a) : []) {
       if (isDead(a)) continue;
-      const pa = port1310(S, a, node);
+      const pa = port1310(S, a, node, qa.id);
       for (const l0 of S.links) {
-        // the line (common) cables of the unit, not the transponder cables on its channel ports or the host cable on its 1310 nm port
+        // the line (common) cables of the unit, not the transponder cables on its channel ports or the host cables on its 1310 nm ports
         if ((l0.kind !== 'fiber' && l0.kind !== 'patch') || (l0.a !== a.id && l0.b !== a.id) || l0 === pa.cable) { continue; }
-        if (!node(l0.a === a.id ? l0.b : l0.a) || endPort(S, l0, a) !== line1310(a)) continue; // only the line port the 1310 nm filter sits on carries the band: COM, or one of an OADM's Line W/E (the other line is express and never sees it)
-        let l = l0, cur = a.id, km = 0, extra = +a.p.il1310, why = '', hops = [a.name], b = null;
+        if (!node(l0.a === a.id ? l0.b : l0.a) || endPort(S, l0, a) !== qa.line) continue; // each 1310 nm port's filter sits on one line port: a mux's COM; an OADM's 1310 W on Line W, its 1310 E on Line E
+        let l = l0, cur = a.id, km = 0, extra = +a.p.il1310, why = '', hops = [a.name], b = null, qb = null;
         const rl = [l0.id], rn = [a.id]; // the cables and devices the light goes through, in order, for the canvas
         for (let guard = 0; guard < 40; guard++) {
           if (isCut(S, l)) { why = `the fiber ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; rn.push(l.a === cur ? l.b : l.a); break; }
           km += l.kind === 'fiber' ? +l.p.len : patchKm(l);
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid); hops.push(n.name); rn.push(nid);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
-          if (has1310(n)) { const ip = endPort(S, l, n); if (n.type === 'oadm' && ip !== line1310(n)) { why = `${n.name}'s 1310 nm port is on Line ${line1310(n)[1]}, but this fiber arrives on ${ip ? 'Line ' + ip[1] : 'another port'}`; break; } b = n; extra += +n.p.il1310; break; }
+          if (has1310(n)) { // it drops at the 1310 nm port whose filter sits on the line port it arrives on; an OADM line without one is express, and blocks it
+            const ip = endPort(S, l, n); qb = fitted(n).find(q => n.type === 'mux' || q.line === ip) || null;
+            if (!qb) { why = `${n.name} has no 1310 nm filter on ${/^L[EW]$/.test(ip) ? 'Line ' + ip[1] : 'that port'}, where this fiber arrives (it has only ${fitted(n).map(q => pName(n, q)).join(' and ')})`; break; }
+            b = n; extra += +n.p.il1310; break; }
           if (n.type === 'panel') {
             const m = /^([rf])(\d+)$/.exec(arr || ''); if (!m) { why = `${n.name}: the cable does not name a port`; break; }
             const outSide = (m[1] === 'r' ? 'f' : 'r') + m[2], nx = S.links.find(x => x !== l && (x.a === nid || x.b === nid) && sideOf(x, nid) === outSide);
@@ -170,11 +177,11 @@
           routeLinks: [...(pa.cable ? [pa.cable.id] : []), ...rl, ...(pb && pb.cable ? [pb.cable.id] : [])],
           routeNodes: [...(pa.host ? [pa.host.id] : []), ...rn, ...(pb && pb.host ? [pb.host.id] : [])] });
         if (b) {
-          const key = [a.id, b.id].sort().join('|') + '|' + [l0.id, l.id].sort().join('|'); if (seen.has(key)) continue; seen.add(key);
-          const pb = port1310(S, b, node), oa = optic1310(pa.key), ob = optic1310(pb.key);
+          const key = [a.id + qa.id, b.id + qb.id].sort().join('|') + '|' + [l0.id, l.id].sort().join('|'); if (seen.has(key)) continue; seen.add(key);
+          const pb = port1310(S, b, node, qb.id), oa = optic1310(pa.key), ob = optic1310(pb.key);
           // a host's patch cord into the 1310 nm port counts like any other: its connector loss and length
           for (const p of [pa, pb]) if (p.cable) { km += patchKm(p.cable); extra += +p.cable.p.il || 0; }
-          const row = { ...wrap(pa, pb), a: a.id, b: b.id, aName: a.name, bName: b.name, aHost: hn(pa), bHost: hn(pb), hostA: pa.host && pa.host.id, hostB: pb.host && pb.host.id, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops, ...(pb.host ? [pb.host.name] : [])] };
+          const row = { ...wrap(pa, pb), a: a.id, b: b.id, aName: a.name, bName: b.name, aPort: pName(a, qa), bPort: pName(b, qb), aHost: hn(pa), bHost: hn(pb), hostA: pa.host && pa.host.id, hostB: pb.host && pb.host.id, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops, ...(pb.host ? [pb.host.name] : [])] };
           if (pa.key !== pb.key) { out.push({ ...row, status: 'down', why: `${pa.host ? pa.host.name : a.name} has ${oa.name} and ${pb.host ? pb.host.name : b.name} has ${ob.name}: the ends do not match`, loss: null }); continue; }
           const cut = [pa, pb].find(p => p.cable && isCut(S, p.cable));
           if (cut) { out.push({ ...row, optic: pa.key, opticName: oa.name, status: 'down', why: `the cable from ${cut.host.name} is cut`, loss: null }); continue; }
@@ -188,8 +195,8 @@
           else if (oa.reach && km > oa.reach) { status = 'warn'; w = `${f1(km)} km is beyond the ${oa.reach} km ${oa.name} is rated for: the power budget closes, but dispersion is not guaranteed`; }
           out.push({ ...row, optic: pa.key, opticName: oa.name, rate: oa.rate, loss, tx: oa.tx, rx, margin, rxMin: oa.rxMin, status, why: w });
         } else if (why) {
-          const key = a.id + '|' + l0.id; if (seen.has(key)) continue; seen.add(key);
-          out.push({ ...wrap(pa, null), a: a.id, b: null, aName: a.name, bName: '', aHost: hn(pa), bHost: '', hostA: pa.host && pa.host.id, status: 'blocked', why, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops], optic: pa.key, opticName: optic1310(pa.key).name });
+          const key = a.id + qa.id + '|' + l0.id; if (seen.has(key)) continue; seen.add(key);
+          out.push({ ...wrap(pa, null), a: a.id, b: null, aName: a.name, bName: '', aPort: pName(a, qa), bPort: '', aHost: hn(pa), bHost: '', hostA: pa.host && pa.host.id, status: 'blocked', why, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops], optic: pa.key, opticName: optic1310(pa.key).name });
         }
       }
     }

@@ -29,10 +29,11 @@
       const steps = [], fail = text => { steps.push({ ok: false, text }); return { steps, ok: false }; };
       const r = G.find(x => x.b && ((x.hostA === A.id && x.hostB === Z.id) || (x.hostA === Z.id && x.hostB === A.id)));
       if (!r) { const bl = G.find(x => x.hostA === A.id || x.hostA === Z.id || x.hostB === A.id || x.hostB === Z.id); return fail(bl ? `the 1310 nm link from ${bl.hostA === Z.id || bl.hostB === Z.id ? Z.name : A.name} goes nowhere: ${bl.why}` : `${greyOf(A) ? Z.name : A.name} is not patched into a 1310 nm port that ${greyOf(A) ? A.name : Z.name}'s reaches`); }
-      steps.push({ ok: true, text: `${A.name} and ${Z.name} are patched into the 1310 nm ports of ${r.aName} and ${r.bName}${r.opticName ? ` (${r.opticName})` : ''}` });
+      const pn = (n, p) => n + (p ? ' ' + p : ''); // an East and West OADM has a 1310 nm port per side: name the one
+      steps.push({ ok: true, text: `${A.name} and ${Z.name} are patched into the 1310 nm ports of ${pn(r.aName, r.aPort)} and ${pn(r.bName, r.bPort)}${r.opticName ? ` (${r.opticName})` : ''}` });
       if (r.status === 'down') return fail(`the 1310 nm link is DOWN: ${r.why}`);
       steps.push({ ok: true, text: `The 1310 nm link ${r.aName}–${r.bName} is ${r.status === 'warn' ? 'up with a warning' : 'UP'}: ${f1(r.margin)} dB of margin${r.why ? ' (' + r.why + ')' : ''}` });
-      return { steps, ok: true, entry: { i: 'g:' + [r.a, r.b].sort().join('-'), slot: null, label: `1310 nm link ${r.aName}–${r.bName}`, ch: { status: r.status === 'warn' ? 'degraded' : 'up', rate: r.rate } }, rate: r.rate, latencyUs: r.km * LAT.fiberUsPerKm + 2 * LAT.directUs, km: r.km, degraded: r.status === 'warn', cp: 0 };
+      return { steps, ok: true, entry: { i: 'g:' + [r.a + (r.aPort || ''), r.b + (r.bPort || '')].sort().join('-'), slot: null, label: `1310 nm link ${r.aName}–${r.bName}`, ch: { status: r.status === 'warn' ? 'degraded' : 'up', rate: r.rate } }, rate: r.rate, latencyUs: r.km * LAT.fiberUsPerKm + 2 * LAT.directUs, km: r.km, degraded: r.status === 'warn', cp: 0 };
     };
     const cables = h => S.links.filter(l => l.kind === 'patch' && (l.a === h.id || l.b === h.id)).map(l => ({ l, end: node(l.a === h.id ? l.b : l.a) })).filter(x => x.end && isEnd(x.end) && cableRole(S, x.l).role === 'client'); // a host cable into a transponder's line port is not a client connection: the fault list says why
     // the client side of one host cable: does the host port match the transponder's client port, and is that port itself healthy

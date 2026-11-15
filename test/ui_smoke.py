@@ -336,8 +336,25 @@ class UI(unittest.TestCase):
         self.assertIn('Line E', labels)
         self.assertIn('Line W', labels)
         self.node(o).click()
-        types = pg.eval_on_selector_all('select:has(option[value="ew"]) option', 'os => os.map(o => [o.value, o.textContent])')
+        types = pg.eval_on_selector_all('#f-sides option', 'os => os.map(o => [o.value, o.textContent])')
         self.assertEqual(types, [['ew', 'East and West'], ['w', 'East or West']], 'two OADM types, a single-sided one has its channels on West')
+
+    def test_oadm_has_a_1310_port_per_side(self):
+        pg = self.page
+        pg.click('#w-blank')
+        o = self.add('oadm')
+        self.assertEqual(pg.locator('#f-p1310').input_value(), '', 'off by default')
+        pg.select_option('#f-p1310', 'ew')
+        stubs = lambda: pg.evaluate("n => [...document.querySelectorAll('.node')].find(g => g.textContent.includes(n)).querySelectorAll('circle.led').length", o)
+        self.assertEqual(stubs(), 2, 'a 1310 stub under the W box and one under the E box')
+        pg.select_option('#f-p1310', 'w')
+        self.assertEqual(stubs(), 1)
+        h = self.add('host')
+        self.cable(h, o, 'eth1', '1310E')  # the E port is there but not fitted: cabling a router into it fits it
+        self.node(o).click()
+        self.assertEqual(pg.locator('#f-p1310').input_value(), 'ew')
+        self.assertIn('1310 nm E', pg.locator('#insp').inner_text())
+        self.assertEqual(stubs(), 2)
 
     def test_port_labels_clear_the_devices(self):
         self.explore()
