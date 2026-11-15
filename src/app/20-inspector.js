@@ -115,8 +115,8 @@ function portControls(l, after = renderAll) {
   }
   for (const n of [node(l.a), node(l.b)]) if (n && (n.type === 'oadm' || n.type === 'roadm') && !(portLink(l) && portLink(l).m === n) && !isEnd(n === node(l.a) ? node(l.b) : node(l.a))) { // a line cable on an OADM or ROADM: which side or degree of it
     const ss = el('select', { id: 'f-side-' + n.id, 'aria-label': `Side of ${n.name}` }), other = n === node(l.a) ? node(l.b) : node(l.a);
-    const usedS = new Set(n.type === 'roadm' ? S.links.filter(x => x !== l && !portLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n)) : []);
-    for (const sd of lineSides(n)) ss.append(opt(sd, sideLabel(n, sd), usedS.has(sd)));
+    const usedS = new Set(S.links.filter(x => x !== l && !portLink(x) && !greyLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n))); // one line cable per side or degree
+    for (const sd of lineSides(n)) ss.append(opt(sd, n.type === 'oadm' ? `Line ${sd.toUpperCase()} (${SIDE[sd]})` : sideLabel(n, sd), usedS.has(sd)));
     ss.value = sideOf(l, n) || (n.type === 'roadm' ? lineSides(n)[0] : defSide(n, other)); ss.addEventListener('change', () => { setSide(l, n, ss.value); after(); });
     out.push({ label: n.type === 'roadm' ? `Degree on ${n.name}` : `Line side on ${n.name}`, sel: ss, hint: once('side', n.type === 'roadm' ? 'Each line cable is one degree of the ROADM. If the add/drop is not directionless, a transponder port belongs to one degree and its light only leaves by that one.' : 'West is where the line comes from on the left, East the right. A transponder on a West port talks to the West line only.') });
   }
@@ -238,7 +238,7 @@ function renderInspectorBody() {
             cs.value = p.conv || ''; cs.addEventListener('change', () => { p.conv = cs.value; renderAll(); });
             box.append(field('Convert at', cs, 'Regenerate the channel at this ROADM into the slot of the partner\u2019s port. Set \u2018Connect to\u2019 as well, because the two ends are in different slots. The service channel cannot be converted.')); } } }
       const m = PHY.MODES[p.mode];
-      box.append(field('Module protection', selIn(p, 'spare', [['', 'None'], ['switch', 'Spare module, optical switch (1 dB)'], ['ycable', 'Spare module, y-cable (3.5 dB)']]), 'A second transponder module shares the line port. If this one fails the spare takes over in the switch time instead of the repair time. The switch or splitter costs power in both directions. Cable a second patch cord to another ROADM to dual-home it: the protection route can then avoid the access ROADM too.'));
+      box.append(field('Module protection', selIn(p, 'spare', [['', 'None'], ['switch', 'Spare module, optical switch (1 dB)'], ['ycable', 'Spare module, y-cable (3.5 dB)']]), 'A second transponder module shares the line port. If this one fails the spare takes over in the switch time instead of the repair time. The switch or splitter costs power in both directions. To dual-home it to a second ROADM, set line protection first: that adds an optical line protection module with a second line port, and the protection route can then avoid the access ROADM too.'));
       box.append(field('Tx power (dBm)', numIn(p, 'tx', 0.5, -15, 3, true, String(m.tx)), `Blank = module default ${m.tx} dBm`));
       box.append(el('div', { class: 'spec' }, [
         specRow('Baud rate', `${(m.Rs / 1e9).toFixed(2)} GBd`), specRow('Modulation', (m.coh === false ? '' : 'DP-') + m.mod), specRow('FEC / limit', `${m.fec} · BER ${m.berThr.toExponential(2)}`),

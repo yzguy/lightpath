@@ -515,6 +515,7 @@
         alarms.unshift(restAlarm);
       }
     }
+    if (!eol && !rv && !W && !opts.single) for (const o of overCabled(S)) if (o.role !== 'adddrop') alarms.push({ sev: path.nodes.includes(o.id) ? 'warn' : 'info', text: `${o.name} has ${o.used} ${o.role === 'line' ? 'line' : o.role === 'grey' ? '1310 nm' : 'client'} cables but ${o.max === 0 ? 'no such port' : o.max === 1 ? 'one port for them' : `${o.max} ports for them`}.${o.role === 'line' ? ' ' + o.why + '.' : ''} Delete the extra cable.` }); // an import, or line protection turned off after dual-homing (a missing add/drop port shows on its channel)
     if (!eol && !W) for (const n of [A, Z]) if (onSpare(n)) alarms.push({ sev: 'warn', text: `${n.name}'s primary module has failed: traffic is on the spare (${n.p.spare === 'ycable' ? 'y-cable' : 'optical switch'}). There is no module protection left.` });
     if (!eol && !rv && !W) for (const id of path.nodes) {
       const n = node(id), d = degOf(n);
@@ -541,6 +542,6 @@
     return res;
   }
 
-  return { TYPES, PREFIX, cableKind, greyEnds, greyFor, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, cableKind, greyEnds, portRole, portUse, cableFits, overCabled, lineProtected, greyFor, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

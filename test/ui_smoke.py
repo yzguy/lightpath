@@ -269,6 +269,33 @@ class UI(unittest.TestCase):
         self.assertEqual(pg.locator('#f-p1310').input_value(), 'true', 'cabling a host turns the 1310 nm port on')
         self.assertIn('400GBASE-LR4-10', pg.locator('#insp').inner_text())
 
+    def test_transponder_takes_one_line_cable(self):
+        pg = self.page
+        pg.click('#w-blank')
+        t, m1, m2 = self.add('trx'), self.add('mux'), self.add('mux')
+        self.handle_drag(t, m1)
+        if pg.locator('#portpick').is_visible():
+            pg.locator('#portpick button', has_text='Connect').click()
+        self.assertEqual(self.links(), 1)
+        self.handle_drag(t, m2)
+        self.assertEqual(self.links(), 1, 'a second line cable is refused')
+        self.assertIn('has no free line port', pg.locator('#toast').inner_text())
+
+    def test_oadm_line_ports_are_named_by_side(self):
+        pg = self.page
+        pg.click('#w-blank')
+        o, a1, a2 = self.add('oadm'), self.add('edfa'), self.add('edfa')
+        self.handle_drag(a1, o)
+        if pg.locator('#portpick').is_visible():
+            pg.locator('#portpick button', has_text='Connect').click()
+        self.handle_drag(a2, o)
+        if pg.locator('#portpick').is_visible():
+            pg.locator('#portpick button', has_text='Connect').click()
+        self.assertEqual(self.links(), 2)
+        labels = sorted(pg.eval_on_selector_all('.plabel', 'ts => ts.map(t => t.textContent)'))
+        self.assertIn('Line E', labels)
+        self.assertIn('Line W', labels)
+
     def test_port_labels_clear_the_devices(self):
         self.explore()
         for preset in self.page.evaluate("[...document.querySelectorAll('#preset option')].map(o => o.value).filter(Boolean)"):
