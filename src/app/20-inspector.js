@@ -216,19 +216,21 @@ function renderInspectorBody() {
       box.append(field('1310 nm port', selIn(p, 'p1310', [['false', 'No'], ['true', 'Yes: a 1310 nm upgrade port']]), 'Many CWDM/DWDM filter units have a 1310 nm port beside the channel ports: a wideband filter on the common port adds a grey 1310 nm client to the line. The filter costs the DWDM channels 0.6 dB more.'), ...port1310(p));
       box.append(el('p', { class: 'muted small', text: 'Its ports. Cable anything into any free port.' }), portTable(n));
     } else if (n.type === 'edfa') {
-      const two = !oneWayAmp(n), R = ampRoles(n);
-      box.append(field('Type', selIn(p, 'bidi', [['false', 'Ordinary, with isolators'], ['true', 'BiDi: both directions on one fiber']]), 'On a pair of fibers the unit holds an amplifier for each direction: a booster one way is the preamp the other way. An ordinary EDFA has isolators, so on a single fiber (both directions in one glass) it passes one direction only and the return is lost. A BiDi amplifier has circulators and band filters around its two amplifiers and costs the filter loss below in each direction.'));
+      const two = !oneWayAmp(n), term = p.role !== 'ila';
+      box.append(field('Type', selIn(p, 'role', [['term', 'Booster + pre-amp (terminal)'], ['ila', 'In-line amplifier']]), 'Both are a card with a stage each way, on two duplex LC ports. A booster + pre-amp card sits at a terminal: COM goes to the mux, LINE to the span. Its booster amplifies the mux output into the span (COM to LINE) and its pre-amp the light arriving from the span into the mux (LINE to COM). An in-line amplifier sits between two spans (Line A and Line B) and amplifies each way. Cabled the wrong way round, each stage does the other one\'s job.'));
+      box.append(field('Fiber', selIn(p, 'bidi', [['false', 'A fiber pair, with isolators'], ['true', 'BiDi: both directions on one fiber']]), 'An ordinary EDFA has isolators, so on a single fiber (both directions in one glass) it passes one direction only and the return is lost. A BiDi amplifier has circulators and band filters around its two stages and costs the filter loss below in each direction.'));
       if (p.bidi) box.append(field('Filter loss (dB each way)', numIn(p, 'bidiLoss', 0.1, 0, 6), 'Circulators and band filters around the amplifier. It counts only where the amplifier sits on a single fiber.'));
       box.append(field('Gain control', selIn(p, 'ctl', [['auto', 'Auto: hit output target'], ['fixed', 'Fixed gain']])));
-      // one column per direction; a blank return setting copies A→Z, and a blank target follows Amp output in the header
+      // one column per stage; a blank second-stage setting copies the first, and a blank target follows Amp output in the header
       const rows = [p.ctl === 'auto' ? ['Output target (dBm/ch)', 'target', 0.5, -10, 10] : ['Gain (dB)', 'gain', 0.5, 0, 40], ['Noise figure (dB)', 'nf', 0.1, 3, 12], ['Min gain (dB)', 'gmin', 1, 0, 40], ['Max gain (dB)', 'gmax', 1, 0, 40], ['Max total output (dBm)', 'pmax', 0.5, 10, 30]];
-      const head = (d, role) => el('b', { text: d + (role ? ' · ' + role : '') }), grid = el('div', { class: 'dirgrid' + (two ? '' : ' one') }, [el('span'), head('A→Z', R && R.fwd), ...(two ? [head('Z→A', R && R.rev)] : [])]);
+      const s1 = term ? 'Booster' : 'Stage A→B', s2 = term ? 'Pre-amp' : 'Stage B→A', head = (t, sub) => el('b', { text: t, title: sub }, [el('span', { class: 'muted small', text: ' ' + sub })]);
+      const grid = el('div', { class: 'dirgrid' + (two ? '' : ' one') }, [el('span'), head(s1, term ? 'COM→LINE' : ''), ...(two ? [head(s2, term ? 'LINE→COM' : '')] : [])]);
       for (const [lab, k, st, mn, mx] of rows) {
-        const fwd = numIn(p, k, st, mn, mx, k === 'target', k === 'target' ? String(S.g.launch) : undefined); fwd.setAttribute('aria-label', lab + ', A to Z');
+        const fwd = numIn(p, k, st, mn, mx, k === 'target', k === 'target' ? String(S.g.launch) : undefined); fwd.setAttribute('aria-label', `${lab}, ${s1}`);
         grid.append(el('span', { class: 'dlab', text: lab }), fwd);
-        if (two) { const rv = numIn(p, k + 'Rev', st, mn, mx, true, String(p[k] === '' ? S.g.launch : p[k])); rv.setAttribute('aria-label', lab + ', Z to A'); grid.append(rv); }
+        if (two) { const rv = numIn(p, k + 'Rev', st, mn, mx, true, String(p[k] === '' ? S.g.launch : p[k])); rv.setAttribute('aria-label', `${lab}, ${s2}`); grid.append(rv); }
       }
-      box.append(grid, el('p', { class: 'muted small', text: two ? 'A blank Z→A box copies A→Z. A blank target follows Amp output in the header.' : 'On a single fiber this amplifier passes A→Z only: make it BiDi for the return.' }));
+      box.append(grid, el('p', { class: 'muted small', text: two ? `A blank ${s2.toLowerCase()} box copies the ${s1.toLowerCase()}. A blank target follows Amp output in the header.` : 'On a single fiber only the stage it faces passes light: make it BiDi for the return.' }));
       box.append(adv(field('Max total input (dBm)', numIn(p, 'pinMax', 0.5, -10, 20), 'The most total power (all channels together) the input stage takes. Above it the amplifier is overloaded: an alarm tells you, and well above it the input stage saturates and can be damaged. Typical 8 to 12 dBm.'), +p.pinMax !== 10));
       box.append(adv(field('Control response (µs)', numIn(p, 'agcUs', 5, 0, 5000, true, String(S.g.agcUs ?? PHY.TRANSIENT.agcUs)), 'Blank = the global setting. How fast the gain control reacts when channels vanish (Transients tab).'), isSet(p.agcUs)));
       box.append(field('Gain-tilt control', selIn(p, 'tiltCtl', [['true', 'On: re-flatten the band'], ['false', 'Off: SRS tilt accumulates']]), 'Counters Raman tilt from the span before it'));

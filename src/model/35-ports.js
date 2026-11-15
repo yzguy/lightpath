@@ -51,7 +51,9 @@
         else for (const j of range1(d)) range1(np).forEach(i => out.push(P(`D${j}A${i}`, adLabel(S, n, String(j), i - 1), 'ad', { side: String(j), k: i - 1 })));
         return out;
       }
-      case 'edfa': return [P('IN', 'Line In', 'amp'), P('OUT', 'Line Out', 'amp'), P('MON', 'Monitor (1% tap)', 'mon')]; // a booster/pre-amp pair: the duplex cable on Line In carries the A-to-Z light in
+      case 'edfa': { // a dual-stage card, a duplex LC port each side: a booster + pre-amp card (COM to the mux, LINE to the span; the booster amplifies COM to LINE,
+        // the pre-amp LINE to COM), or an in-line amplifier (Line A, Line B; a stage each way)
+        const t = n.p.role !== 'ila'; return [P('IN', t ? 'COM' : 'Line A', 'amp'), P('OUT', t ? 'LINE' : 'Line B', 'amp'), P('MON', 'Monitor (1% tap)', 'mon')]; }
       case 'dcm': case 'voa': return [P('IN', 'In', 'amp'), P('OUT', 'Out', 'amp')];
       case 'panel': { const out = []; range1(iOf(n.p.ports, 1)).forEach(i => out.push(P('r' + i, `Rear ${i}`, 'panel'), P('f' + i, `Front ${i}`, 'panel'))); return out; }
       case 'splitter': case 'switch': return [P('c', 'Common', 'tri'), P('a', 'Port A', 'tri'), P('b', 'Port B', 'tri')];
@@ -81,11 +83,11 @@
     if (k === 'line') return id === 'L2' ? 'LINE 2' : 'LINE';
     if (k === 'client') return n.type === 'trx' ? 'CLIENT' : id;
     if (k === 'com') return 'COM'; if (k === '1310') return '1310'; if (k === 'oline') return 'Line ' + id[1];
-    if (k === 'deg' || k === 'amp' || k === 'mon') return id; if (k === 'panel' || k === 'tri') return id.toUpperCase(); if (k === 'test') return '';
+    if (k === 'amp') return p ? p.label.toUpperCase() : id; if (k === 'deg' || k === 'mon') return id; if (k === 'panel' || k === 'tri') return id.toUpperCase(); if (k === 'test') return '';
     if (k === 'ad') return id === 'AD' ? 'A/D' : p ? p.label.replace(/^D(\d) A\/D /, 'D$1·').replace(/^A\/D /, 'A/D') : id;
     return p ? p.label : id;
   };
-  // the cable by which the service's A-to-Z light reaches an amplifier (its Line In), from the service's own route; null if there is none
+  // the cable by which the service's A-to-Z light reaches an amplifier (its first port, COM or Line A), from the service's own route; null if there is none
   function feedOf(S, n) {
     const a = S.svc && S.svc.a; if (!a || a === n.id) return null;
     const r = route(S, a, n.id, true, { ignoreCut: true, anyPort: true });
@@ -150,6 +152,42 @@
     }
     syncPorts(S);
   }
+  // Which way an amplifier port faces: 'line' (a fiber span, or another amplifier), 'com' (the terminal: a mux, OADM, ROADM, transponder or host),
+  // following patch cords through panels, splitters, switches, DCMs and attenuators; '' if it cannot tell
+  function ampFaces(S, n, l) {
+    const by = id => S.nodes.find(x => x.id === id), TERM = ['mux', 'oadm', 'roadm', 'trx', 'mxp', 'host'], PASS = ['panel', 'splitter', 'switch', 'dcm', 'voa'];
+    for (let k = 0, c = l, at = n; k < 8 && c; k++) {
+      if (c.kind === 'fiber') return 'line';
+      const o = by(c.a === at.id ? c.b : c.a); if (!o) return ''; if (TERM.includes(o.type)) return 'com'; if (!PASS.includes(o.type)) return o.type === 'edfa' ? 'line' : '';
+      const pc = endPort(S, c, o), others = S.links.filter(x => x !== c && (x.a === o.id || x.b === o.id) && ![by(x.a), by(x.b)].some(y => y && (y.type === 'meter' || y.type === 'otdr')));
+      const m = o.type === 'panel' ? /^([rf])(\d+)$/.exec(pc || '') : null;
+      c = o.type === 'panel' ? (m ? others.find(x => endPort(S, x, o) === (m[1] === 'r' ? 'f' : 'r') + m[2]) : null) : o.type === 'splitter' || o.type === 'switch' ? others.find(x => (endPort(S, x, o) === 'c') !== (pc === 'c')) : others[0];
+      at = o;
+    }
+    return '';
+  }
+  const ampCable = (S, n, id) => S.links.find(l => (l.a === n.id || l.b === n.id) && endPort(S, l, n) === id);
+  const AMP_KEYS = ['target', 'gain', 'nf', 'gmin', 'gmax', 'pmax'];
+  // An older lab's amplifier had no type, and its settings were "A to Z" and "Z to A". It becomes an in-line amplifier if both sides face line fiber, else a
+  // booster + pre-amp card; one whose first port faced the line (a pre-amp on the A-to-Z path) is turned round, so COM faces the mux, and its two stages swap.
+  function settleAmps(S) {
+    let moved = false;
+    for (const n of S.nodes) {
+      if (n.type !== 'edfa' || n.p.role) continue;
+      const ci = ampCable(S, n, 'IN'), co = ampCable(S, n, 'OUT'), fi = ci ? ampFaces(S, n, ci) : '', fo = co ? ampFaces(S, n, co) : '';
+      n.p.role = fi === 'line' && fo === 'line' ? 'ila' : 'term';
+      if (n.p.role !== 'term' || fi !== 'line' || fo === 'line') continue;
+      for (const [l, id] of [[ci, 'OUT'], [co, 'IN']]) if (l) l.p[l.a === n.id ? 'pa' : 'pb'] = id;
+      for (const k of AMP_KEYS) { // the A-to-Z stage was its pre-amp: a blank return setting copied it
+        const f = n.p[k], r = n.p[k + 'Rev'] === '' || n.p[k + 'Rev'] == null ? f : n.p[k + 'Rev'];
+        n.p[k] = r; n.p[k + 'Rev'] = String(f) === String(r) ? '' : f === '' ? +S.g.launch : f; // a blank target followed the line launch power
+      }
+      moved = true;
+    }
+    return moved;
+  }
+  // A booster + pre-amp card cabled the wrong way round: COM toward the span and LINE toward the mux
+  function ampTurned(S, n) { if (n.type !== 'edfa' || n.p.role !== 'term') return false; const ci = ampCable(S, n, 'IN'), co = ampCable(S, n, 'OUT'); return !!ci && !!co && ampFaces(S, n, ci) === 'line' && ampFaces(S, n, co) === 'com'; }
   // A ROADM's add/drop going directionless (or back) renumbers its ports: A3 is degree-free, D2A3 belongs to degree 2. Keep the cable on the same port number.
   function remapRoadm(l, n, f) {
     if (n.type !== 'roadm' || !l.p[f]) return; let m;
@@ -205,6 +243,7 @@
       else if (K.has('ad') && ka === 'ad' && kb === 'ad' && A.id === B.id) add(`${A.name}: two of its channel ports are cabled to each other, which loops a channel back.`);
       else if (K.has('ad') && !K.has('line') && !(ka === 'ad' && kb === 'ad')) { const [m, mi, o, oi] = end('ad'); add(`${pn(o, oi)} is cabled into ${pn(m, mi)}, a channel port: only that one channel gets through. The line goes on ${m.type === 'mux' ? 'COM' : m.type === 'oadm' ? 'a Line port' : 'a degree port'}.`); }
     }
+    for (const n of S.nodes) if (ampTurned(S, n)) { const l = ampCable(S, n, 'IN'); out.push({ link: l.id, nodes: [l.a, l.b], text: `${n.name} is cabled the wrong way round: COM faces the span and LINE the mux, so the pre-amp stage drives the fiber and the booster feeds the mux. Swap its two cables.` }); }
     return out;
   }
   // Light through a device: may it enter by one port and leave by another? (a transponder only starts or ends a route, by a line port)

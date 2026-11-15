@@ -2556,8 +2556,8 @@ test('ports: every device has a fixed list of duplex ports, and an older lab get
   assert.equal(port(cab('MXP-A', 'MUX-A'), nm('MXP-A')), 'L'); assert.equal(port(cab('MXP-A', 'MUX-A'), nm('MUX-A')), 'P8'); assert.equal(cab('MXP-A', 'MUX-A').p.mport, 7);
   assert.equal(port(cab('MUX-A', 'BST-A'), nm('MUX-A')), 'COM');
   assert.deepEqual([port(cab('MUX-A', 'BST-A'), nm('BST-A')), port(cab('BST-A', 'PRE-B'), nm('BST-A'))], ['IN', 'OUT']); // the service's light comes in from the A end
-  assert.deepEqual([port(cab('BST-A', 'PRE-B'), nm('PRE-B')), port(cab('PRE-B', 'MUX-B'), nm('PRE-B'))], ['IN', 'OUT']);
-  assert.deepEqual(M.portsOf(S, nm('BST-A')).map(p => p.label), ['Line In', 'Line Out', 'Monitor (1% tap)']);
+  assert.deepEqual([port(cab('BST-A', 'PRE-B'), nm('PRE-B')), port(cab('PRE-B', 'MUX-B'), nm('PRE-B'))], ['OUT', 'IN']); // PRE-B is a booster + pre-amp card too: LINE to the span, COM to its mux
+  assert.deepEqual(M.portsOf(S, nm('BST-A')).map(p => p.label), ['COM', 'LINE', 'Monitor (1% tap)']);
   // an OADM has Line W, Line E and channel ports named by channel and side; a protected transponder gets a second line port (the OLP)
   const o = M.sanitize(build('oadm')), ob = o.nodes.find(n => n.name === 'OADM-B');
   assert.deepEqual(M.portsOf(o, ob).filter(p => p.kind === 'oline').map(p => p.label), ['Line W', 'Line E']);
@@ -2587,7 +2587,7 @@ test('cabling anything into any port: the wrong port has the consequence it woul
   // into the mux's common port: the line side; its light would only come back out of the channel ports
   S = clone(base); const ba = cab(S, 'MUX-A', 'BST-A'); setPort(S, ba, 'MUX-A', 'P1'); setPort(S, cab(S, 'MXP-A', 'MUX-A'), 'MUX-A', 'COM'); r = M.simulate(S);
   assert.notEqual(r.status, 'up'); assert.ok(M.cablingFaults(S).some(f => /MXP-A Line is cabled into MUX-A COM, the line side/.test(f.text)));
-  assert.ok(M.cablingFaults(S).some(f => /BST-A Line In is cabled into MUX-A CH\d+, a channel port: only that one channel/.test(f.text)));
+  assert.ok(M.cablingFaults(S).some(f => /BST-A COM is cabled into MUX-A CH\d+, a channel port: only that one channel/.test(f.text)));
   // a client port on the mux: nothing optical leaves by a client port
   S = clone(base); setPort(S, cab(S, 'MXP-A', 'MUX-A'), 'MXP-A', 'C2'); r = M.simulate(S);
   assert.notEqual(r.status, 'up'); assert.match(r.headline, /MXP-A Client 2 is cabled to MUX-A CH\d+: a client port carries the grey client signal/);
@@ -2617,15 +2617,40 @@ test('an OADM line cable takes a free side: two cables from the west (an older s
   assert.deepEqual(S2.links.map(l => l.p.sb), ['w', 'e']);
 });
 
-test('an amplifier has Line In, Line Out and a monitor tap: cabled backwards it passes nothing, and a meter on the tap reads 20 dB below the output', () => {
+test('a booster + pre-amp card has COM, LINE and a monitor tap: cabled the wrong way round its pre-amp drives the span, and a meter on the tap reads 20 dB below the output', () => {
   const S = M.sanitize(build('mxp')), nm = n => S.nodes.find(x => x.name === n), b = nm('BST-A');
+  Object.assign(b.p, { target: 2, targetRev: -8, gminRev: 0 }); // booster +2 dBm/ch into the span, pre-amp -8 dBm/ch into the mux
   const mine = S.links.filter(l => l.a === b.id || l.b === b.id), set = (l, v) => { if (l.a === b.id) l.p.pa = v; else l.p.pb = v; };
   const inC = mine.find(l => M.endPort(S, l, b) === 'IN'), outC = mine.find(l => M.endPort(S, l, b) === 'OUT');
+  const ok = M.simulate(S), amp = r => r.hops.find(x => x.name === 'BST-A' && x.kind === 'amp');
+  assert.equal(ok.status, 'up'); assert.equal(amp(ok).port, 'IN'); assert.ok(Math.abs(amp(ok).out.sig - 2) < 0.2);
   set(inC, 'OUT'); set(outC, 'IN'); M.assignSides(S);
-  const r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /BST-A is cabled backwards.*Line Out.*isolators/);
-  set(inC, 'IN'); set(outC, 'OUT'); M.assignSides(S); const ok = M.simulate(S); assert.equal(ok.status, 'up');
+  const r = M.simulate(S); assert.equal(amp(r).port, 'OUT'); assert.equal(amp(r).stage, 2); assert.ok(amp(r).out.sig < -5, 'the pre-amp stage sets the launch, far below the booster'); assert.ok(r.osnr < ok.osnr - 3);
+  assert.notEqual(r.status, 'up'); assert.ok(r.alarms.some(a => /BST-A is cabled the wrong way round: COM faces the span/.test(a.text)));
+  set(inC, 'IN'); set(outC, 'OUT'); M.assignSides(S); assert.equal(M.simulate(S).status, 'up');
   const pm = { id: 'pm', type: 'meter', name: 'PM', x: 0, y: 0, p: {} }; S.nodes.push(pm);
   S.links.push({ id: 'pml', a: pm.id, b: b.id, kind: 'patch', p: { ...M.linkDefaults('patch'), pa: 'P', pb: 'MON' } });
   const T = M.sanitize(S), r2 = M.simulate(T), h = r2.hops.find(x => x.name === 'BST-A' && x.kind === 'amp'), m = r2.meters.pm;
   assert.ok(m && Math.abs(m.dbm - (h.out.sig + 10 * Math.log10(h.nch) - 20)) < 1e-9, JSON.stringify(m)); assert.match(m.why, /monitor tap/);
+});
+
+test('an older lab\'s amplifiers become booster + pre-amp cards or in-line amplifiers, and the results do not change', () => {
+  const S = M.sanitize(build('lh')), nm = n => S.nodes.find(x => x.name === n), at = (n, id) => S.links.find(l => (l.a === nm(n).id || l.b === nm(n).id) && M.endPort(S, l, nm(n)) === id);
+  assert.deepEqual(['BST-A', 'ILA-1', 'PRE-B'].map(n => nm(n).p.role), ['term', 'ila', 'term']);
+  assert.equal(at('BST-A', 'OUT').kind, 'fiber'); assert.equal(at('PRE-B', 'OUT').kind, 'fiber', 'PRE-B is turned round: LINE toward the span');
+  assert.equal(at('PRE-B', 'IN').kind, 'patch', 'and COM toward its mux');
+  assert.deepEqual(M.portsOf(S, nm('ILA-1')).map(p => p.label), ['Line A', 'Line B', 'Monitor (1% tap)']);
+  // the stage that was A to Z on a pre-amp is its second stage now: settings swap, a blank return copied the other one
+  const T = build('lh'), p = T.nodes.find(n => n.name === 'PRE-B'); Object.assign(p.p, { target: -4, targetRev: 1, nf: 6, nfRev: '' });
+  const U = M.sanitize(T), q = U.nodes.find(n => n.name === 'PRE-B').p;
+  assert.deepEqual([q.target, q.targetRev, q.nf, q.nfRev], [1, -4, 6, '']);
+  // the same light either way: each stage keeps the settings it had
+  for (const k of Object.keys(M.PRESETS)) {
+    const a = M.simulate(build(k)), b = M.simulate(M.sanitize(build(k)));
+    if (a.status === 'up' || b.status === 'up') assert.ok(Math.abs(a.osnr - b.osnr) < 1e-6, k);
+  }
+  // an amplifier added mid-span is in-line
+  const V = M.sanitize(build('dci')), f = V.links.find(l => l.kind === 'fiber'); M.applyFix(V, { type: 'insertAmp', id: f.id });
+  const na = V.nodes.find(n => n.type === 'edfa' && !['BST-A', 'PRE-B'].includes(n.name)); assert.equal(na.p.role, 'ila');
+  assert.equal(M.simulate(V).hops.find(h => h.name === na.name).port, 'IN');
 });

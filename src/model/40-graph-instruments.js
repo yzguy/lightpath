@@ -47,10 +47,10 @@
     if (!l) return { status: 'none', why: 'not plugged into anything' };
     const dev = node(l.a === n.id ? l.b : l.a), side = oadmSide(l, dev.id);
     const h = hops.find(x => x.name === dev.name && x.kind === (dev.type === 'edfa' ? 'amp' : dev.type));
-    if (dev.type === 'edfa') { // a meter on an amplifier's monitor tap reads 20 dB below its output; on Line In or Out it reads that port
+    if (dev.type === 'edfa') { // a meter on an amplifier's monitor tap reads 20 dB below its output; on COM or LINE it reads the light coming in there
       if (!h) return { status: 'none', why: `no service light passes ${dev.name}`, at: dev.name };
       const dbn0 = 10 * Math.log10(Math.max(1, h.nch || 1)), T0 = x => x.sig + dbn0, pid = endPort(S, l, dev), mk0 = (v, why) => ({ dbm: v, perCh: v - dbn0, status: v > METER.max ? 'over' : v < METER.min ? 'low' : 'ok', why, at: dev.name });
-      return pid === 'MON' ? mk0(T0(h.out) - 20, `${dev.name}'s monitor tap: 20 dB below its output`) : pid === 'IN' ? mk0(T0(h.in), `the light arriving at ${dev.name} Line In`) : mk0(T0(h.out), `the light leaving ${dev.name} Line Out`);
+      const lab = portLabel(S, dev, pid); return pid === 'MON' ? mk0(T0(h.out) - 20, `${dev.name}'s monitor tap: 20 dB below its output`) : pid === (h.port || 'IN') ? mk0(T0(h.in), `the light arriving at ${dev.name} ${lab}`) : mk0(T0(h.out), `the light leaving ${dev.name} ${lab}`);
     }
     if (!h) return { status: 'none', why: `no service light passes ${dev.name}`, at: dev.name };
     const dbn = 10 * Math.log10(Math.max(1, h.nch || 1)), T = x => x.sig + dbn;
