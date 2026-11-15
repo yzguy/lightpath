@@ -26,7 +26,12 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', panel: 'ODF', splitter: 'SPL', switch: 'SW', host: 'HOST', meter: 'PM', otdr: 'OTDR', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', single: false } : { il: 0.5, len: 3, dir: 'both', cut: false, mport: null, sa: '', sb: '', cport: null, hport: null });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', single: false } : { il: 0.5, len: 3, dir: 'both', cut: false, mport: null, sa: '', sb: '', cport: null, hport: null, optic: '' });
+  // A grey cable: a host / router port with a grey 1310 nm optic, patched into the 1310 nm port of a passive mux or OADM. The optic is the cable's (p.optic).
+  const isUnit1310 = n => !!n && (n.type === 'mux' || n.type === 'oadm');
+  const greyEnds = (A, B) => (A && B && A.type === 'host' && isUnit1310(B) ? { h: A, u: B } : A && B && B.type === 'host' && isUnit1310(A) ? { h: B, u: A } : null);
+  // the 1310 nm optic a host port of this speed would take by default
+  const greyFor = speed => ({ 400: '400g-lr4', 100: '100g-lr4', 25: '25g-lr' })[+speed] || '10g-lr';
 
   // The cable a drag between two devices makes: a fiber span between line equipment that normally sits at different sites (amplifiers, ROADMs, OADMs,
   // two muxes, two transponders over dark fiber), a patch cord for everything inside a rack. The cable inspector can change it.

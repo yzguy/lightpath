@@ -25,8 +25,10 @@ let helpAll = false; try { helpAll = localStorage.getItem('lightpath-help') === 
 // the optic and insertion loss of a mux's or OADM's 1310 nm port, shown when the port is on
 function port1310(p) {
   if (!p.p1310) return [];
-  return [field('1310 nm client', selIn(p, 'o1310', Object.entries(PHY.CLIENT_OPTICS).filter(([, o]) => o.nm === 1310).map(([k, o]) => [k, o.name])), 'The grey optic on this port. It travels only over fiber and patch panels to the next mux or OADM with a 1310 nm port, which must have the same optic; amplifiers (no gain at 1310 nm), ROADMs and units without the port block it.'),
-    field('1310 nm port loss (dB)', numIn(p, 'il1310', 0.1, 0, 5), 'Insertion loss from the 1310 nm port to the line port, on the data sheet of the unit (often 0.5 to 1.2 dB). The 1310 nm link pays it at each end.')];
+  const me = S.nodes.find(n => n.p === p), c = me && S.links.find(l => greyLink(l) && (l.a === me.id || l.b === me.id));
+  const loss = field('1310 nm port loss (dB)', numIn(p, 'il1310', 0.1, 0, 5), 'Insertion loss from the 1310 nm port to the line port, on the data sheet of the unit (often 0.5 to 1.2 dB). The 1310 nm link pays it at each end.');
+  if (c) { const h = node(c.a === me.id ? c.b : c.a); return [field('1310 nm client', el('p', { class: 'small', text: `${PHY.CLIENT_OPTICS[c.p.optic].name} in ${h.name} port ${(c.p.hport ?? 0) + 1}. Select the cable to change it.` })), loss]; }
+  return [field('1310 nm client', selIn(p, 'o1310', Object.entries(PHY.CLIENT_OPTICS).filter(([, o]) => o.nm === 1310).map(([k, o]) => [k, o.name])), 'The grey optic on this port, when no host is cabled into it (cable a host or router to the unit to model the box the optic sits in). It travels only over fiber and patch panels to the next mux or OADM with a 1310 nm port, which must have the same optic; amplifiers (no gain at 1310 nm), ROADMs and units without the port block it.'), loss];
 }
 function numIn(obj, key, step = 0.5, min, max, allowBlank, placeholder) {
   const i = el('input', { type: 'number', step, value: obj[key], id: 'f-' + key }); if (min != null) i.min = min; if (max != null) i.max = max; if (placeholder) i.placeholder = placeholder;
@@ -79,6 +81,17 @@ function portControls(l, after = renderAll) {
     for (let k = 0; k < clientCount(e); k++) { const o = e.type === 'mxp' ? PHY.CLIENT_OPTICS[e.p.clients[k].optic] : null; cs.append(opt(String(k), `Client port ${k + 1}` + (o ? ` (${o.name})` : ` (${PHY.MODES[e.p.mode].rate}G)`), usedC.get(k))); }
     cs.value = String(l.p.cport ?? 0); cs.addEventListener('change', () => { l.p.cport = +cs.value; after(); });
     out.push({ label: `Client port on ${e.name}`, sel: cs, hint: e.type === 'mxp' ? 'A muxponder client port is carried to the same-numbered client port on the far muxponder.' : 'A transponder has one client port; it has to match the line rate.' });
+  }
+  if (greyLink(l)) {
+    const g = MODEL.greyEnds(node(l.a), node(l.b)), h = g.h, usedH = new Set(S.links.filter(x => x !== l && (clientLink(x) || greyLink(x)) && (x.a === h.id || x.b === h.id)).map(x => x.p.hport));
+    const hs = el('select', { id: 'f-hport', 'aria-label': 'Host port' });
+    for (let k = 0; k < h.p.ports; k++) hs.append(opt(String(k), `Port ${k + 1} (${h.p.speed}G)`, usedH.has(k)));
+    hs.value = String(l.p.hport ?? 0); hs.addEventListener('change', () => { l.p.hport = +hs.value; after(); });
+    out.push({ label: `Port on ${h.name}`, sel: hs });
+    const os = el('select', { id: 'f-optic', 'aria-label': 'Grey optic' });
+    for (const [k, o] of Object.entries(PHY.CLIENT_OPTICS)) if (o.nm === 1310) os.append(opt(k, `${o.name} · ${o.rate}G · Tx ${o.tx} dBm · Rx ≥ ${o.rxMin} dBm · ${o.reach} km`));
+    os.value = l.p.optic; os.addEventListener('change', () => { l.p.optic = os.value; after(); });
+    out.push({ label: `Optic in ${h.name}`, sel: os, hint: `The grey 1310 nm optic in ${h.name}'s port, patched into the 1310 nm port of ${g.u.name}. The host at the far mux or OADM needs the same optic, and its port speed has to match.` });
   }
   if (portLink(l)) {
     const { t, m } = portLink(l), used = portsUsed(m, l), so = el('select', { id: 'f-mport', 'aria-label': 'Port' });
@@ -305,8 +318,8 @@ function renderInspectorBody() {
     } else if (n.type === 'host') {
       const ipi = el('input', { value: p.ip || '', id: 'f-ip', placeholder: '10.0.0.1/24' }); ipi.addEventListener('input', () => { p.ip = ipi.value.trim(); recompute(); });
       box.append(field('Address / prefix', ipi, 'Optional. Two hosts can only reach each other if they are on the same subnet (there is no router between them). Leave empty to skip the check.'));
-      box.append(field('Ethernet ports', numIn(p, 'ports', 1, 1, 8)), field('Port speed (Gb/s)', selIn(p, 'speed', [1, 10, 25, 40, 50, 100, 200, 400, 800].map(v => [v, `${v}G`])), 'It has to match the client optic of the muxponder port, or the rate of the transponder, it is cabled to.'));
-      box.append(el('p', { class: 'muted small', text: 'Cable a port to a transponder or a muxponder client port. The Reachability tab shows whether it can reach the other hosts, and why not.' }));
+      box.append(field('Ethernet ports', numIn(p, 'ports', 1, 1, 8)), field('Port speed (Gb/s)', selIn(p, 'speed', [1, 10, 25, 40, 50, 100, 200, 400, 800].map(v => [v, `${v}G`])), 'It has to match the client optic of the muxponder port, the rate of the transponder, or the grey optic on a 1310 nm cable.'));
+      box.append(el('p', { class: 'muted small', text: 'Cable a port to a transponder or a muxponder client port, or to a mux or OADM to plug a grey 1310 nm optic (10GBASE-LR, 100G-LR4, 400G-LR4…) into its 1310 nm port. The Reachability tab shows whether it can reach the other hosts, and why not.' }));
     } else if (n.type === 'dcm') {
       box.append(field('Dispersion (ps/nm)', numIn(p, 'cd', 10, -8000, 8000)));
       box.append(field('Insertion loss (dB)', numIn(p, 'il', 0.5, 0, 20)));

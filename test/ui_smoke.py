@@ -252,6 +252,23 @@ class UI(unittest.TestCase):
         self.assertIn('BLOCKED', body)  # the booster between the muxes blocks it
         self.assertIn('EDFA', body)
 
+    def test_router_cabled_into_1310_port(self):
+        pg = self.page
+        self.explore('dark')
+        a = self.add('mux')
+        b = self.add('host')
+        self.handle_drag(b, a)
+        if pg.locator('#portpick').is_visible():
+            pg.locator('#portpick button', has_text='Connect').click()
+        self.assertEqual(self.links(), 2)
+        pg.locator('.link .hit').last.click(force=True)
+        self.assertGreater(pg.locator('#f-optic option').count(), 3)
+        pg.select_option('#f-optic', '400g-lr4')
+        self.assertEqual(pg.evaluate("JSON.parse(localStorage.getItem('lightpath-v1')).links.find(l => l.p.optic).p.optic"), '400g-lr4')
+        self.node(a).click()
+        self.assertEqual(pg.locator('#f-p1310').input_value(), 'true', 'cabling a host turns the 1310 nm port on')
+        self.assertIn('400GBASE-LR4-10', pg.locator('#insp').inner_text())
+
     def test_port_labels_clear_the_devices(self):
         self.explore()
         for preset in self.page.evaluate("[...document.querySelectorAll('#preset option')].map(o => o.value).filter(Boolean)"):

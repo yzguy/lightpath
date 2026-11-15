@@ -269,7 +269,7 @@
     if (isEnd(Z) && spareLoss(Z)) loss(spareLoss(Z)); // the switch or y-cable in front of the receiver
     for (const f of failovers) alarms.push({ sev: 'info', text: `${f.name} moved from port ${f.from.toUpperCase()} to port ${f.to.toUpperCase()}: the light is on the protection path. ${f.revertive ? `It goes back to port ${f.from.toUpperCase()} after the repair and ${f.wtrMin} min of stable light (wait-to-restore), with a second short hit.` : `It stays on port ${f.to.toUpperCase()} after the repair (non-revertive), and port ${f.from.toUpperCase()} becomes the standby.`}` });
     const res = { failovers, mode, modeKey, A, Z, path, raman: ramanViews, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
-    if (!eol && !rv && !W && S.nodes.some(n => (n.type === 'oadm' && (n.p.p1310 || n.p.osc)) || (n.type === 'mux' && n.p.p1310))) {
+    if (!eol && !rv && !W && (S.nodes.some(n => (n.type === 'oadm' && (n.p.p1310 || n.p.osc)) || (n.type === 'mux' && n.p.p1310)) || S.links.some(l => greyEnds(node(l.a), node(l.b))))) {
       res.b1310 = band1310(S); res.osc = oscSpans(S);
       for (const r of res.b1310.links) if (r.status === 'down' || (r.status === 'warn' && /overload/.test(r.why))) alarms.push({ sev: 'warn', text: `The 1310 nm link ${r.aName} to ${r.bName} ${r.status === 'down' ? 'is down' : 'is overloaded'}: ${r.why}.` });
       if (res.osc) {
@@ -541,6 +541,6 @@
     return res;
   }
 
-  return { TYPES, PREFIX, cableKind, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, cableKind, greyEnds, greyFor, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, parseIp, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

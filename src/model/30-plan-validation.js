@@ -199,7 +199,11 @@
         // a client cable joins a host port to a transponder (one client port) or a muxponder client port
         const cli = kind === 'patch' && A && B && ((isEnd(A) && B.type === 'host') || (isEnd(B) && A.type === 'host')), host = cli ? (A.type === 'host' ? A : B) : null, end = cli ? (isEnd(A) ? A : B) : null;
         const idx = (v, n) => (Number.isInteger(v) && v >= 0 && v < n ? v : null);
-        p.cport = cli ? idx(l.p && l.p.cport, end.type === 'mxp' ? end.p.clients.length : 1) : null; p.hport = cli ? idx(l.p && l.p.hport, host.p.ports) : null; }
+        p.cport = cli ? idx(l.p && l.p.cport, end.type === 'mxp' ? end.p.clients.length : 1) : null; p.hport = cli ? idx(l.p && l.p.hport, host.p.ports) : null;
+        // a grey cable joins a host port to the 1310 nm port of a mux or OADM and carries the host's grey optic
+        const gr = kind === 'patch' ? greyEnds(A, B) : null;
+        if (gr) p.hport = idx(l.p && l.p.hport, gr.h.p.ports);
+        p.optic = gr ? (PHY_.CLIENT_OPTICS[p.optic] && PHY_.CLIENT_OPTICS[p.optic].nm === 1310 ? p.optic : greyFor(gr.h.p.speed)) : ''; }
       lseen.add(l.id);
       links.push({ id: l.id, a: l.a, b: l.b, kind, p });
     }

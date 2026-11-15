@@ -29,6 +29,23 @@
     useGrid(S);
     const { node } = mkGraph(S), hosts = S.nodes.filter(n => n.type === 'host'), tbl = channelTable(S, res), out = [];
     const dark = new Map(((res && res.derived && res.derived.dark) || []).map(d => [d.id, d.why]));
+    // hosts patched into the 1310 nm port of a mux or OADM reach each other over the grey 1310 nm link between the two units, with no transponder
+    const greyOf = h => S.links.some(l => l.kind === 'patch' && (l.a === h.id || l.b === h.id) && greyEnds(node(l.a), node(l.b)));
+    const G = S.links.some(l => greyEnds(node(l.a), node(l.b))) ? ((res && res.b1310) || band1310(S)).links : [];
+    const addrs = (A, Z, steps) => { const ia = parseIp(A.p.ip), iz = parseIp(Z.p.ip);
+      if (ia && iz && ia.addr === iz.addr) return `both hosts use the address ${ia.text.split('/')[0]}`;
+      if (ia && iz && (ia.net !== iz.net || ia.pl !== iz.pl)) return `${A.name} is on ${fmtNet(ia)} and ${Z.name} on ${fmtNet(iz)}: different subnets need a router, and a host cannot reach across them`;
+      if (ia && iz) steps.push({ ok: true, text: `Both hosts are on ${fmtNet(ia)}` }); return ''; };
+    const viaGrey = (A, Z) => {
+      const steps = [], fail = text => { steps.push({ ok: false, text }); return { steps, ok: false }; };
+      const r = G.find(x => x.b && ((x.hostA === A.id && x.hostB === Z.id) || (x.hostA === Z.id && x.hostB === A.id)));
+      if (!r) { const bl = G.find(x => x.hostA === A.id || x.hostA === Z.id || x.hostB === A.id || x.hostB === Z.id); return fail(bl ? `the 1310 nm link from ${bl.hostA === Z.id || bl.hostB === Z.id ? Z.name : A.name} goes nowhere: ${bl.why}` : `${greyOf(A) ? Z.name : A.name} is not patched into a 1310 nm port that ${greyOf(A) ? A.name : Z.name}'s reaches`); }
+      steps.push({ ok: true, text: `${A.name} and ${Z.name} are patched into the 1310 nm ports of ${r.aName} and ${r.bName}${r.opticName ? ` (${r.opticName})` : ''}` });
+      if (r.status === 'down') return fail(`the 1310 nm link is DOWN: ${r.why}`);
+      steps.push({ ok: true, text: `The 1310 nm link ${r.aName}–${r.bName} is ${r.status === 'warn' ? 'up with a warning' : 'UP'}: ${f1(r.margin)} dB of margin${r.why ? ' (' + r.why + ')' : ''}` });
+      const bad = addrs(A, Z, steps); if (bad) return fail(bad);
+      return { steps, ok: true, entry: { i: 'g:' + [r.a, r.b].sort().join('-'), slot: null, label: `1310 nm link ${r.aName}–${r.bName}`, ch: { status: r.status === 'warn' ? 'degraded' : 'up', rate: r.rate } }, rate: r.rate, latencyUs: r.km * LAT.fiberUsPerKm + 2 * LAT.directUs, km: r.km, degraded: r.status === 'warn', cp: 0 };
+    };
     const cables = h => S.links.filter(l => l.kind === 'patch' && (l.a === h.id || l.b === h.id)).map(l => ({ l, end: node(l.a === h.id ? l.b : l.a) })).filter(x => x.end && isEnd(x.end));
     // the client side of one host cable: does the host port match the transponder's client port, and is that port itself healthy
     const side = (h, c, steps) => {
@@ -71,11 +88,9 @@
             else if (['down', 'los', 'blocked', 'nopath', 'standby', 'unreachable'].includes(en.ch.status)) { steps.push({ ok: true, text: `Channel ${en.slot != null ? 'in slot ' + (en.slot + 1) : 'of the service'} joins ${sa.e.name} and ${sz.e.name}` }); r = fail(`the channel is ${en.ch.status.toUpperCase()}: ${(en.ch.notes && en.ch.notes[0]) || 'no light reaches the far end'}`); }
             else {
               steps.push({ ok: true, text: `Channel ${en.slot != null ? 'in slot ' + (en.slot + 1) : 'of the service'} joins ${sa.e.name} and ${sz.e.name} and is ${en.ch.status.toUpperCase()}${en.ch.qMargin != null ? ` (${en.ch.qMargin.toFixed(1)} dB Q margin)` : ''}` });
-              const ia = parseIp(A.p.ip), iz = parseIp(Z.p.ip);
-              if (ia && iz && ia.addr === iz.addr) r = fail(`both hosts use the address ${ia.text.split('/')[0]}`);
-              else if (ia && iz && (ia.net !== iz.net || ia.pl !== iz.pl)) r = fail(`${A.name} is on ${fmtNet(ia)} and ${Z.name} on ${fmtNet(iz)}: different subnets need a router, and a host cannot reach across them`);
+              const bad = addrs(A, Z, steps);
+              if (bad) r = fail(bad);
               else {
-                if (ia && iz) steps.push({ ok: true, text: `Both hosts are on ${fmtNet(ia)}` });
                 const lt = latencyUs(S, en);
                 r = { steps, ok: true, entry: en, rate: Math.min(sa.rate, sz.rate), latencyUs: lt.us, km: lt.km, degraded: en.ch.status === 'degraded', cp: sa.cp };
               }
@@ -85,6 +100,7 @@
         if (!best || (r.ok && !best.ok) || (!r.ok && !best.ok && r.steps.length > best.steps.length)) best = r;
         if (best.ok) break;
       }
+      if (!best.ok && (greyOf(A) || greyOf(Z))) { const g = viaGrey(A, Z); if (g.ok || !ca.length || !cz.length) best = g; }
       out.push({ a: A.id, z: Z.id, ok: best.ok, degraded: !!best.degraded, steps: best.steps, why: best.ok ? '' : best.steps[best.steps.length - 1].text, latencyUs: best.latencyUs, km: best.km, rate: best.rate, entry: best.entry || null, cp: best.cp });
     }
     return out;
@@ -98,7 +114,7 @@
       const r = find(f.a, f.z), A = node(f.a), Z = node(f.z), cap = A && Z ? Math.min(+A.p.speed, +Z.p.speed) : 0, o = { a: f.a, z: f.z, offered: f.gbps, ok: !!(r && r.ok), why: r ? r.why : 'unknown hosts', delivered: 0, lossPct: 100, latencyUs: r ? r.latencyUs : null, slot: r && r.entry ? r.entry.slot : null };
       if (r && r.ok) {
         const want = Math.min(f.gbps, cap, r.rate), key = (r.entry.i) + '|' + (r.a === f.a ? 'ab' : 'ba');
-        if (!chan.has(key)) chan.set(key, { slot: r.entry.slot, dir: key.split('|')[1], cap: r.entry.ch.rate || (r.entry.mode && r.entry.mode.rate), load: 0, flows: [], a: r.a === f.a ? r.a : r.z, z: r.a === f.a ? r.z : r.a });
+        if (!chan.has(key)) chan.set(key, { slot: r.entry.slot, label: r.entry.label || '', dir: key.split('|')[1], cap: r.entry.ch.rate || (r.entry.mode && r.entry.mode.rate), load: 0, flows: [], a: r.a === f.a ? r.a : r.z, z: r.a === f.a ? r.z : r.a });
         const c = chan.get(key); c.load += want; c.flows.push(o); o.want = want;
       }
       out.push(o);
