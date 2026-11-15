@@ -598,6 +598,7 @@ function connect(a, b, kind) {
   if ((inst(a) || inst(b)) && !((inst(a) && test(b)) || (inst(b) && test(a)))) return toast('An instrument plugs into a test point: a patch panel port, or a splitter or switch port.');
   const cli = (isEnd(a) && b.type === 'host') || (isEnd(b) && a.type === 'host'), gr = MODEL.greyEnds(a, b);
   if (!cli && !gr && (a.type === 'host' || b.type === 'host')) return toast('A host connects to a transponder or muxponder client port, or with a grey optic to the 1310 nm port of a mux or OADM.');
+  { const why = MODEL.cableFits(S, a, b, kind); if (why) return toast(why); } // every cable end takes a free port of the right kind: one line port on a transponder, one common port on a mux
   let hp = null, cp = null;
   if (gr) { // a host's grey optic into the one 1310 nm port of a mux or OADM
     if (S.links.some(x => greyLink(x) && (x.a === gr.u.id || x.b === gr.u.id))) return toast(`${gr.u.name}'s 1310 nm port is already in use.`);
@@ -613,15 +614,14 @@ function connect(a, b, kind) {
     if (hp == null) return toast(`${h.name} has no free port (it has ${h.p.ports}). Raise the port count in its inspector.`);
     if (cp == null) return toast(`${e.name} has no free client port.`);
   }
-  else if (!gr) for (const n of [a, b]) if (S.links.filter(x => !clientLink(x) && !greyLink(x) && (x.a === n.id || x.b === n.id)).length >= (n.type === 'panel' ? 2 * n.p.ports : TYPES[n.type].maxLinks)) return toast(`${n.name} has no free port. ${TYPES[n.type].label}s have ${isEnd(n) ? 'two line ports: the second is for dual-homing' : TYPES[n.type].maxLinks === 1 ? 'one line port' : 'an input and an output'}.`);
-  for (const [n, o] of [[a, b], [b, a]]) if (n.type === 'roadm' && !isEnd(o) && S.links.filter(x => !portLink(x) && (x.a === n.id || x.b === n.id)).length >= n.p.degrees) return toast(`${n.name} has no free degree (it has ${n.p.degrees}). Raise the degree count in its inspector.`);
   const l = { id: uid('l'), a: a.id, b: b.id, kind, p: linkDefaults(kind) };
   if (cli) { l.p.hport = hp; l.p.cport = cp; }
   if (gr) { l.p.hport = hp; l.p.optic = MODEL.greyFor(gr.h.p.speed); if (!gr.u.p.p1310) { gr.u.p.p1310 = true; toast(`${gr.u.name}: 1310 nm port turned on`); } }
   S.links.push(l);
   for (const n of [a, b]) {
     const o = n === a ? b : a;
-    if (n.type === 'oadm') setSide(l, n, defSide(n, o)); // west is the neighbour on the left
+    if (n.type === 'oadm' && !isEnd(o)) { const used = new Set(S.links.filter(x => x !== l && !portLink(x) && !greyLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n))), d = defSide(n, o); setSide(l, n, used.has(d) ? lineSides(n).find(s => !used.has(s)) || d : d); } // west is the neighbour on the left, unless that line port is taken
+    else if (n.type === 'oadm') setSide(l, n, defSide(n, o));
     else if (n.type === 'panel') setSide(l, n, panelSide(n, l));
     else if (isTri(n)) { const used = new Set(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => sideOf2(x, n))); setSide(l, n, ['c', 'a', 'b'].find(k => !used.has(k)) || ''); } // the first free port
     else if (n.type === 'roadm' && !isEnd(o)) { const used = new Set(S.links.filter(x => x !== l && !portLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n))); setSide(l, n, lineSides(n).find(d => !used.has(d)) || ''); } // the first free degree

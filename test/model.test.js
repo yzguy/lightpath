@@ -2526,3 +2526,36 @@ test('a 1310 nm port on an OADM reaches a mux with one', () => {
   nm('MUX-Z').p.p1310 = true; const r = M.simulate(S), l = r.b1310.links.find(x => [x.aName, x.bName].sort().join() === 'MUX-Z,OADM-3');
   assert.ok(l && l.status === 'up'); assert.ok(Math.abs(l.loss - (0.6 + 1 + 0.35 * l.km)) < 1e-9);
 });
+
+test('ports: a transponder has one line port unless its line is protected; a mux one common port; an OADM one per side', () => {
+  const S = M.sanitize(build('mxp')), nm = n => S.nodes.find(x => x.name === n), mk = (type, name) => { const n = { id: 'x' + name, type, name, x: 0, y: 0, p: M.TYPES[type].def() }; S.nodes.push(n); return n; };
+  // every preset and challenge is cabled within its ports (a challenge may cable a missing add/drop port on purpose)
+  for (const k in M.PRESETS) assert.deepEqual(M.overCabled(M.sanitize(build(k))), [], k);
+  for (const c of M.CHALLENGES) assert.deepEqual(M.overCabled(M.sanitize(c.build())).filter(o => o.role !== 'adddrop'), [], c.id);
+  // MXP-A is already in MUX-A port 8: a second cable to anything is refused, and says why
+  const mux2 = mk('mux', 'MUX-X'), amp = mk('edfa', 'AMP-X'), trx = mk('trx', 'TRX-X');
+  assert.match(M.cableFits(S, nm('MXP-A'), mux2, 'patch'), /MXP-A has no free line port\. Muxponders have one line port.*set line protection/);
+  assert.match(M.cableFits(S, nm('MXP-A'), trx, 'fiber'), /MXP-A has no free line port/);
+  // with line protection it gets an OLP and a second line port, but not a third
+  nm('MXP-A').p.prot = '1+1'; assert.equal(M.cableFits(S, nm('MXP-A'), mux2, 'patch'), '');
+  S.links.push({ id: 'l2', a: nm('MXP-A').id, b: mux2.id, kind: 'patch', p: M.linkDefaults('patch') });
+  assert.match(M.cableFits(S, nm('MXP-A'), trx, 'fiber'), /no free line port/);
+  // turning protection off afterwards leaves an extra cable: the result says so
+  nm('MXP-A').p.prot = ''; assert.deepEqual(M.overCabled(S).map(o => [o.name, o.role, o.used, o.max]), [['MXP-A', 'line', 2, 1]]);
+  assert.ok(M.simulate(S).alarms.some(a => /MXP-A has 2 line cables but one port for them/.test(a.text)));
+  // a mux has one common port (MUX-A is on BST-A) but many channel ports
+  assert.match(M.cableFits(S, nm('MUX-A'), amp, 'patch'), /MUX-A has no free line port\. A mux has one common/);
+  assert.equal(M.cableFits(S, nm('MUX-A'), trx, 'patch'), '');
+  // an EDFA has an input and an output
+  assert.match(M.cableFits(S, nm('BST-A'), amp, 'patch'), /BST-A has no free line port\. An EDFA has an input and an output/);
+  // an OADM has an east and a west line port
+  const o = mk('oadm', 'OADM-X'), e1 = mk('edfa', 'E1'), e2 = mk('edfa', 'E2'), e3 = mk('edfa', 'E3');
+  S.links.push({ id: 'o1', a: o.id, b: e1.id, kind: 'fiber', p: M.linkDefaults('fiber') }, { id: 'o2', a: o.id, b: e2.id, kind: 'fiber', p: M.linkDefaults('fiber') });
+  assert.match(M.cableFits(S, o, e3, 'fiber'), /OADM-X has no free line port\. An OADM has two line ports/);
+  // a transponder has one client port, a host as many as it is given
+  const h = mk('host', 'H'), h2 = mk('host', 'H2');
+  S.links.push({ id: 'c1', a: h.id, b: trx.id, kind: 'patch', p: M.linkDefaults('patch') });
+  assert.match(M.cableFits(S, h2, trx, 'patch'), /TRX-X has no free client port \(it has 1\)/);
+  assert.match(M.cableFits(S, h, nm('MXP-B'), 'patch'), /H has no free client port \(it has 1\)\. Raise the port count/);
+  assert.match(M.cableFits(S, h, amp, 'patch'), /A host connects to a transponder/);
+});
