@@ -390,8 +390,8 @@ function followService(n) {
 }
 
 // pointer interactions
-// Empty canvas: a mouse or pen drag draws a selection box (Shift/Ctrl/Cmd adds to what is selected). Panning is a
-// middle-button drag, Space + drag, or a one-finger drag on a touch screen; the wheel zooms as before.
+// Empty canvas: a drag pans (so does a middle-button drag or Space + drag anywhere); Shift + drag draws a selection
+// box, and Shift + Ctrl/Cmd + drag adds the box to what is already selected. The wheel zooms.
 let drag = null, spaceHeld = false, overCanvas = false;
 const panning = on => svg.classList.toggle('space', on);
 svg.addEventListener('pointerenter', () => { overCanvas = true; });
@@ -428,7 +428,7 @@ svg.addEventListener('pointerdown', e => {
       if (!all) select({ kind: 'node', id: n.id });
     }
   } else if (lEl) { select({ kind: 'link', id: lEl.dataset.id }); drag = null; }
-  else if (e.pointerType !== 'touch' || e.shiftKey) { const add = e.shiftKey || e.ctrlKey || e.metaKey; drag = { kind: 'marquee', x0: w.x, y0: w.y, sx: e.clientX, sy: e.clientY, moved: false, add, base: add ? selIds() : [] }; }
+  else if (e.shiftKey) { const add = e.ctrlKey || e.metaKey; drag = { kind: 'marquee', x0: w.x, y0: w.y, sx: e.clientX, sy: e.clientY, moved: false, add, base: add ? selIds() : [] }; }
   else { drag = startPan(e); }
   svg.setPointerCapture(e.pointerId);
 });
@@ -469,7 +469,7 @@ svg.addEventListener('pointerup', e => {
   } else if (d.kind === 'pan' && !d.moved && !d.quiet) select(null);
   else if (d.kind === 'marquee') {
     const m = gRoot.querySelector('#marq'); if (m) m.remove();
-    if (!d.moved) { if (!d.add) select(null); } // a click on empty space clears the selection; Shift-click there keeps it
+    if (!d.moved) { if (!d.add) select(null); } // a click on empty space clears the selection
     else { const w = toWorld(e.clientX, e.clientY); setGroup([...new Set([...d.base, ...inBox(d.x0, d.y0, w.x, w.y)])]); }
   }
   else if (d.kind === 'node' && !d.moved && d.all) select({ kind: 'node', id: d.n.id }); // a click on one member of a selection narrows it to that device
