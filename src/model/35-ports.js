@@ -101,7 +101,7 @@
       case 'trx': case 'mxp': return o.type === 'host' ? 'C' + ((Number.isInteger(l.p.cport) ? l.p.cport : 0) + 1) : mine.filter(x => { const y = S.nodes.find(q => q.id === (x.a === n.id ? x.b : x.a)); return y && y.type !== 'host'; }).indexOf(l) > 0 ? 'L2' : 'L';
       case 'host': return 'eth' + ((Number.isInteger(l.p.hport) ? l.p.hport : Math.max(0, mine.indexOf(l))) + 1);
       case 'mux': return isEnd(o) ? (mp == null ? 'AD' : 'P' + (mp + 1)) : o.type === 'host' ? '1310' : 'COM';
-      case 'oadm': { const s = (sd || (isEnd(o) && String(n.p.sides || 'e').length === 1 ? n.p.sides : o.x < n.x ? 'w' : 'e')).toUpperCase(); return isEnd(o) ? (mp == null ? 'AD' : s + (mp + 1)) : o.type === 'host' ? '1310' : 'L' + s; }
+      case 'oadm': { const s = (sd || (isEnd(o) && String(n.p.sides || 'w').length === 1 ? n.p.sides : o.x < n.x ? 'w' : 'e')).toUpperCase(); return isEnd(o) ? (mp == null ? 'AD' : s + (mp + 1)) : o.type === 'host' ? '1310' : 'L' + s; }
       case 'roadm': return isEnd(o) ? (mp == null ? 'AD' : n.p.directionless ? 'A' + (mp + 1) : `D${sd || 1}A${mp + 1}`) : 'D' + (sd || (mine.filter(x => { const y = S.nodes.find(q => q.id === (x.a === n.id ? x.b : x.a)); return y && !isEnd(y); }).indexOf(l) + 1));
       case 'edfa': case 'dcm': case 'voa': { const taken = new Set(mine.filter(x => x !== l).map(x => (x.a === n.id ? x.p.pa : x.p.pb)).filter(Boolean)); if (taken.has('IN')) return 'OUT'; if (taken.has('OUT')) return 'IN'; const f = feedOf(S, n); return f ? (f === l.id ? 'IN' : 'OUT') : mine.indexOf(l) > 0 ? 'OUT' : 'IN'; }
       case 'panel': case 'splitter': case 'switch': return sd;

@@ -120,7 +120,7 @@
       }
       return out;
     };
-    const seen = new Set(), nodes = [];
+    const seen = new Set(), nodes = [], flipped = new Set(); // flipped: older east-only OADMs, turned round to have their channels on West
     for (const n of o.nodes) {
       if (!n || !TYPES[n.type] || typeof n.id !== 'string' || seen.has(n.id)) continue;
       const p = fill(TYPES[n.type].def(), n.p);
@@ -138,9 +138,10 @@
         if (n.type === 'oadm') {
           const raw = n.p || {}, legacy = Array.isArray(raw.slots) && raw.slots.length && raw.eFirst === undefined ? ints(raw.slots, 128) : null; // an older lab: one list of slots, served from both sides
           const num = (v, d, lo, hi) => (Number.isFinite(+v) && v !== '' && v !== null && typeof v !== 'boolean' ? Math.min(hi, Math.max(lo, Math.round(+v))) : d);
-          p.sides = ['ew', 'e', 'w'].includes(raw.sides) ? raw.sides : 'ew';
+          p.sides = raw.sides === 'w' || raw.sides === 'e' ? 'w' : 'ew'; // two kinds: East and West, or East or West (a single-sided OADM always has its channels on West)
           if (legacy && legacy.length) { p.eFirst = p.wFirst = legacy[0]; p.ePorts = p.wPorts = Math.min(64, legacy[legacy.length - 1] - legacy[0] + 1); }
           else { p.eFirst = num(raw.eFirst, 24, 0, 127); p.ePorts = num(raw.ePorts, 4, 0, 64); p.wFirst = num(raw.wFirst, 24, 0, 127); p.wPorts = num(raw.wPorts, 4, 0, 64); }
+          if (raw.sides === 'e') { p.wFirst = p.eFirst; p.wPorts = p.ePorts; p.wRole = raw.eRole === 'high' ? 'high' : 'low'; flipped.add(n.id); } // an older east-only OADM: turned round, so its channels and its line cable are on West
           p.osc = raw.osc === true || (raw.p1310 === true && raw.o1310 === 'osc'); p.p1310 = raw.p1310 === true && raw.o1310 !== 'osc'; delete p.slots;
         }
         if (n.type === 'mux' || n.type === 'oadm') { // the optional 1310 nm port: a grey 1310 nm optic only, and its own insertion loss
@@ -166,7 +167,7 @@
       if (n.type === 'host') { p.ip = parseIp(p.ip) ? String(p.ip).trim() : ''; p.ports = Math.min(8, Math.max(1, Math.round(+p.ports) || 1)); p.speed = HOST_SPEEDS.includes(+p.speed) ? +p.speed : 100; }
       if (n.type === 'roadm') { p.degrees = Math.min(9, Math.max(1, Math.round(+p.degrees) || 4)); p.ports = Math.min(64, Math.max(1, Math.round(+p.ports) || 16)); p.first = Math.min(63, Math.max(0, Math.round(+p.first) || 0)); }
       if (n.type === 'mux') { p.bidi = p.bidi === true; p.role = p.role === 'high' ? 'high' : 'low'; }
-      if (n.type === 'oadm') { p.bidi = p.bidi === true; p.eRole = p.eRole === 'high' ? 'high' : 'low'; p.wRole = p.wRole === 'low' ? 'low' : 'high'; }
+      if (n.type === 'oadm') { p.bidi = p.bidi === true; p.eRole = p.eRole === 'high' ? 'high' : 'low'; if (!flipped.has(n.id)) p.wRole = p.wRole === 'low' ? 'low' : 'high'; }
       if (n.type === 'mux') { p.ports = Math.min(64, Math.max(1, Math.round(+p.ports) || 16)); p.first = Math.min(63, Math.max(0, Math.round(+p.first) || 0)); }
       if (isEnd(n)) p.spare = ['switch', 'ycable'].includes(n.p && n.p.spare) ? n.p.spare : '';
       if (n.type === 'edfa' && p.ctl !== 'auto' && p.ctl !== 'fixed') p.ctl = 'auto';
@@ -181,7 +182,14 @@
     { const ends = new Set(nodes.filter(isEnd).map(n => n.id)); for (const n of nodes) if (isEnd(n)) n.p.peer = typeof n.p.peer === 'string' && ends.has(n.p.peer) && n.p.peer !== n.id ? n.p.peer : ''; }
     { const rd = new Set(nodes.filter(n => n.type === 'roadm').map(n => n.id)); for (const n of nodes) if (isEnd(n)) { n.p.prot = n.p.prot === '1+1' ? '1+1' : n.p.prot === 'shared' ? 'shared' : ''; n.p.conv = typeof n.p.conv === 'string' && rd.has(n.p.conv) ? n.p.conv : ''; } }
     const lseen = new Set(), links = [], usedDeg = new Map();
-    for (const l of o.links) {
+    const turn = (l, end) => { // an end of a cable on an older east-only OADM, which is now turned round: east becomes west and west east
+      const k = end === 'a' ? 'pa' : 'pb', sk = end === 'a' ? 'sa' : 'sb', q = { ...(l.p && typeof l.p === 'object' ? l.p : {}) }, swap = { e: 'w', w: 'e', E: 'W', W: 'E' };
+      if (typeof q[k] === 'string') { const m = /^(L?)([EW])(\d*)$/.exec(q[k]); if (m) q[k] = m[1] + swap[m[2]] + m[3]; }
+      if (q[sk] === 'e' || q[sk] === 'w') q[sk] = swap[q[sk]];
+      return { ...l, p: q };
+    };
+    const linksIn = flipped.size ? o.links.map(l => { if (!l || typeof l !== 'object') return l; if (flipped.has(l.a)) l = turn(l, 'a'); if (flipped.has(l.b)) l = turn(l, 'b'); return l; }) : o.links;
+    for (const l of linksIn) {
       if (!l || typeof l.id !== 'string' || lseen.has(l.id) || !seen.has(l.a) || !seen.has(l.b) || l.a === l.b) continue;
       const kind = l.kind === 'fiber' ? 'fiber' : 'patch', p = fill(linkDefaults(kind), l.p);
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
