@@ -388,9 +388,26 @@ function followService(n) {
 }
 
 // pointer interactions
-let drag = null;
+// Empty canvas: a mouse or pen drag draws a selection box (Shift/Ctrl/Cmd adds to what is selected). Panning is a
+// middle-button drag, Space + drag, or a one-finger drag on a touch screen; the wheel zooms as before.
+let drag = null, spaceHeld = false, overCanvas = false;
+const panning = on => svg.classList.toggle('space', on);
+svg.addEventListener('pointerenter', () => { overCanvas = true; });
+svg.addEventListener('pointerleave', () => { overCanvas = false; });
+document.addEventListener('keydown', e => {
+  if (e.key !== ' ' || e.ctrlKey || e.metaKey || e.altKey || !overCanvas) return;
+  if (e.target.closest && e.target.closest('input,select,textarea,button,.node,.link,[contenteditable]')) return; // Space still presses a focused control or selects a focused device
+  e.preventDefault(); if (!spaceHeld) { spaceHeld = true; panning(true); }
+});
+document.addEventListener('keyup', e => { if (e.key === ' ' && spaceHeld) { spaceHeld = false; panning(false); } });
+window.addEventListener('blur', () => { spaceHeld = false; panning(false); });
+svg.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault(); }); // no browser autoscroll on a middle-button pan
+const startPan = e => ({ kind: 'pan', sx: e.clientX, sy: e.clientY, vx: S.view.x, vy: S.view.y, moved: false, quiet: e.button === 1 || spaceHeld });
+// Devices whose centre is inside the box from (x0,y0) to (x1,y1), in world coordinates
+const inBox = (ax, ay, bx, by) => { const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), y0 = Math.min(ay, by), y1 = Math.max(ay, by); return S.nodes.filter(n => n.x >= x0 && n.x <= x1 && n.y >= y0 && n.y <= y1).map(n => n.id); };
 svg.addEventListener('pointerdown', e => {
   if (!e.isPrimary || e.button === 2) return; // the right button opens the menu below
+  if (e.button === 1 || spaceHeld) { hideTip(); drag = startPan(e); svg.classList.add('grabbing'); svg.setPointerCapture(e.pointerId); e.preventDefault(); return; }
   const nEl = e.target.closest('.node'), lEl = e.target.closest('.link');
   const w = toWorld(e.clientX, e.clientY);
   hideTip();
@@ -409,13 +426,14 @@ svg.addEventListener('pointerdown', e => {
       if (!all) select({ kind: 'node', id: n.id });
     }
   } else if (lEl) { select({ kind: 'link', id: lEl.dataset.id }); drag = null; }
-  else if (e.shiftKey) { drag = { kind: 'marquee', x0: w.x, y0: w.y, moved: false }; }
-  else { drag = { kind: 'pan', sx: e.clientX, sy: e.clientY, vx: S.view.x, vy: S.view.y, moved: false }; }
+  else if (e.pointerType !== 'touch' || e.shiftKey) { const add = e.shiftKey || e.ctrlKey || e.metaKey; drag = { kind: 'marquee', x0: w.x, y0: w.y, sx: e.clientX, sy: e.clientY, moved: false, add, base: add ? selIds() : [] }; }
+  else { drag = startPan(e); }
   svg.setPointerCapture(e.pointerId);
 });
 svg.addEventListener('pointermove', e => {
   if (!drag) return;
   const w = toWorld(e.clientX, e.clientY);
+  if (drag.kind === 'marquee' && !drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return; // a slightly shaky click is still a click
   drag.moved = true;
   if (drag.kind === 'node') {
     const nx = Math.round((w.x - drag.dx) / 10) * 10, ny = Math.round((w.y - drag.dy) / 10) * 10;
@@ -425,29 +443,32 @@ svg.addEventListener('pointermove', e => {
   else if (drag.kind === 'marquee') {
     let r = gRoot.querySelector('#marq'); if (!r) { r = sv('rect', { id: 'marq', class: 'marq' }); gRoot.append(r); }
     r.setAttribute('x', Math.min(drag.x0, w.x)); r.setAttribute('y', Math.min(drag.y0, w.y)); r.setAttribute('width', Math.abs(w.x - drag.x0)); r.setAttribute('height', Math.abs(w.y - drag.y0));
+    const hit = new Set([...drag.base, ...inBox(drag.x0, drag.y0, w.x, w.y)]); // preview what the box will take
+    for (const g of gRoot.querySelectorAll('.node')) g.classList.toggle('mhit', hit.has(g.dataset.id));
   }
   else if (drag.kind === 'pan') { S.view.x = drag.vx - (e.clientX - drag.sx) / S.view.k; S.view.y = drag.vy - (e.clientY - drag.sy) / S.view.k; applyView(); }
   else if (drag.kind === 'cable') { const rb = $('#rubber'); rb.setAttribute('x2', w.x); rb.setAttribute('y2', w.y); }
 });
 // A drag that is cancelled, loses its capture, or is interrupted by switching windows ends cleanly: the node stays
 // where it was dropped and the change is saved (so it can be undone), and the next tap or drag works without a reload.
-function abortDrag() { const d = drag; drag = null; $('#rubber').setAttribute('visibility', 'hidden'); const m = gRoot.querySelector('#marq'); if (m) m.remove(); if (d && d.kind === 'node' && d.moved) save(); }
+function abortDrag() { const d = drag; drag = null; svg.classList.remove('grabbing'); for (const g of gRoot.querySelectorAll('.node.mhit')) g.classList.remove('mhit'); $('#rubber').setAttribute('visibility', 'hidden'); const m = gRoot.querySelector('#marq'); if (m) m.remove(); if (d && d.kind === 'node' && d.moved) save(); }
 svg.addEventListener('pointercancel', () => abortDrag());
 svg.addEventListener('lostpointercapture', () => { if (drag) abortDrag(); });
 window.addEventListener('blur', () => abortDrag());
 svg.addEventListener('pointerup', e => {
   if (!drag) return;
-  const d = drag; drag = null;
+  const d = drag; drag = null; svg.classList.remove('grabbing');
   if (d.kind === 'cable') {
     $('#rubber').setAttribute('visibility', 'hidden');
     const t = document.elementFromPoint(e.clientX, e.clientY), nEl = t && t.closest && t.closest('.node');
     if (d.auto) { if (nEl && nEl.dataset.id !== d.from.id) { const to = node(nEl.dataset.id); connect(d.from, to, cableKind(d.from, to)); } return; }
     if (nEl && nEl.dataset.id !== d.from.id) { pendingCable = null; connect(d.from, node(nEl.dataset.id), tool); }
     else if (!d.moved || !nEl) { if (!pendingCable) { pendingCable = d.from; toast(`Now click the second device to connect ${d.from.name}`); } else { const a = pendingCable; pendingCable = null; if (a.id !== d.from.id) connect(a, d.from, tool); } }
-  } else if (d.kind === 'pan' && !d.moved) select(null);
+  } else if (d.kind === 'pan' && !d.moved && !d.quiet) select(null);
   else if (d.kind === 'marquee') {
     const m = gRoot.querySelector('#marq'); if (m) m.remove();
-    if (!d.moved) select(null); else { const w = toWorld(e.clientX, e.clientY), x0 = Math.min(d.x0, w.x), x1 = Math.max(d.x0, w.x), y0 = Math.min(d.y0, w.y), y1 = Math.max(d.y0, w.y); setGroup(S.nodes.filter(n => n.x >= x0 && n.x <= x1 && n.y >= y0 && n.y <= y1).map(n => n.id)); }
+    if (!d.moved) { if (!d.add) select(null); } // a click on empty space clears the selection; Shift-click there keeps it
+    else { const w = toWorld(e.clientX, e.clientY); setGroup([...new Set([...d.base, ...inBox(d.x0, d.y0, w.x, w.y)])]); }
   }
   else if (d.kind === 'node' && !d.moved && d.all) select({ kind: 'node', id: d.n.id }); // a click on one member of a selection narrows it to that device
   else if (d.kind === 'node' && d.moved) { save(); }
@@ -704,7 +725,7 @@ document.addEventListener('keydown', e => {
     if (k === 'a' && S.nodes.length) { setGroup(S.nodes.map(n => n.id)); e.preventDefault(); return; }
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
-  if (e.key === 'Escape' && group.size) { setGroup([]); return; }
+  if (e.key === 'Escape' && (group.size || (sel && tool === 'select'))) { pendingCable = null; select(null); return; } // Esc clears the selection, then (pressed again) leaves a cable tool
   if (e.key === 'Delete' || e.key === 'Backspace') { del(); e.preventDefault(); }
   else if (e.key === 'v' || e.key === 'Escape') setTool('select');
   else if (e.key === 'p') setTool('patch');

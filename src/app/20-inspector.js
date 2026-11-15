@@ -1,6 +1,6 @@
 // ---------- inspector ----------
 function select(s) { group.clear(); sel = s; if (s && s.kind === 'node') followService(node(s.id)); renderAll(); }
-// Selecting several devices: Shift-click toggles one, Shift-drag on empty space boxes them, Ctrl+A takes all. Copy, paste and duplicate work on the selection.
+// Selecting several devices: Shift/Ctrl-click toggles one, dragging on empty space boxes them (Shift adds), Ctrl+A takes all. Copy, paste and duplicate work on the selection.
 function setGroup(ids) { group.clear(); if (ids.length === 1) { select({ kind: 'node', id: ids[0] }); return; } ids.forEach(id => group.add(id)); sel = null; renderAll(); }
 function toggleGroup(id) {
   const cur = group.size ? [...group] : sel && sel.kind === 'node' ? [sel.id] : [], i = cur.indexOf(id);
@@ -144,7 +144,7 @@ function renderInspectorBody() {
       field('Loss detection (ms)', numIn(S.g, 'detectMs', 1, 0, 1000)), field('1+1 switch time (ms)', numIn(S.g, 'switchMs', 5, 0, 10000)), field('Shared protection turn-up (s)', numIn(S.g, 'sharedSec', 0.5, 0, 600), 'Extra time to light a dark protection route: laser turn-up, WSS configuration and amplifier settling.'), field('Restoration time (s)', numIn(S.g, 'restoreSec', 5, 0, 3600), 'How long an unprotected channel takes to re-route over another path.'), field('Device failures per year', numIn(S.g, 'devRate', 0.01, 0, 5), 'Per amplifier or ROADM on a route. A failed ROADM at the end of a channel keeps it down until repaired; one in the middle is bypassed by protection or restoration if another route avoids it.'),
       el('p', { class: 'muted small', text: 'Expectations for the Resilience tab. Typical terrestrial fiber sees 2 to 4 cuts per 1000 km per year.' })));
     box.append(det);
-    box.append(el('div', { class: 'keys' }, [el('div', { html: '<kbd>V</kbd> select / move' }), el('div', { html: '<kbd>P</kbd> patch cord' }), el('div', { html: '<kbd>F</kbd> fiber span' }), el('div', { html: '<kbd>Del</kbd> delete' }), el('div', { html: '<kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Shift</kbd> to redo' }), el('div', { html: '<kbd>Shift</kbd>-click or drag a box to select several' }), el('div', { html: '<kbd>Ctrl</kbd>+<kbd>C</kbd> copy, <kbd>V</kbd> paste, <kbd>D</kbd> duplicate' }), el('div', { html: 'Drag empty space to pan, scroll to zoom' })]));
+    box.append(el('div', { class: 'keys' }, [el('div', { html: '<kbd>V</kbd> select / move' }), el('div', { html: '<kbd>P</kbd> patch cord' }), el('div', { html: '<kbd>F</kbd> fiber span' }), el('div', { html: '<kbd>Del</kbd> delete' }), el('div', { html: '<kbd>Ctrl</kbd>+<kbd>Z</kbd> undo, <kbd>Shift</kbd> to redo' }), el('div', { html: 'Drag on empty space to box-select, then drag any selected device to move them all' }), el('div', { html: '<kbd>Shift</kbd>/<kbd>Ctrl</kbd>-click adds or removes one, <kbd>Esc</kbd> clears' }), el('div', { html: '<kbd>Ctrl</kbd>+<kbd>C</kbd> copy, <kbd>V</kbd> paste, <kbd>D</kbd> duplicate' }), el('div', { html: 'Pan: middle-drag or <kbd>Space</kbd>+drag (one finger on touch); scroll to zoom' })]));
     return;
   }
   if (sel.kind === 'node') {
