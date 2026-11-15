@@ -408,11 +408,24 @@ class UI(unittest.TestCase):
         y0 = min(b['y'] for _, _, b in left) - 12
         y1 = max(b['y'] + b['height'] for _, _, b in left) + 12
         self.assertEqual(pg.evaluate(f"document.elementFromPoint({x0}, {y0}).closest('.node, .link')"), None, 'the box must start on empty canvas')
+        view = pg.evaluate("document.querySelector('#world').getAttribute('transform')")
+        pg.mouse.move(x0, y0)  # a plain drag on empty space pans and selects nothing
+        pg.mouse.down()
+        pg.mouse.move(x0 + 40, y0 + 20, steps=4)
+        pg.mouse.up()
+        self.assertNotEqual(pg.evaluate("document.querySelector('#world').getAttribute('transform')"), view)
+        self.assertEqual(pg.locator('.node.msel, .node.sel').count(), 0)
+        pg.mouse.move(x0 + 40, y0 + 20)  # pan it back so the boxes measured above still hold
+        pg.mouse.down()
+        pg.mouse.move(x0, y0, steps=4)
+        pg.mouse.up()
+        pg.keyboard.down('Shift')  # Shift + drag draws the box
         pg.mouse.move(x0, y0)
         pg.mouse.down()
         pg.mouse.move(cut, y1, steps=8)
         self.assertEqual(pg.locator('.node.mhit').count(), 3, 'the box previews what it will take')
         pg.mouse.up()
+        pg.keyboard.up('Shift')
         self.assertEqual(pg.locator('.node.msel').count(), 3)
         self.assertIn('3 devices selected', pg.locator('#insp').inner_text().lower())
         before = pg.evaluate("Object.fromEntries(JSON.parse(localStorage.getItem('lightpath-v1')).nodes.map(n => [n.id, [n.x, n.y]]))")
