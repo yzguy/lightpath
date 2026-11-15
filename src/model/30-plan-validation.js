@@ -80,7 +80,13 @@
   // neighbour lies on, a ROADM the first degree no other line cable uses. A transponder cable on a ROADM that is not directionless belongs to a degree too.
   function sideFor(me, other, given, usedDeg) {
     if (!me) return '';
-    if (me.type === 'oadm') return ['e', 'w'].includes(given) && me.p.sides.includes(given) ? given : me.p.sides.length === 1 ? me.p.sides : other.x < me.x ? 'w' : 'e';
+    if (me.type === 'oadm') {
+      let d = ['e', 'w'].includes(given) && me.p.sides.includes(given) ? given : me.p.sides.length === 1 ? me.p.sides : other.x < me.x ? 'w' : 'e';
+      if (!other || isEnd(other) || other.type === 'host') return d; // an add/drop or 1310 nm cable: the side its port is on
+      const u = usedDeg.get(me.id) || new Set(); usedDeg.set(me.id, u); // a line cable: one per side, so a second one on a taken side moves to the free side
+      if (u.has(d)) d = me.p.sides.split('').find(s => !u.has(s)) || d;
+      u.add(d); return d;
+    }
     if (me.type === 'panel') { // a port of a patch panel: 'r3' is the rear of port 3, 'f3' its front; light enters one side and leaves the other
       const u = usedDeg.get(me.id) || new Set(), n = me.p.ports; usedDeg.set(me.id, u);
       const m = /^([rf])(\d{1,2})$/.exec(String(given || '')); if (m && +m[2] >= 1 && +m[2] <= n) { u.add(given); return given; }

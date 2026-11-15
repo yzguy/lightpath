@@ -256,7 +256,7 @@ function renderCanvas() {
       if (pl && l.p.mport != null) { const sd = sideOf(l, pl.m); labelAt(pl.m, pl.t, portChText(pl.m, l.p.mport, sd, pl.t)); }
       for (const n of [a, b]) if ((isTri(n) || n.type === 'panel') && sideOf2(l, n)) labelAt(n, n === a ? b : a, sideOf2(l, n).toUpperCase());
       if (clientLink(l) || greyLink(l)) { const h = a.type === 'host' ? a : b, e = h === a ? b : a; labelAt(h, e, `eth${(l.p.hport ?? 0) + 1}`); if (e.type === 'mxp') labelAt(e, h, `C${(l.p.cport ?? 0) + 1}`); }
-      for (const n of [a, b]) if ((n.type === 'oadm' || n.type === 'roadm') && !(pl && pl.m.id === n.id) && sideOf(l, n)) labelAt(n, n === a ? b : a, n.type === 'roadm' ? 'D' + sideOf(l, n) : SIDE[sideOf(l, n)]);
+      for (const n of [a, b]) if ((n.type === 'oadm' || n.type === 'roadm') && !(pl && pl.m.id === n.id) && !greyLink(l) && sideOf(l, n)) labelAt(n, n === a ? b : a, n.type === 'roadm' ? 'D' + sideOf(l, n) : 'Line ' + sideOf(l, n).toUpperCase());
       // devices whose ports are fixed: an amplifier's in and out follow the light along the service (forward) path
       const fp = lastRes && lastRes.path, at = fp ? fp.links.indexOf(l.id) : -1;
       const fixed = (n, o) => isEnd(n) ? (clientLink(l) ? null : 'LINE')
@@ -585,6 +585,7 @@ const portSlots = (m, k, side) => { // the transmit and receive slot of a BiDi (
 // the channel a port passes, as its cable is labeled: a BiDi port's transmit/receive pair; a colorless port passes what its transponder is tuned to
 const portChText = (m, k, side, t) => {
   const ch = s => 'CH' + PHY.slotChannel(s, +S.g.df * 1e9).ch, b = portSlots(m, k, side);
+  if (m.type === 'oadm') { const c = s => PHY.slotChannel(s, +S.g.df * 1e9).ch, sd = side.toUpperCase(); return b ? `${c(b.tx)}/${c(b.rx)}${sd}` : `${c(sideRange(m, side)[0] + k)}${sd}`; } // an OADM channel port is named by channel and side: 34W, 35E
   if (b) return `${ch(b.tx)}/${ch(b.rx)}`;
   if (!colorless(m)) return ch(sideRange(m, side)[0] + k);
   const c = chanOf(lastRes, t.id); return c ? ch(c.c.slot) : `${side ? 'D' + side + '·' : ''}P${k + 1}`;

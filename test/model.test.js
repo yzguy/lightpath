@@ -2559,3 +2559,14 @@ test('ports: a transponder has one line port unless its line is protected; a mux
   assert.match(M.cableFits(S, h, nm('MXP-B'), 'patch'), /H has no free client port \(it has 1\)\. Raise the port count/);
   assert.match(M.cableFits(S, h, amp, 'patch'), /A host connects to a transponder/);
 });
+
+test('an OADM line cable takes a free side: two cables from the west (an older save) land on West and East', () => {
+  const o = { id: 'o', type: 'oadm', name: 'OADM-1', x: 500, y: 0, p: M.TYPES.oadm.def() }, a = { id: 'a', type: 'edfa', name: 'A', x: 0, y: 0, p: M.TYPES.edfa.def() }, b = { id: 'b', type: 'edfa', name: 'B', x: 0, y: 200, p: M.TYPES.edfa.def() };
+  const L = (id, x, sa) => ({ id, a: x.id, b: o.id, kind: 'fiber', p: { ...M.linkDefaults('fiber'), sb: sa } });
+  const S = M.sanitize({ nodes: [o, a, b], links: [L('l1', a, 'w'), L('l2', b, 'w')], g: {}, svc: {} });
+  assert.deepEqual(S.links.map(l => l.p.sb), ['w', 'e']);
+  assert.deepEqual(M.overCabled(S), []);
+  // with no side given, the second still goes to the free side
+  const S2 = M.sanitize({ nodes: [o, a, b], links: [L('l1', a, ''), L('l2', b, '')], g: {}, svc: {} });
+  assert.deepEqual(S2.links.map(l => l.p.sb), ['w', 'e']);
+});

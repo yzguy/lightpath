@@ -115,8 +115,8 @@ function portControls(l, after = renderAll) {
   }
   for (const n of [node(l.a), node(l.b)]) if (n && (n.type === 'oadm' || n.type === 'roadm') && !(portLink(l) && portLink(l).m === n) && !isEnd(n === node(l.a) ? node(l.b) : node(l.a))) { // a line cable on an OADM or ROADM: which side or degree of it
     const ss = el('select', { id: 'f-side-' + n.id, 'aria-label': `Side of ${n.name}` }), other = n === node(l.a) ? node(l.b) : node(l.a);
-    const usedS = new Set(n.type === 'roadm' ? S.links.filter(x => x !== l && !portLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n)) : []);
-    for (const sd of lineSides(n)) ss.append(opt(sd, sideLabel(n, sd), usedS.has(sd)));
+    const usedS = new Set(S.links.filter(x => x !== l && !portLink(x) && !greyLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n))); // one line cable per side or degree
+    for (const sd of lineSides(n)) ss.append(opt(sd, n.type === 'oadm' ? `Line ${sd.toUpperCase()} (${SIDE[sd]})` : sideLabel(n, sd), usedS.has(sd)));
     ss.value = sideOf(l, n) || (n.type === 'roadm' ? lineSides(n)[0] : defSide(n, other)); ss.addEventListener('change', () => { setSide(l, n, ss.value); after(); });
     out.push({ label: n.type === 'roadm' ? `Degree on ${n.name}` : `Line side on ${n.name}`, sel: ss, hint: once('side', n.type === 'roadm' ? 'Each line cable is one degree of the ROADM. If the add/drop is not directionless, a transponder port belongs to one degree and its light only leaves by that one.' : 'West is where the line comes from on the left, East the right. A transponder on a West port talks to the West line only.') });
   }
