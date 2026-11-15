@@ -21,6 +21,22 @@ $('#btn-itu').addEventListener('click', () => learn('itu'));
 const syncExpert = () => { document.body.classList.toggle('expert', expert); $('#btn-expert').setAttribute('aria-pressed', expert); };
 syncExpert();
 $('#btn-expert').addEventListener('click', () => { expert = !expert; try { localStorage.setItem('lightpath-expert', expert ? '1' : '0'); } catch (e) { /* no storage */ } syncExpert(); renderAll(); toast(expert ? 'Expert mode: advanced settings and the Planner, Resilience, Transients and Raman tabs are shown' : 'Expert mode off: advanced settings are hidden unless they are in use'); });
+// theme: Light / Dark / System (default). The CSS tokens follow data-theme on <html>; no attribute means follow the OS.
+// The shell sets it before first paint; here we keep the switch in step and redraw what reads colors once (constellation canvas).
+const themePref = () => document.documentElement.dataset.theme || 'system';
+const syncTheme = () => { const t = themePref(); for (const b of $('#theme-sw').querySelectorAll('button')) { const on = b.dataset.theme === t; b.setAttribute('aria-checked', on); b.tabIndex = on ? 0 : -1; } };
+const setTheme = t => {
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  try { if (t === 'light' || t === 'dark') localStorage.setItem('lightpath-theme', t); else localStorage.removeItem('lightpath-theme'); } catch (e) { /* no storage */ }
+  syncTheme(); renderResults();
+};
+syncTheme();
+$('#theme-sw').addEventListener('click', e => { const b = e.target.closest('button[data-theme]'); if (b) setTheme(b.dataset.theme); });
+$('#theme-sw').addEventListener('keydown', e => { // arrow keys move along the radio group
+  const order = ['light', 'dark', 'system'], d = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key]; if (!d) return;
+  e.preventDefault(); const t = order[(order.indexOf(themePref()) + d + 3) % 3]; setTheme(t); $('#theme-sw').querySelector(`[data-theme="${t}"]`).focus();
+});
+try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (themePref() === 'system') renderResults(); }); } catch (e) { /* old browser */ }
 $('#btn-undo').addEventListener('click', undo); $('#btn-redo').addEventListener('click', redo);
 $('#btn-clear').addEventListener('click', () => {
   const b = $('#btn-clear');
