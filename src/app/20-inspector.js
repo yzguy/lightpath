@@ -51,74 +51,34 @@ function selIn(obj, key, opts) {
   const s = el('select', { id: 'f-' + key }); for (const [v, t] of opts) s.append(el('option', { value: v, text: t }));
   s.value = String(obj[key]); s.addEventListener('change', () => { obj[key] = s.value === 'true' ? true : s.value === 'false' ? false : s.value; renderAll(); }); return s;
 }
-let assumeOpen, inspKey, kpiAll = false, ramanOpen;
-// The add/drop ports of a mux, OADM or ROADM, one row each: what it passes and what is plugged in. Hover a channel for the full detail; click a used row to select its transponder.
+let assumeOpen, inspKey, kpiAll = false, ramanOpen, portsOpen = false;
+// Every port of a device, one row each: what it is (for an add/drop port, the channel it passes) and what is plugged in. Click a used row to select that device.
 function portTable(n) {
-  const used = portsUsed(n), tb = el('tbody'), ch = s => PHY.slotChannel(s, +S.g.df * 1e9).ch;
-  for (const sd of deviceSides(n)) for (let k = 0; k < Math.min(64, portCount(n, sd)); k++) {
-    const t = used.get(sd + '|' + k), b = portSlots(n, k, sd);
-    const name = n.type === 'oadm' ? `${sd.toUpperCase()}${k + 1}` : n.type === 'roadm' && sd ? `D${sd}·P${k + 1}` : `P${k + 1}`;
-    const pass = colorless(n) ? 'any slot' : b ? `CH${ch(b.tx)} / CH${ch(b.rx)}` : chText(sideRange(n, sd)[0] + k, true);
-    tb.append(el('tr', t ? { class: 'on', title: `Select ${t.name}`, onclick: () => select({ kind: 'node', id: t.id }) } : {}, [el('td', { text: name }), el('td', { text: pass, title: portSlotText(n, k, sd) }), el('td', { text: t ? t.name : 'free' })]));
+  const u = portUser(n), tb = el('tbody'), list = MODEL.portsOf(S, n);
+  for (const p of list.slice(0, 160)) {
+    const o = u.get(p.id), ad = p.kind === 'ad' && (n.type === 'mux' || n.type === 'oadm' || n.type === 'roadm');
+    const what = ad ? (colorless(n) ? 'any slot' : portSlotText(n, p.k, p.side).replace(/^.*?· /, '')) : ({ line: 'DWDM line', client: 'client', eth: `${n.p.speed}G`, com: 'all channels', oline: 'line side', deg: 'line degree', '1310': n.p.p1310 ? '1310 nm band' : 'module off', amp: 'line', panel: p.id[0] === 'r' ? 'rear' : 'front', tri: '', test: '' })[p.kind] || '';
+    tb.append(el('tr', o ? { class: 'on', title: `Select ${o.name}`, onclick: () => select({ kind: 'node', id: o.id }) } : {}, [el('td', { text: p.label }), el('td', { text: what }), el('td', { text: o ? o.name : 'free' })]));
   }
   if (!tb.children.length) return el('p', { class: 'muted small', text: 'No ports.' });
-  return el('div', { class: 'ptable' }, [el('table', {}, [el('thead', {}, [el('tr', {}, [el('th', { text: 'Port' }), el('th', { text: b0(n) }), el('th', { text: 'Plugged in' })])]), tb])]);
+  return el('div', { class: 'ptable' }, [el('table', {}, [el('thead', {}, [el('tr', {}, [el('th', { text: 'Port' }), el('th', { text: 'Carries' }), el('th', { text: 'Plugged in' })])]), tb])]);
 }
 const b0 = n => (colorless(n) ? 'Passes' : (n.type !== 'roadm' && n.p.bidi) ? 'Tx / Rx channel' : 'Channel · THz');
 // The ports a cable's two ends use, one select per choice. Shared by the cable inspector and the picker that opens when a new cable has a port to choose.
 // A change applies at once, then after() runs. An option in use by another cable is marked (data-used) so the picker can refuse it.
 function portControls(l, after = renderAll) {
-  const out = [], seenHints = new Set(), once = (k, t) => (seenHints.has(k) ? undefined : (seenHints.add(k), t));
-  const opt = (value, text, used) => { const o = el('option', { value, text: text + (used ? ` · in use${used === true ? '' : ' by ' + used}` : '') }); if (used) o.dataset.used = '1'; return o; };
-  if (clientLink(l)) {
-    const a = node(l.a), h = a.type === 'host' ? a : node(l.b), e = h === a ? node(l.b) : a, mine = S.links.filter(x => x !== l && clientLink(x));
-    const usedH = new Set(mine.filter(x => x.a === h.id || x.b === h.id).map(x => x.p.hport)), usedC = new Map(mine.filter(x => x.a === e.id || x.b === e.id).map(x => [x.p.cport, (node(x.a).type === 'host' ? node(x.a) : node(x.b)).name]));
-    const hs = el('select', { id: 'f-hport', 'aria-label': 'Host port' });
-    for (let k = 0; k < h.p.ports; k++) hs.append(opt(String(k), `Port ${k + 1} (${h.p.speed}G)`, usedH.has(k)));
-    hs.value = String(l.p.hport ?? 0); hs.addEventListener('change', () => { l.p.hport = +hs.value; after(); });
-    out.push({ label: `Port on ${h.name}`, sel: hs });
-    const cs = el('select', { id: 'f-cport', 'aria-label': 'Client port' });
-    for (let k = 0; k < clientCount(e); k++) { const o = e.type === 'mxp' ? PHY.CLIENT_OPTICS[e.p.clients[k].optic] : null; cs.append(opt(String(k), `Client port ${k + 1}` + (o ? ` (${o.name})` : ` (${PHY.MODES[e.p.mode].rate}G)`), usedC.get(k))); }
-    cs.value = String(l.p.cport ?? 0); cs.addEventListener('change', () => { l.p.cport = +cs.value; after(); });
-    out.push({ label: `Client port on ${e.name}`, sel: cs, hint: e.type === 'mxp' ? 'A muxponder client port is carried to the same-numbered client port on the far muxponder.' : 'A transponder has one client port; it has to match the line rate.' });
+  const out = [], A = node(l.a), B = node(l.b); if (!A || !B) return out;
+  const probe = [A, B].some(x => x.type === 'meter' || x.type === 'otdr');
+  for (const [n, f] of [[A, 'pa'], [B, 'pb']]) {
+    const cur = MODEL.endPort(S, l, n), s = portSelect(n, cur, l, probe, 'f-port-' + n.id);
+    s.addEventListener('change', () => { if (!s.value) return; l.p[f] = s.value; afterPorts(l); after(); });
+    out.push({ label: `Port on ${n.name}`, sel: s, hint: 'Any free port takes any cable, as with real duplex LC: plug it into the wrong one and the results show what happens.' });
   }
   if (greyLink(l)) {
-    const g = MODEL.greyEnds(node(l.a), node(l.b)), h = g.h, usedH = new Set(S.links.filter(x => x !== l && (clientLink(x) || greyLink(x)) && (x.a === h.id || x.b === h.id)).map(x => x.p.hport));
-    const hs = el('select', { id: 'f-hport', 'aria-label': 'Host port' });
-    for (let k = 0; k < h.p.ports; k++) hs.append(opt(String(k), `Port ${k + 1} (${h.p.speed}G)`, usedH.has(k)));
-    hs.value = String(l.p.hport ?? 0); hs.addEventListener('change', () => { l.p.hport = +hs.value; after(); });
-    out.push({ label: `Port on ${h.name}`, sel: hs });
-    const os = el('select', { id: 'f-optic', 'aria-label': 'Grey optic' });
-    for (const [k, o] of Object.entries(PHY.CLIENT_OPTICS)) if (o.nm === 1310) os.append(opt(k, `${o.name} · ${o.rate}G · Tx ${o.tx} dBm · Rx ≥ ${o.rxMin} dBm · ${o.reach} km`));
+    const g = roleOf(l), os = el('select', { id: 'f-optic', 'aria-label': 'Grey optic' });
+    for (const [k, o] of Object.entries(PHY.CLIENT_OPTICS)) if (o.nm === 1310) os.append(el('option', { value: k, text: `${o.name} · ${o.rate}G · Tx ${o.tx} dBm · Rx ≥ ${o.rxMin} dBm · ${o.reach} km` }));
     os.value = l.p.optic; os.addEventListener('change', () => { l.p.optic = os.value; after(); });
-    out.push({ label: `Optic in ${h.name}`, sel: os, hint: `The grey 1310 nm optic in ${h.name}'s port, patched into the 1310 nm port of ${g.u.name}. The host at the far mux or OADM needs the same optic, and its port speed has to match.` });
-  }
-  if (portLink(l)) {
-    const { t, m } = portLink(l), used = portsUsed(m, l), so = el('select', { id: 'f-mport', 'aria-label': 'Port' });
-    so.append(el('option', { value: '', text: 'Not assigned (no port model)' }));
-    for (const sd of deviceSides(m)) { for (let k = 0; k < portCount(m, sd); k++) so.append(opt(`${sd}:${k}`, portSlotText(m, k, sd), used.has(sd + '|' + k) && used.get(sd + '|' + k).name)); }
-    so.value = l.p.mport == null ? '' : `${sideOf(l, m)}:${l.p.mport}`;
-    so.addEventListener('change', () => { if (so.value === '') l.p.mport = null; else { const [sd, k] = so.value.split(':'); if (m.type !== 'mux') setSide(l, m, sd); l.p.mport = +k; } after(); });
-    out.push({ label: `Port on ${m.name}`, sel: so, hint: `${t.name} is plugged into this port. The filter passes only that port's slot, so ${t.name} has to be tuned to it (Auto follows the port).${m.type === 'oadm' ? ' Its light goes out on that side of the OADM.' : m.type === 'roadm' && !m.p.directionless ? ' Its light goes out on that degree only (the ROADM is not directionless).' : ''}` });
-  }
-  for (const n of [node(l.a), node(l.b)]) if (n && n.type === 'panel') {
-    const ps = el('select', { id: 'f-odf-' + n.id, 'aria-label': `Port on ${n.name}` }), used = new Set(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => sideOf2(x, n)));
-    for (let k = 1; k <= n.p.ports; k++) for (const sd of ['r', 'f']) ps.append(opt(sd + k, `${sd === 'r' ? 'Rear' : 'Front'} of port ${k}` + (n.p.dirty && n.p.dirty[k] ? ' · dirty' : ''), used.has(sd + k)));
-    ps.value = sideOf2(l, n) || 'r1'; ps.addEventListener('change', () => { setSide(l, n, ps.value); after(); });
-    out.push({ label: `Port on ${n.name}`, sel: ps, hint: once('panel', 'Light enters one side of a port and leaves the other side of the same port: the rear is usually the outside plant, the front the patch cords to equipment. Each mated connector pair costs the panel\'s connector loss.') });
-  }
-  for (const n of [node(l.a), node(l.b)]) if (isTri(n)) {
-    const ps = el('select', { id: 'f-tri-' + n.id, 'aria-label': `Port on ${n.name}` }), used = new Map(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => [sideOf2(x, n), 1]));
-    for (const k of ['c', 'a', 'b']) ps.append(opt(k, TRI_NAME[k] + (n.type === 'splitter' && k === 'b' ? ' (tap / second branch)' : ''), used.has(k)));
-    ps.value = sideOf2(l, n) || 'c'; ps.addEventListener('change', () => { setSide(l, n, ps.value); after(); });
-    out.push({ label: `Port on ${n.name}`, sel: ps, hint: once('tri', n.type === 'splitter' ? 'Light goes between the common port and either branch, never between the two branches. A 99/1 tap sends 1% to port B.' : 'The common port is the one the receiver side hangs off; the switch passes port A or port B to it.') });
-  }
-  for (const n of [node(l.a), node(l.b)]) if (n && (n.type === 'oadm' || n.type === 'roadm') && !(portLink(l) && portLink(l).m === n) && !isEnd(n === node(l.a) ? node(l.b) : node(l.a))) { // a line cable on an OADM or ROADM: which side or degree of it
-    const ss = el('select', { id: 'f-side-' + n.id, 'aria-label': `Side of ${n.name}` }), other = n === node(l.a) ? node(l.b) : node(l.a);
-    const usedS = new Set(S.links.filter(x => x !== l && !portLink(x) && !greyLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n))); // one line cable per side or degree
-    for (const sd of lineSides(n)) ss.append(opt(sd, n.type === 'oadm' ? `Line ${sd.toUpperCase()} (${SIDE[sd]})` : sideLabel(n, sd), usedS.has(sd)));
-    ss.value = sideOf(l, n) || (n.type === 'roadm' ? lineSides(n)[0] : defSide(n, other)); ss.addEventListener('change', () => { setSide(l, n, ss.value); after(); });
-    out.push({ label: n.type === 'roadm' ? `Degree on ${n.name}` : `Line side on ${n.name}`, sel: ss, hint: once('side', n.type === 'roadm' ? 'Each line cable is one degree of the ROADM. If the add/drop is not directionless, a transponder port belongs to one degree and its light only leaves by that one.' : 'West is where the line comes from on the left, East the right. A transponder on a West port talks to the West line only.') });
+    out.push({ label: `Optic in ${g.h.name}`, sel: os, hint: `The grey 1310 nm optic in ${g.h.name}'s port, patched into the 1310 nm port of ${g.u.name}. The host at the far mux or OADM needs the same optic, and its port speed has to match.` });
   }
   return out;
 }
@@ -196,7 +156,7 @@ function renderInspectorBody() {
         box.append(field('1310 nm port', selIn(p, 'p1310', [['false', 'No'], ['true', 'Yes: a 1310 nm coupler on the line']]), `A coupler for 1310 nm light (a legacy grey client) sits on the line path and costs 0.6 dB.`), ...port1310(p));
         box.append(
           field('Pass-through loss (dB)', numIn(p, 'thru', 0.1, 0, 10)), field('Add/drop loss (dB)', numIn(p, 'ad', 0.1, 0, 10)), field('Local transmitter power (dBm)', numIn(p, 'tx', 0.5, -20, 10), 'For channels a plan adds here without a transponder: they leave at this power less the add loss, with no equalisation.'));
-        box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the OADM to plug it into a port.' }), portTable(n));
+        box.append(el('p', { class: 'muted small', text: 'Its ports. Cable anything into any free port.' }), portTable(n));
       }
       faults.push(list('badPorts', 128, 'Slot numbers (as in the Channels tab) whose add/drop port on this device has failed. Only the channels that join or leave the line here are lost; everything else keeps running.', 'Failed ports (slots)'),
         list('badCards', 16, `A card serves ${MODEL.PORTS_PER_CARD} consecutive slots: card 1 is slots 1-${MODEL.PORTS_PER_CARD}, card 2 the next ${MODEL.PORTS_PER_CARD}, and so on. A failed card takes down all of its ports at once.`, 'Failed cards'));
@@ -254,7 +214,7 @@ function renderInspectorBody() {
       if (p.bidi) box.append(field('Band this end transmits', selIn(p, 'role', [['low', 'Low band (receives the high band)'], ['high', 'High band (receives the low band)']]), 'The far end has to be on the other band.'));
       box.append(field('Channel ports', numIn(p, 'ports', 1, 1, 64), 'A real mux is 8, 16, 40, 48 or 64 channels. Port 1 is the lowest slot.'), field('First slot', slotBox(p, 'first', 'f-first'), 'The slot (numbered as in the Channels tab) that port 1 passes; port k passes the slot k − 1 further on.'));
       box.append(field('1310 nm port', selIn(p, 'p1310', [['false', 'No'], ['true', 'Yes: a 1310 nm upgrade port']]), 'Many CWDM/DWDM filter units have a 1310 nm port beside the channel ports: a wideband filter on the common port adds a grey 1310 nm client to the line. The filter costs the DWDM channels 0.6 dB more.'), ...port1310(p));
-      box.append(el('p', { class: 'muted small', text: 'Cable a transponder to the mux to give it a port.' }), portTable(n));
+      box.append(el('p', { class: 'muted small', text: 'Its ports. Cable anything into any free port.' }), portTable(n));
     } else if (n.type === 'edfa') {
       const two = !oneWayAmp(n), R = ampRoles(n);
       box.append(field('Type', selIn(p, 'bidi', [['false', 'Ordinary, with isolators'], ['true', 'BiDi: both directions on one fiber']]), 'On a pair of fibers the unit holds an amplifier for each direction: a booster one way is the preamp the other way. An ordinary EDFA has isolators, so on a single fiber (both directions in one glass) it passes one direction only and the return is lost. A BiDi amplifier has circulators and band filters around its two amplifiers and costs the filter loss below in each direction.'));
@@ -333,6 +293,7 @@ function renderInspectorBody() {
       const fd = el('details', { class: 'assume faults' }, [el('summary', { text: `Faults · ${faultBits.join(', ') || 'none'}` }), ...faults]);
       fd.open = faultBits.length > 0; box.append(fd);
     }
+    if (!['mux', 'oadm', 'roadm', 'meter', 'otdr'].includes(n.type)) { const pd = el('details', { class: 'assume ports' }, [el('summary', { text: `Ports · ${portSummary(n).replace(/^ports /, '')}` }), portTable(n)]); pd.open = portsOpen; pd.addEventListener('toggle', () => { portsOpen = pd.open; }); box.append(pd); } // every device's physical ports
     box.append(el('button', { class: 'btn quiet delbtn', text: 'Delete device', onclick: del })); // Undo makes it safe, so it is not the loudest control
   } else {
     const l = link(sel.id); if (!l) return;

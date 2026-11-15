@@ -30,8 +30,8 @@
     const { node } = mkGraph(S), hosts = S.nodes.filter(n => n.type === 'host'), tbl = channelTable(S, res), out = [];
     const dark = new Map(((res && res.derived && res.derived.dark) || []).map(d => [d.id, d.why]));
     // hosts patched into the 1310 nm port of a mux or OADM reach each other over the grey 1310 nm link between the two units, with no transponder
-    const greyOf = h => S.links.some(l => l.kind === 'patch' && (l.a === h.id || l.b === h.id) && greyEnds(node(l.a), node(l.b)));
-    const G = S.links.some(l => greyEnds(node(l.a), node(l.b))) ? ((res && res.b1310) || band1310(S)).links : [];
+    const greyOf = h => S.links.some(l => (l.a === h.id || l.b === h.id) && cableRole(S, l).role === 'grey');
+    const G = S.links.some(l => cableRole(S, l).role === 'grey') ? ((res && res.b1310) || band1310(S)).links : [];
     const addrs = (A, Z, steps) => { const ia = parseIp(A.p.ip), iz = parseIp(Z.p.ip);
       if (ia && iz && ia.addr === iz.addr) return `both hosts use the address ${ia.text.split('/')[0]}`;
       if (ia && iz && (ia.net !== iz.net || ia.pl !== iz.pl)) return `${A.name} is on ${fmtNet(ia)} and ${Z.name} on ${fmtNet(iz)}: different subnets need a router, and a host cannot reach across them`;
@@ -46,7 +46,7 @@
       const bad = addrs(A, Z, steps); if (bad) return fail(bad);
       return { steps, ok: true, entry: { i: 'g:' + [r.a, r.b].sort().join('-'), slot: null, label: `1310 nm link ${r.aName}–${r.bName}`, ch: { status: r.status === 'warn' ? 'degraded' : 'up', rate: r.rate } }, rate: r.rate, latencyUs: r.km * LAT.fiberUsPerKm + 2 * LAT.directUs, km: r.km, degraded: r.status === 'warn', cp: 0 };
     };
-    const cables = h => S.links.filter(l => l.kind === 'patch' && (l.a === h.id || l.b === h.id)).map(l => ({ l, end: node(l.a === h.id ? l.b : l.a) })).filter(x => x.end && isEnd(x.end));
+    const cables = h => S.links.filter(l => l.kind === 'patch' && (l.a === h.id || l.b === h.id)).map(l => ({ l, end: node(l.a === h.id ? l.b : l.a) })).filter(x => x.end && isEnd(x.end) && cableRole(S, x.l).role === 'client'); // a host cable into a transponder's line port is not a client connection: the fault list says why
     // the client side of one host cable: does the host port match the transponder's client port, and is that port itself healthy
     const side = (h, c, steps) => {
       const e = c.end, hp = c.l.p.hport == null ? 0 : c.l.p.hport, cp = c.l.p.cport == null ? 0 : c.l.p.cport;

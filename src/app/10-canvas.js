@@ -253,19 +253,14 @@ function renderCanvas() {
         const dx = o.x - m.x, dy = o.y - m.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
         const t = sv('text', { class: 'llabel plabel' + (fixedPort ? ' pfixed' : ''), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'data-x0': m.x, 'data-y0': m.y, 'data-ux': ux, 'data-uy': uy, 'data-edge': edgeDist(m, ux, uy), 'data-len': d, 'data-n': text.length });
         t.textContent = text; g.append(t); };
-      if (pl && l.p.mport != null) { const sd = sideOf(l, pl.m); labelAt(pl.m, pl.t, portChText(pl.m, l.p.mport, sd, pl.t)); }
-      for (const n of [a, b]) if ((isTri(n) || n.type === 'panel') && sideOf2(l, n)) labelAt(n, n === a ? b : a, sideOf2(l, n).toUpperCase());
-      if (clientLink(l) || greyLink(l)) { const h = a.type === 'host' ? a : b, e = h === a ? b : a; labelAt(h, e, `eth${(l.p.hport ?? 0) + 1}`); if (e.type === 'mxp') labelAt(e, h, `C${(l.p.cport ?? 0) + 1}`); }
-      for (const n of [a, b]) if ((n.type === 'oadm' || n.type === 'roadm') && !(pl && pl.m.id === n.id) && !greyLink(l) && sideOf(l, n)) labelAt(n, n === a ? b : a, n.type === 'roadm' ? 'D' + sideOf(l, n) : 'Line ' + sideOf(l, n).toUpperCase());
-      // devices whose ports are fixed: an amplifier's in and out follow the light along the service (forward) path
+      // every cable end is labelled with its port; an amplifier's two sides read IN and OUT along the service (forward) path
       const fp = lastRes && lastRes.path, at = fp ? fp.links.indexOf(l.id) : -1;
-      const fixed = (n, o) => isEnd(n) ? (clientLink(l) ? null : 'LINE')
-        : (n.type === 'mux' || n.type === 'oadm') && o.type === 'host' ? '1310'
-        : n.type === 'mux' ? (isEnd(o) ? (l.p.mport == null ? 'A/D' : null) : 'LINE')
-        : n.type === 'roadm' && isEnd(o) && l.p.mport == null ? 'A/D'
-        : (n.type === 'edfa' || n.type === 'dcm' || n.type === 'voa') && at >= 0 ? (fp.nodes[at] === n.id ? 'OUT' : 'IN')
-        : n.type === 'meter' ? 'IN' : n.type === 'otdr' ? 'OTDR' : null;
-      for (const [n, o] of [[a, b], [b, a]]) { const t = fixed(n, o); if (t) labelAt(n, o, t, true); } }
+      for (const [n, o] of [[a, b], [b, a]]) {
+        if (n.type === 'meter' || n.type === 'otdr') { labelAt(n, o, n.type === 'meter' ? 'IN' : 'OTDR', true); continue; }
+        const id = MODEL.endPort(S, l, n), k = MODEL.portKind(n, id);
+        const t = k === 'amp' && at >= 0 ? (fp.nodes[at] === n.id ? 'OUT' : 'IN') : pl && pl.m === n && l.p.mport != null ? portChText(n, l.p.mport, sideOf(l, n), pl.t) : MODEL.shortLabel(S, n, id);
+        if (t) labelAt(n, o, t, k !== 'ad');
+      } }
     lg.append(g);
   }
   const badged = []; // fault badges need the devices in the document to be measured, so they are added after
@@ -551,8 +546,9 @@ document.addEventListener('keydown', e => {
 window.addEventListener('blur', closeCtx); window.addEventListener('scroll', closeCtx);
 
 // a transponder or muxponder plugged into a passive mux: the cable's `mport` is the mux port it uses (port k passes slot first+k)
-const greyLink = l => !!MODEL.greyEnds(node(l.a), node(l.b)) && l.kind === 'patch'; // a host's grey optic into the 1310 nm port of a mux or OADM
-const clientLink = l => { const a = node(l.a), b = node(l.b); return !!a && !!b && l.kind === 'patch' && ((isEnd(a) && b.type === 'host') || (isEnd(b) && a.type === 'host')); }; // host port to transponder or muxponder client port
+const roleOf = l => (node(l.a) && node(l.b) ? MODEL.cableRole(S, l) : null);
+const greyLink = l => { const r = roleOf(l); return !!r && r.role === 'grey'; }; // a host's grey optic in the 1310 nm port of a mux or OADM
+const clientLink = l => { const r = roleOf(l); return !!r && r.role === 'client'; }; // a host port to a transponder or muxponder client port
 const clientCount = e => (e.type === 'mxp' ? e.p.clients.length : 1);
 const fmtUs = us => (us < 1000 ? `${us.toFixed(0)} µs` : `${(us / 1000).toFixed(2)} ms`);
 const panelSide = (n, except) => { // the next free side of a patch panel port: the other side of a half-used port first, else the rear of a new one
@@ -564,7 +560,7 @@ const panelSide = (n, except) => { // the next free side of a patch panel port: 
 const isTri = n => !!n && (n.type === 'splitter' || n.type === 'switch'); // a common port c and two ports a and b
 const TRI_NAME = { c: 'Common', a: 'Port A', b: 'Port B' };
 const isDev = n => !!n && (n.type === 'mux' || n.type === 'oadm' || n.type === 'roadm');
-const portLink = l => { const a = node(l.a), b = node(l.b); if (!a || !b || l.kind !== 'patch') return null; return isEnd(a) && isDev(b) ? { t: a, m: b } : isEnd(b) && isDev(a) ? { t: b, m: a } : null; };
+const portLink = l => { const r = roleOf(l); return r && r.role === 'port' ? { t: r.t, m: r.m } : null; }; // a transponder's line port in an add/drop port of a mux, OADM or ROADM
 const SIDE = { e: 'East', w: 'West' };
 const sideOf = (l, n) => (n.type === 'oadm' || n.type === 'roadm' ? (l.a === n.id ? l.p.sa : l.p.sb) || '' : ''); // the east/west side of an OADM, or the degree of a ROADM, that a cable end uses
 const sideOf2 = (l, n) => (l.a === n.id ? l.p.sa : l.p.sb) || '';
@@ -593,89 +589,61 @@ const portChText = (m, k, side, t) => {
 const portSlotText = (m, k, side) => { const b = portSlots(m, k, side), lab = side ? sideLabel(m, side) + ' port' : 'Port'; if (b) return `${lab} ${k + 1} · transmit ${slotLbl(b.tx)} · receive ${slotLbl(b.rx)}`; return `${lab} ${k + 1}` + (colorless(m) ? ' · any slot' : ` · slot ${sideRange(m, side)[0] + k + 1} · ${chText(sideRange(m, side)[0] + k)}`); };
 // a slot number box that shows slots from 1 (the model counts from 0)
 function slotBox(obj, key, id) { const i = el('input', { type: 'number', step: 1, min: 1, max: 64, value: (Math.round(+obj[key]) || 0) + 1, id }); i.addEventListener('input', () => { if (i.value !== '' && isFinite(+i.value)) { obj[key] = Math.min(63, Math.max(0, Math.round(+i.value) - 1)); recompute(); } }); return i; }
+// Cabling asks which port at each end, like EVE-NG asks for the interfaces. Any free port will do, even a wrong one: the simulation then shows what that does.
 function connect(a, b, kind) {
-  if (S.links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return toast('Those two are already connected.');
   const inst = x => x.type === 'meter' || x.type === 'otdr', test = x => x.type === 'panel' || x.type === 'splitter' || x.type === 'switch';
   if ((inst(a) || inst(b)) && !((inst(a) && test(b)) || (inst(b) && test(a)))) return toast('An instrument plugs into a test point: a patch panel port, or a splitter or switch port.');
-  const cli = (isEnd(a) && b.type === 'host') || (isEnd(b) && a.type === 'host'), gr = MODEL.greyEnds(a, b);
-  if (!cli && !gr && (a.type === 'host' || b.type === 'host')) return toast('A host connects to a transponder or muxponder client port, or with a grey optic to the 1310 nm port of a mux or OADM.');
-  { const why = MODEL.cableFits(S, a, b, kind); if (why) return toast(why); } // every cable end takes a free port of the right kind: one line port on a transponder, one common port on a mux
-  let hp = null, cp = null;
-  if (gr) { // a host's grey optic into the one 1310 nm port of a mux or OADM
-    if (S.links.some(x => greyLink(x) && (x.a === gr.u.id || x.b === gr.u.id))) return toast(`${gr.u.name}'s 1310 nm port is already in use.`);
-    const usedH = new Set(S.links.filter(x => (clientLink(x) || greyLink(x)) && (x.a === gr.h.id || x.b === gr.h.id)).map(x => x.p.hport));
-    for (let k = 0; k < gr.h.p.ports && hp == null; k++) if (!usedH.has(k)) hp = k;
-    if (hp == null) return toast(`${gr.h.name} has no free port (it has ${gr.h.p.ports}). Raise the port count in its inspector.`);
-  }
-  if (cli) {
-    const h = a.type === 'host' ? a : b, e = a.type === 'host' ? b : a, mine = S.links.filter(clientLink);
-    const usedH = new Set(S.links.filter(x => (clientLink(x) || greyLink(x)) && (x.a === h.id || x.b === h.id)).map(x => x.p.hport)), usedC = new Set(mine.filter(x => x.a === e.id || x.b === e.id).map(x => x.p.cport));
-    for (let k = 0; k < h.p.ports && hp == null; k++) if (!usedH.has(k)) hp = k;
-    for (let k = 0; k < clientCount(e) && cp == null; k++) if (!usedC.has(k)) cp = k;
-    if (hp == null) return toast(`${h.name} has no free port (it has ${h.p.ports}). Raise the port count in its inspector.`);
-    if (cp == null) return toast(`${e.name} has no free client port.`);
-  }
-  const l = { id: uid('l'), a: a.id, b: b.id, kind, p: linkDefaults(kind) };
-  if (cli) { l.p.hport = hp; l.p.cport = cp; }
-  if (gr) { l.p.hport = hp; l.p.optic = MODEL.greyFor(gr.h.p.speed); if (!gr.u.p.p1310) { gr.u.p.p1310 = true; toast(`${gr.u.name}: 1310 nm port turned on`); } }
-  S.links.push(l);
-  for (const n of [a, b]) {
-    const o = n === a ? b : a;
-    if (n.type === 'oadm' && !isEnd(o)) { const used = new Set(S.links.filter(x => x !== l && !portLink(x) && !greyLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n))), d = defSide(n, o); setSide(l, n, used.has(d) ? lineSides(n).find(s => !used.has(s)) || d : d); } // west is the neighbour on the left, unless that line port is taken
-    else if (n.type === 'oadm') setSide(l, n, defSide(n, o));
-    else if (n.type === 'panel') setSide(l, n, panelSide(n, l));
-    else if (isTri(n)) { const used = new Set(S.links.filter(x => x !== l && (x.a === n.id || x.b === n.id)).map(x => sideOf2(x, n))); setSide(l, n, ['c', 'a', 'b'].find(k => !used.has(k)) || ''); } // the first free port
-    else if (n.type === 'roadm' && !isEnd(o)) { const used = new Set(S.links.filter(x => x !== l && !portLink(x) && (x.a === n.id || x.b === n.id)).map(x => sideOf(x, n))); setSide(l, n, lineSides(n).find(d => !used.has(d)) || ''); } // the first free degree
-    else if (n.type === 'roadm') setSide(l, n, n.p.directionless ? '' : lineSides(n)[0]);
-  }
-  const plug = (o, m) => { // a transponder cable takes the first free port on its side of the device, or the other side if that one is full
-    if (m.type === 'mux' || (m.type === 'roadm' && m.p.directionless)) { o.p.mport = firstFreePort(m, o, ''); if (m.type === 'roadm') setSide(o, m, ''); return; }
-    const pref = sideOf(o, m) || (m.type === 'roadm' ? deviceSides(m)[0] : defSide(m, portLink(o).t));
-    for (const s of [pref, ...deviceSides(m).filter(x => x !== pref)]) { const k = firstFreePort(m, o, s); if (k != null) { setSide(o, m, s); o.p.mport = k; return; } }
-  };
-  if (portLink(l)) { // plugging a transponder into a mux or OADM takes a free port; cables already on that device get one too so every channel follows its port
-    const m = portLink(l).m; plug(l, m); for (const o of S.links) if (o !== l && portLink(o) && portLink(o).m === m && o.p.mport == null) plug(o, m);
-    if (l.p.mport == null) toast(`${m.name} has no free port.`);
-  }
-  checkpoint(); select({ kind: 'link', id: l.id }); toast(`${kind === 'fiber' ? 'Fiber span' : 'Patch cord'}: ${a.name} ↔ ${b.name}`);
-  pickPorts(l);
+  if (!inst(a) && !inst(b)) { const why = MODEL.cableFits(S, a, b); if (why) return toast(why); } // one cable per port: a full device takes no more
+  pickPorts(a, b, kind);
 }
-// A new cable with a port to choose at either end (a ROADM degree, a mux, panel or host port) asks which, with the automatic choice preselected, like
-// EVE-NG asks for the interfaces. Connect (or a click elsewhere) keeps it; Cancel or Esc takes the cable away without leaving a step in the history.
+const portUser = (n, except) => { const m = new Map(); for (const l of S.links) if (l !== except && (l.a === n.id || l.b === n.id) && ![node(l.a), node(l.b)].some(x => x && (x.type === 'meter' || x.type === 'otdr'))) m.set(MODEL.endPort(S, l, n), node(l.a === n.id ? l.b : l.a)); return m; };
+// a select of a device's ports; a port in use by another cable is shown and cannot be picked (an instrument clips onto any port)
+function portSelect(n, value, except, probe, id) {
+  const s = el('select', { id, 'aria-label': `Port on ${n.name}` }), u = portUser(n, except), list = MODEL.portsOf(S, n);
+  if (!value && list.length > 1) s.append(el('option', { value: '', text: 'Choose a port…' }));
+  for (const p of list) { const o = u.get(p.id), opt = el('option', { value: p.id, text: p.label + (o ? ` · in use by ${o.name}` : '') }); if (o && !probe && p.id !== value) opt.disabled = true; s.append(opt); }
+  if (value && !list.some(p => p.id === value)) s.append(el('option', { value, text: `${MODEL.portLabel(S, n, value)} · not on this device` })); // a port the device no longer has
+  s.value = value || (list.length === 1 ? list[0].id : ''); return s;
+}
+// after a port changes: a transponder newly in an add/drop port takes the lab off its channel table, a host in a 1310 nm port turns that module on
+function afterPorts(l) {
+  const r = roleOf(l);
+  if (r && r.role === 'port' && S.g.table) S.g.table = false;
+  if (r && r.role === 'grey' && !r.u.p.p1310) { r.u.p.p1310 = true; toast(`${r.u.name}: 1310 nm module turned on`); }
+  MODEL.assignSides(S);
+}
+// The port picker for a new cable: one select per end, nothing chosen until you choose (a one-port instrument excepted). Connect makes the cable;
+// Cancel, Esc or a click elsewhere makes nothing.
 const picker = $('#portpick');
-function pickPorts(l) {
-  const ctl = portControls(l, renderCanvas).filter(c => c.sel.options.length > 1);
-  if (!ctl.length) return;
-  for (const c of ctl) for (const o of c.sel.options) if (o.dataset.used && !o.selected) o.disabled = true;
-  const a = node(l.a), b = node(l.b);
+function pickPorts(a, b, kind) {
+  const probe = [a, b].some(x => x.type === 'meter' || x.type === 'otdr');
+  const sa = portSelect(a, '', null, probe, 'pp-a'), sb = portSelect(b, '', null, probe, 'pp-b');
+  const go = el('button', { class: 'btn primary', type: 'button', text: 'Connect' });
+  const ready = () => { go.disabled = !sa.value || !sb.value; }; sa.addEventListener('change', ready); sb.addEventListener('change', ready); ready();
   const done = keep => {
     picker.hidden = true; document.removeEventListener('keydown', key, true); document.removeEventListener('pointerdown', away, true);
-    if (keep) { hist.last = Date.now(); hist.seal = false; renderAll(); } // the ports are part of making the cable: one undo step
-    else { stepHistory(-1); hist.stack.length = hist.i + 1; syncUndo(); toast('Cable not made'); }
+    if (!keep) { toast('Cable not made'); return; }
+    const l = { id: uid('l'), a: a.id, b: b.id, kind, p: { ...linkDefaults(kind), pa: sa.value, pb: sb.value } };
+    S.links.push(l); afterPorts(l); checkpoint(); select({ kind: 'link', id: l.id });
+    toast(`${kind === 'fiber' ? 'Fiber span' : 'Patch cord'}: ${a.name} ${MODEL.portLabel(S, a, sa.value)} ↔ ${b.name} ${MODEL.portLabel(S, b, sb.value)}`);
   };
-  const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); e.stopPropagation(); done(true); } else e.stopPropagation(); }; // no canvas shortcut (Delete, undo) acts behind it
-  const away = e => { if (!picker.contains(e.target)) done(true); };
-  picker.replaceChildren(el('div', { class: 'mhead', text: `${a.name} ↔ ${b.name}` }), ...ctl.map(c => el('label', { class: 'pp-row', title: c.hint || '' }, [el('span', { text: c.label }), c.sel])),
-    el('div', { class: 'row pp-btns' }, [el('button', { class: 'btn primary', type: 'button', text: 'Connect', onclick: () => done(true) }), el('button', { class: 'btn quiet', type: 'button', text: 'Cancel', onclick: () => done(false) })]));
+  go.addEventListener('click', () => { if (!go.disabled) done(true); });
+  const key = e => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); } else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); e.stopPropagation(); if (!go.disabled) done(true); } else e.stopPropagation(); }; // no canvas shortcut (Delete, undo) acts behind it
+  const away = e => { if (!picker.contains(e.target)) done(false); };
+  picker.replaceChildren(el('div', { class: 'mhead', text: `${a.name} ↔ ${b.name}` }), el('label', { class: 'pp-row' }, [el('span', { text: a.name }), sa]), el('label', { class: 'pp-row' }, [el('span', { text: b.name }), sb]),
+    el('div', { class: 'row pp-btns' }, [go, el('button', { class: 'btn quiet', type: 'button', text: 'Cancel', onclick: () => done(false) })]));
   picker.hidden = false;
   const r = svg.getBoundingClientRect(), k = S.view.k, x = r.left + ((a.x + b.x) / 2 - S.view.x) * k, y = r.top + ((a.y + b.y) / 2 - S.view.y) * k;
   picker.style.left = Math.max(6, Math.min(x - picker.offsetWidth / 2, innerWidth - picker.offsetWidth - 6)) + 'px';
   picker.style.top = Math.max(6, Math.min(y + 18, innerHeight - picker.offsetHeight - 6)) + 'px';
   document.addEventListener('keydown', key, true); setTimeout(() => document.addEventListener('pointerdown', away, true));
-  ctl[0].sel.focus();
+  (sa.value ? sb : sa).focus();
 }
 // what a device's ports are doing, for the hover readout
 function portSummary(n) {
-  const mine = S.links.filter(l => l.a === n.id || l.b === n.id);
-  if (isDev(n)) {
-    const used = mine.filter(l => portLink(l) && portLink(l).m === n).length, tot = deviceSides(n).reduce((t, sd) => t + portCount(n, sd), 0);
-    return `add/drop ${used} of ${tot} in use` + (n.type === 'roadm' ? `, degrees ${mine.filter(l => !portLink(l)).length} of ${n.p.degrees}` : '');
-  }
-  if (n.type === 'panel') return `${new Set(mine.map(l => sideOf2(l, n).slice(1)).filter(Boolean)).size} of ${n.p.ports} patched`;
-  if (n.type === 'host') return `eth ${mine.filter(l => clientLink(l) || greyLink(l)).length} of ${n.p.ports} in use`;
-  if (n.type === 'mxp') return `clients ${mine.filter(clientLink).length} of ${clientCount(n)} in use`;
-  if (isTri(n)) return ['c', 'a', 'b'].map(k => `${TRI_NAME[k]} ${mine.some(l => sideOf2(l, n) === k) ? '●' : '○'}`).join(', ');
-  return '';
+  const list = MODEL.portsOf(S, n), u = portUser(n);
+  if (n.type === 'meter' || n.type === 'otdr') return '';
+  return `ports ${list.filter(p => u.has(p.id)).length} of ${list.length} in use`;
 }
 const cableKind = MODEL.cableKind;
 // A new device goes in the first free place near the middle of what you are looking at (not on top of another device), then outwards in a spiral

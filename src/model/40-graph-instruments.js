@@ -125,7 +125,7 @@
   const optic1310 = k => PHY_.CLIENT_OPTICS[k];
   // What drives a unit's 1310 nm port: a host cabled into it (its grey optic, plus the patch cord), or else the unit's own o1310 setting (older labs).
   function port1310(S, u, node) {
-    const c = S.links.find(l => l.kind === 'patch' && (l.a === u.id || l.b === u.id) && greyEnds(node(l.a), node(l.b)));
+    const c = S.links.find(l => (l.a === u.id || l.b === u.id) && cableRole(S, l).role === 'grey');
     if (!c) return { key: u.p.o1310, host: null, cable: null };
     const h = node(c.a === u.id ? c.b : c.a);
     return { key: c.p.optic, host: h, cable: c };
@@ -134,14 +134,14 @@
     const { node, link } = mkGraph(S), out = [], seen = new Set(), has1310 = n => isUnit1310(n) && n.p.p1310, ends = S.nodes.filter(has1310);
     const sideOf = (l, id) => (l.a === id ? l.p.sa : l.p.sb);
     // a host cabled into a mux or OADM that has no 1310 nm port: its light goes nowhere
-    for (const l of S.links) { const g = l.kind === 'patch' ? greyEnds(node(l.a), node(l.b)) : null; if (g && !g.u.p.p1310) out.push({ a: g.u.id, b: null, aName: g.u.name, bName: '', aHost: g.h.name, bHost: '', status: 'blocked', why: `${g.u.name} has no 1310 nm port: turn it on in its settings`, km: patchKm(l), hops: [g.h.name, g.u.name], optic: l.p.optic, opticName: optic1310(l.p.optic).name }); }
+    for (const l of S.links) { const g = cableRole(S, l); if (g && g.role === 'grey' && !g.u.p.p1310) out.push({ a: g.u.id, b: null, aName: g.u.name, bName: '', aHost: g.h.name, bHost: '', status: 'blocked', why: `${g.u.name} has no 1310 nm port: turn it on in its settings`, km: patchKm(l), hops: [g.h.name, g.u.name], optic: l.p.optic, opticName: optic1310(l.p.optic).name }); }
     for (const a of ends) {
       if (isDead(a)) continue;
       const pa = port1310(S, a, node);
       for (const l0 of S.links) {
         // the line (common) cables of the unit, not the transponder cables on its channel ports or the host cable on its 1310 nm port
         if ((l0.kind !== 'fiber' && l0.kind !== 'patch') || (l0.a !== a.id && l0.b !== a.id) || l0 === pa.cable) { continue; }
-        { const o = node(l0.a === a.id ? l0.b : l0.a); if (isEnd(o) || (o && o.type === 'host')) continue; }
+        { const o = node(l0.a === a.id ? l0.b : l0.a), k = portKind(a, endPort(S, l0, a)); if (!o || (k !== 'com' && k !== 'oline')) continue; } // only the line side (COM, or an OADM's Line W/E) carries the 1310 nm band
         let l = l0, cur = a.id, km = 0, extra = +a.p.il1310, why = '', hops = [a.name], b = null;
         for (let guard = 0; guard < 40; guard++) {
           if (isCut(S, l)) { why = `the fiber ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; break; }
@@ -276,6 +276,9 @@
     // The search state is a device, or for a splitter or switch the device plus the port the light came in by: a common port feeds the two branches,
     // a branch only feeds the common port (never the other branch), and a switch passes its selected branch (the other too, if it is set to auto-switch).
     const dist = { [aId]: 0 }, prev = {}, done = new Set(), plan = x.ignoreCut, idOf = k => k.split('#')[0];
+    // the search state is a device plus the port the light came in by: a mux passes COM to a channel port and back, an OADM a line side to the other side or
+    // to an add/drop port, a ROADM a degree to another degree or to an add/drop port; a transponder starts and ends a route only at its line port
+    const pc = new Map(), pk = (l, id) => { let e = pc.get(l.id); if (!e) { const A = node(l.a), B = node(l.b), pa = endPort(S, l, A), pb = endPort(S, l, B); e = { [l.a]: [pa, portKind(A, pa)], [l.b]: [pb, portKind(B, pb)] }; pc.set(l.id, e); } return e[id]; };
     if (isDead(node(aId)) && !allowCut && !plan) return null;
     let end = null;
     while (true) {
@@ -294,6 +297,12 @@
         if (x.exclude && x.exclude.has(l.id)) continue;
         if ((l.p.dir === 'ab' && l.a !== me) || (l.p.dir === 'ba' && l.b !== me)) continue; // one-way fiber: light only travels the carried way
         const v = other(l, me); if (node(v).type === 'host' || node(v).type === 'meter' || node(v).type === 'otdr') continue; // an instrument or a host hangs off a transponder; light never goes through it
+        const [outId, outK] = pk(l, me), [inId, inK] = pk(l, v);
+        if (!x.anyPort) { // x.anyPort: plain distance over the cables, for ordering (as the crow flies along the fiber)
+          if (isEnd(un) && outK !== 'line') continue; // a transponder's light leaves by its line port only
+          if (arr && !passes(un, portKind(un, arr), arr, outK, outId)) continue;
+          if (isEnd(node(v)) && inK !== 'line') continue; // and arrives at the far one's line port
+        }
         let extra = 0;
         if (un.type === 'panel' && arr) { const m = /^([rf])(\d+)$/.exec(arr); if (!m || oadmSide(l, me) !== (m[1] === 'r' ? 'f' : 'r') + m[2]) continue; } // in at the rear of a port, out at the front of the same port
         if (isTriPort(un) && arr) {
@@ -303,7 +312,7 @@
         const dead = isDead(node(v));
         if (dead && !allowCut && !plan) continue;
         if (x.excludeNodes && x.excludeNodes.has(v) && v !== zId) continue;
-        const w = (l.kind === 'fiber' ? +l.p.len : 0.01 + patchKm(l)) + 0.01 + extra + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0), vk = isTriPort(node(v)) || node(v).type === 'panel' ? v + '#' + oadmSide(l, v) : v;
+        const w = (l.kind === 'fiber' ? +l.p.len : 0.01 + patchKm(l)) + 0.01 + extra + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0), vk = v + '#' + inId;
         if (dist[vk] == null || dist[u] + w < dist[vk]) { dist[vk] = dist[u] + w; prev[vk] = { u, l: l.id }; }
       }
     }

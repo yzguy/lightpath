@@ -105,7 +105,8 @@
   // fill in the sides and degrees of every cable end in place (after a ROADM's add/drop type or an OADM's sides change)
   function assignSides(S) {
     const used = new Map(), by = id => S.nodes.find(n => n.id === id);
-    for (const l of S.links) { const A = by(l.a), B = by(l.b); if (!A || !B) continue; l.p.sa = sideFor(A, B, l.p.sa, used); l.p.sb = sideFor(B, A, l.p.sb, used); }
+    for (const l of S.links) { if (l.p.pa && l.p.pb) continue; const A = by(l.a), B = by(l.b); if (!A || !B) continue; l.p.sa = sideFor(A, B, l.p.sa, used); l.p.sb = sideFor(B, A, l.p.sb, used); } // a cable without ports yet (a preset, a pasted or split one)
+    ensurePorts(S); // the sides, degrees and port numbers follow the ports
   }
   function sanitize(o) {
     if (!o || typeof o !== 'object' || !Array.isArray(o.nodes) || !Array.isArray(o.links)) throw new Error('not a topology');
@@ -189,6 +190,7 @@
       { const A0 = nodes.find(n => n.id === l.a), B0 = nodes.find(n => n.id === l.b), inst = x => x && (x.type === 'meter' || x.type === 'otdr'), test = x => x && (x.type === 'panel' || x.type === 'splitter' || x.type === 'switch');
         if ((inst(A0) || inst(B0)) && !((inst(A0) && test(B0)) || (inst(B0) && test(A0)))) continue; // an instrument plugs into a patch panel, splitter or switch port and nothing else
         if ((inst(A0) || inst(B0)) && links.some(q => [q.a, q.b].some(id => id === (inst(A0) ? A0 : B0).id))) continue; }
+      for (const k of ['pa', 'pb']) p[k] = typeof p[k] === 'string' && /^[A-Za-z0-9]{1,8}$/.test(p[k]) ? p[k] : ''; // the port at each end; ensurePorts checks it against the device
       if (!['both', 'ab', 'ba'].includes(p.dir)) p.dir = 'both';
       p.ramanFull = p.ramanFull === true; p.single = kind === 'fiber' && p.single === true; // one fiber carrying both directions
       p.srlg = typeof p.srlg === 'string' && /^[\w-]{0,24}$/.test(p.srlg) ? p.srlg : '';
@@ -218,7 +220,7 @@
     const g = { nch: Math.min(96, Math.max(1, Math.round(num(gi.nch, 16)))), df: [50, 75, 100, 150].includes(+gi.df) ? +gi.df : 100, launch: num(gi.launch, 0), neighbors: gi.neighbors === 'coh' ? 'coh' : 'same', reopt: gi.reopt === true, plan: null,
       tempC: Math.min(85, Math.max(-40, num(gi.tempC, 27))), // the fiber temperature: sets the spontaneous Raman noise
       eolSpan: Math.min(5, Math.max(0, num(gi.eolSpan, PHY_.EOL.spanLoss))), eolTrx: Math.min(3, Math.max(0, num(gi.eolTrx, PHY_.EOL.trxPen))),
-      rampMs: Math.min(10000, Math.max(0, num(gi.rampMs, 0))), lossPct: Math.min(95, Math.max(1, num(gi.lossPct, PHY_.TRANSIENT.lossPct))), agcUs: Math.min(5000, Math.max(0, num(gi.agcUs, PHY_.TRANSIENT.agcUs))),
+      table: typeof gi.table === 'boolean' ? gi.table : null, rampMs: Math.min(10000, Math.max(0, num(gi.rampMs, 0))), lossPct: Math.min(95, Math.max(1, num(gi.lossPct, PHY_.TRANSIENT.lossPct))), agcUs: Math.min(5000, Math.max(0, num(gi.agcUs, PHY_.TRANSIENT.agcUs))),
       cutRate: Math.min(50, Math.max(0, num(gi.cutRate, RESIL.cutRate))), mttr: Math.min(720, Math.max(0.5, num(gi.mttr, RESIL.mttr))), detectMs: Math.min(1000, Math.max(0, num(gi.detectMs, RESIL.detectMs))),
       switchMs: Math.min(10000, Math.max(0, num(gi.switchMs, RESIL.switchMs))), sharedSec: Math.min(600, Math.max(0, num(gi.sharedSec, RESIL.sharedSec))), restoreSec: Math.min(3600, Math.max(0, num(gi.restoreSec, RESIL.restoreSec))), devRate: Math.min(5, Math.max(0, num(gi.devRate, RESIL.devRate))) };
     const slots = PHY_.cBandSlots(g.df * 1e9);
@@ -233,6 +235,8 @@
     const flows = (Array.isArray(o.flows) ? o.flows : []).slice(0, 40).map(f => (f && typeof f === 'object' && hostIds.has(f.a) && hostIds.has(f.z) && f.a !== f.z && Number.isFinite(+f.gbps) && f.gbps !== '' && f.gbps !== null && typeof f.gbps !== 'boolean' ? { a: f.a, z: f.z, gbps: Math.min(1600, Math.max(0, +f.gbps)) } : null)).filter(Boolean);
     const demands = (Array.isArray(o.demands) ? o.demands : []).slice(0, 40).map(d => (d && typeof d === 'object' && seen.has(d.a) && seen.has(d.z) && d.a !== d.z && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.a) || {}).type) && ['roadm', 'trx', 'mxp'].includes((nodes.find(n => n.id === d.z) || {}).type)
       ? { a: d.a, z: d.z, mode: PHY_.MODES[d.mode] ? d.mode : 'zrp400', count: Math.min(96, Math.max(1, Math.round(num(d.count, 1)))), prot: d.prot === '1+1' ? '1+1' : '', target: Number.isFinite(+d.target) && d.target !== '' && d.target !== null && typeof d.target !== 'boolean' && +d.target >= 90 && +d.target < 100 ? +d.target : '' } : null)).filter(Boolean);
-    return { nodes, links, g, svc, demands, flows };
+    const out = { nodes, links, g, svc, demands, flows };
+    ensurePorts(out); // every cable end in a port; an older save gets the ports its cabling implies
+    return out;
   }
 

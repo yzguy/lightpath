@@ -348,10 +348,10 @@ function derivedPlanView(r, D) {
   const wrap = el('div', { class: 'planwrap pad' }), res = r && r.channels ? r.channels : [];
   const toTable = () => {
     S.g.plan = MODEL.sanitizePlan(D.plan.map(c => ({ slot: c.slot, mode: c.mode, off: c.off, svc: c.svc, from: c.filler || c.svc ? '' : c.from, to: c.filler || c.svc ? '' : c.to, via: '', conv: c.filler || c.svc ? '' : c.conv || '', slot2: c.slot2 ?? c.slot, prot: c.prot || '', slotRev: c.slotRev })), +S.g.df);
-    S.g.nch = S.g.plan.length; S.links.forEach(l => { if (l.p.mport != null) l.p.mport = null; }); hiChan = null; renderAll(); toast('The channels are now a plain table; the mux ports are cleared.');
+    S.g.nch = S.g.plan.length; S.g.table = true; hiChan = null; renderAll(); toast('The channels are now a plain table: the transponders stay in their ports, but their slots come from the table.');
   };
   wrap.append(el('div', { class: 'planbar' }, [el('b', { text: `${D.plan.length} channels` }), el('span', { class: 'muted small', text: `${D.paired} from the cabling${D.fillers ? `, ${D.fillers} background (to reach the channel count)` : ''}` }),
-    el('button', { class: 'btn', text: 'Edit as a table', title: 'Turn the derived channels into an editable plan and clear the mux ports', onclick: toTable })]));
+    el('button', { class: 'btn', text: 'Edit as a table', title: 'Turn the derived channels into an editable plan', onclick: toTable })]));
   wrap.append(el('p', { class: 'muted small', text: 'These channels follow the cabling. Plug a transponder into a port of a mux, tune it (or leave it on Auto), and plug its partner into the port for the same slot on the far mux. Click a row to light its route on the canvas.' }));
   const tbl = el('table', { class: 'tbl plantbl' }), th = el('tr'); ['Slot (there / back)', 'Channel · THz', 'Mode', 'From', 'To', 'Protect / convert', 'Offset dB', 'Rx dBm', 'GSNR', 'Q margin', 'Status'].forEach(h => th.append(el('th', { text: h })));
   tbl.append(el('thead', {}, [th]));
