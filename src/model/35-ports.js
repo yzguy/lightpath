@@ -39,7 +39,8 @@
       case 'host': return range1(iOf(n.p.ports, 1)).map(i => P('eth' + i, 'eth' + i, 'eth'));
       case 'mux': return [P('COM', 'COM (line)', 'com'), ...range1(iOf(n.p.ports, 0)).map(i => P('P' + i, adLabel(S, n, '', i - 1), 'ad', { side: '', k: i - 1 })), P('1310', '1310 nm' + (n.p.p1310 ? '' : ' (module off)'), '1310')];
       case 'oadm': {
-        const sides = String(n.p.sides || '').split('').filter(s => s === 'e' || s === 'w').sort().reverse(), out = sides.map(s => P('L' + s.toUpperCase(), 'Line ' + s.toUpperCase(), 'oline', { side: s }));
+        // both line ports are always there (traffic it does not add or drop passes Line W to Line E); `sides` says which way its add/drop filters face
+        const sides = String(n.p.sides || '').split('').filter(s => s === 'e' || s === 'w').sort().reverse(), out = ['w', 'e'].map(s => P('L' + s.toUpperCase(), 'Line ' + s.toUpperCase(), 'oline', { side: s }));
         for (const s of sides) range1(iOf(n.p[s + 'Ports'], 0)).forEach(i => out.push(P(s.toUpperCase() + i, adLabel(S, n, s, i - 1), 'ad', { side: s, k: i - 1 })));
         out.push(P('1310', '1310 nm' + (n.p.p1310 ? '' : ' (module off)'), '1310'));
         return out;
@@ -50,7 +51,8 @@
         else for (const j of range1(d)) range1(np).forEach(i => out.push(P(`D${j}A${i}`, adLabel(S, n, String(j), i - 1), 'ad', { side: String(j), k: i - 1 })));
         return out;
       }
-      case 'edfa': case 'dcm': case 'voa': return [P('W', 'W (west)', 'amp'), P('E', 'E (east)', 'amp')];
+      case 'edfa': return [P('IN', 'Line In', 'amp'), P('OUT', 'Line Out', 'amp'), P('MON', 'Monitor (1% tap)', 'mon')]; // a booster/pre-amp pair: the duplex cable on Line In carries the A-to-Z light in
+      case 'dcm': case 'voa': return [P('IN', 'In', 'amp'), P('OUT', 'Out', 'amp')];
       case 'panel': { const out = []; range1(iOf(n.p.ports, 1)).forEach(i => out.push(P('r' + i, `Rear ${i}`, 'panel'), P('f' + i, `Front ${i}`, 'panel'))); return out; }
       case 'splitter': case 'switch': return [P('c', 'Common', 'tri'), P('a', 'Port A', 'tri'), P('b', 'Port B', 'tri')];
       default: return [P('P', 'Port', 'test')];
@@ -66,7 +68,8 @@
       case 'mux': return id === 'COM' ? 'com' : id === '1310' ? '1310' : /^P\d+$/.test(id) ? 'ad' : '';
       case 'oadm': return /^L[EW]$/.test(id) ? 'oline' : id === '1310' ? '1310' : /^[EW]\d+$/.test(id) ? 'ad' : '';
       case 'roadm': return /^D\d$/.test(id) ? 'deg' : /^(D\dA|A)\d+$/.test(id) ? 'ad' : '';
-      case 'edfa': case 'dcm': case 'voa': return /^[WE]$/.test(id) ? 'amp' : '';
+      case 'edfa': return /^(IN|OUT)$/.test(id) ? 'amp' : id === 'MON' ? 'mon' : '';
+      case 'dcm': case 'voa': return /^(IN|OUT)$/.test(id) ? 'amp' : '';
       case 'panel': return /^[rf]\d+$/.test(id) ? 'panel' : '';
       case 'splitter': case 'switch': return /^[cab]$/.test(id) ? 'tri' : '';
       default: return id === 'P' ? 'test' : '';
@@ -78,10 +81,16 @@
     if (k === 'line') return id === 'L2' ? 'LINE 2' : 'LINE';
     if (k === 'client') return n.type === 'trx' ? 'CLIENT' : id;
     if (k === 'com') return 'COM'; if (k === '1310') return '1310'; if (k === 'oline') return 'Line ' + id[1];
-    if (k === 'deg' || k === 'amp') return id; if (k === 'panel' || k === 'tri') return id.toUpperCase(); if (k === 'test') return '';
+    if (k === 'deg' || k === 'amp' || k === 'mon') return id; if (k === 'panel' || k === 'tri') return id.toUpperCase(); if (k === 'test') return '';
     if (k === 'ad') return id === 'AD' ? 'A/D' : p ? p.label.replace(/^D(\d) A\/D /, 'D$1·').replace(/^A\/D /, 'A/D') : id;
     return p ? p.label : id;
   };
+  // the cable by which the service's A-to-Z light reaches an amplifier (its Line In), from the service's own route; null if there is none
+  function feedOf(S, n) {
+    const a = S.svc && S.svc.a; if (!a || a === n.id) return null;
+    const r = route(S, a, n.id, true, { ignoreCut: true, anyPort: true });
+    return r && r.links.length ? r.links[r.links.length - 1] : null;
+  }
   // the port a cable end is in: the recorded one, or the one its older fields imply
   const endPort = (S, l, n) => { const v = l.a === n.id ? l.p.pa : l.p.pb; return v && portKind(n, v) ? v : inferPort(S, l, n); }; // a port id that is not one of this device's (a cable moved to another device) counts as none
   function inferPort(S, l, n) {
@@ -92,9 +101,9 @@
       case 'trx': case 'mxp': return o.type === 'host' ? 'C' + ((Number.isInteger(l.p.cport) ? l.p.cport : 0) + 1) : mine.filter(x => { const y = S.nodes.find(q => q.id === (x.a === n.id ? x.b : x.a)); return y && y.type !== 'host'; }).indexOf(l) > 0 ? 'L2' : 'L';
       case 'host': return 'eth' + ((Number.isInteger(l.p.hport) ? l.p.hport : Math.max(0, mine.indexOf(l))) + 1);
       case 'mux': return isEnd(o) ? (mp == null ? 'AD' : 'P' + (mp + 1)) : o.type === 'host' ? '1310' : 'COM';
-      case 'oadm': { const s = (sd || (String(n.p.sides || 'e').length === 1 ? n.p.sides : o.x < n.x ? 'w' : 'e')).toUpperCase(); return isEnd(o) ? (mp == null ? 'AD' : s + (mp + 1)) : o.type === 'host' ? '1310' : 'L' + s; }
+      case 'oadm': { const s = (sd || (isEnd(o) && String(n.p.sides || 'e').length === 1 ? n.p.sides : o.x < n.x ? 'w' : 'e')).toUpperCase(); return isEnd(o) ? (mp == null ? 'AD' : s + (mp + 1)) : o.type === 'host' ? '1310' : 'L' + s; }
       case 'roadm': return isEnd(o) ? (mp == null ? 'AD' : n.p.directionless ? 'A' + (mp + 1) : `D${sd || 1}A${mp + 1}`) : 'D' + (sd || (mine.filter(x => { const y = S.nodes.find(q => q.id === (x.a === n.id ? x.b : x.a)); return y && !isEnd(y); }).indexOf(l) + 1));
-      case 'edfa': case 'dcm': case 'voa': { const taken = new Set(mine.filter(x => x !== l).map(x => (x.a === n.id ? x.p.pa : x.p.pb)).filter(Boolean)); return taken.has('W') ? 'E' : taken.has('E') ? 'W' : mine.indexOf(l) > 0 ? 'E' : 'W'; }
+      case 'edfa': case 'dcm': case 'voa': { const taken = new Set(mine.filter(x => x !== l).map(x => (x.a === n.id ? x.p.pa : x.p.pb)).filter(Boolean)); if (taken.has('IN')) return 'OUT'; if (taken.has('OUT')) return 'IN'; const f = feedOf(S, n); return f ? (f === l.id ? 'IN' : 'OUT') : mine.indexOf(l) > 0 ? 'OUT' : 'IN'; }
       case 'panel': case 'splitter': case 'switch': return sd;
       default: return 'P';
     }
@@ -165,7 +174,7 @@
   const portsUsed2 = (S, n, except) => new Map(S.links.filter(l => l !== except && (l.a === n.id || l.b === n.id) && ![l.a, l.b].some(id => { const x = S.nodes.find(q => q.id === id); return x && (x.type === 'meter' || x.type === 'otdr'); })).map(l => [endPort(S, l, n), l]));
   // Can a new cable go between a and b? '' if both have a free port, else why not
   function cableFits(S, a, b) {
-    for (const n of [a, b]) { const u = portsUsed2(S, n); if (!portsOf(S, n).some(p => !u.has(p.id))) return `${n.name} has no free port: all ${portsOf(S, n).length} are in use.`; }
+    for (const n of [a, b]) { const u = portsUsed2(S, n); if (!portsOf(S, n).some(p => !u.has(p.id))) { const k = portsOf(S, n).length; return `${n.name} has no free port: ${k === 1 ? 'its one port is' : `all ${k} are`} in use.`; } }
     return '';
   }
   // Cabling that cannot work, each with the reason, for the alarms: a port that does not exist, two cables in one port, and plugs of the wrong kind
@@ -192,6 +201,7 @@
       else if (K.has('eth') && !K.has('client') && !K.has('1310') && !K.has('eth')) { const [h, hi, o, oi] = end('eth'); add(`${pn(h, hi)} is cabled to ${pn(o, oi)}: a host's grey optic connects to a transponder client port, or to the 1310 nm port of a mux or OADM.`); }
       else if (K.has('eth') && ka === 'eth' && kb === 'eth') add(`${pn(A, ia)} is cabled straight to ${pn(B, ib)}: that works as a short grey link, but the optical network is not in it.`);
       else if (K.has('1310') && !K.has('eth')) { const [u, ui, o, oi] = end('1310'); add(`${pn(o, oi)} is cabled into ${pn(u, ui)}: the 1310 nm port only passes 1310 nm light, so nothing in the C-band gets through.`); }
+      else if (K.has('mon')) { const [m, mi, o, oi] = end('mon'); add(`${pn(o, oi)} is cabled into ${pn(m, mi)}: the monitor port is a 1% tap of the amplifier's output for a power meter or channel monitor, and passes nothing on.`); }
       else if (K.has('ad') && ka === 'ad' && kb === 'ad' && A.id === B.id) add(`${A.name}: two of its channel ports are cabled to each other, which loops a channel back.`);
       else if (K.has('ad') && !K.has('line') && !(ka === 'ad' && kb === 'ad')) { const [m, mi, o, oi] = end('ad'); add(`${pn(o, oi)} is cabled into ${pn(m, mi)}, a channel port: only that one channel gets through. The line goes on ${m.type === 'mux' ? 'COM' : m.type === 'oadm' ? 'a Line port' : 'a degree port'}.`); }
     }
@@ -203,7 +213,7 @@
       case 'mux': return (inK === 'com' && outK === 'ad') || (inK === 'ad' && outK === 'com');
       case 'oadm': return (inK === 'oline' && outK === 'oline' && inId !== outId) || (inK === 'oline' && outK === 'ad') || (inK === 'ad' && outK === 'oline');
       case 'roadm': return (inK === 'deg' && outK === 'deg' && inId !== outId) || (inK === 'deg' && outK === 'ad') || (inK === 'ad' && outK === 'deg');
-      case 'edfa': case 'dcm': case 'voa': return inId !== outId;
+      case 'edfa': case 'dcm': case 'voa': return inK === 'amp' && outK === 'amp' && inId !== outId; // a monitor tap passes nothing on
       default: return true;
     }
   }

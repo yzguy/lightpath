@@ -46,7 +46,12 @@
     const { node } = mkGraph(S), l = S.links.find(x => x.a === n.id || x.b === n.id);
     if (!l) return { status: 'none', why: 'not plugged into anything' };
     const dev = node(l.a === n.id ? l.b : l.a), side = oadmSide(l, dev.id);
-    const h = hops.find(x => x.name === dev.name && x.kind === dev.type);
+    const h = hops.find(x => x.name === dev.name && x.kind === (dev.type === 'edfa' ? 'amp' : dev.type));
+    if (dev.type === 'edfa') { // a meter on an amplifier's monitor tap reads 20 dB below its output; on Line In or Out it reads that port
+      if (!h) return { status: 'none', why: `no service light passes ${dev.name}`, at: dev.name };
+      const dbn0 = 10 * Math.log10(Math.max(1, h.nch || 1)), T0 = x => x.sig + dbn0, pid = endPort(S, l, dev), mk0 = (v, why) => ({ dbm: v, perCh: v - dbn0, status: v > METER.max ? 'over' : v < METER.min ? 'low' : 'ok', why, at: dev.name });
+      return pid === 'MON' ? mk0(T0(h.out) - 20, `${dev.name}'s monitor tap: 20 dB below its output`) : pid === 'IN' ? mk0(T0(h.in), `the light arriving at ${dev.name} Line In`) : mk0(T0(h.out), `the light leaving ${dev.name} Line Out`);
+    }
     if (!h) return { status: 'none', why: `no service light passes ${dev.name}`, at: dev.name };
     const dbn = 10 * Math.log10(Math.max(1, h.nch || 1)), T = x => x.sig + dbn;
     const mk = (v, why) => ({ dbm: v, perCh: v - dbn, status: v > METER.max ? 'over' : v < METER.min ? 'low' : 'ok', why, at: dev.name });
@@ -297,7 +302,7 @@
         if (x.exclude && x.exclude.has(l.id)) continue;
         if ((l.p.dir === 'ab' && l.a !== me) || (l.p.dir === 'ba' && l.b !== me)) continue; // one-way fiber: light only travels the carried way
         const v = other(l, me); if (node(v).type === 'host' || node(v).type === 'meter' || node(v).type === 'otdr') continue; // an instrument or a host hangs off a transponder; light never goes through it
-        const [outId, outK] = pk(l, me), [inId, inK] = pk(l, v);
+        const [outId, outK] = x.anyPort ? ['', ''] : pk(l, me), [inId, inK] = x.anyPort ? ['', ''] : pk(l, v);
         if (!x.anyPort) { // x.anyPort: plain distance over the cables, for ordering (as the crow flies along the fiber)
           if (isEnd(un) && outK !== 'line') continue; // a transponder's light leaves by its line port only
           if (arr && !passes(un, portKind(un, arr), arr, outK, outId)) continue;
@@ -312,7 +317,7 @@
         const dead = isDead(node(v));
         if (dead && !allowCut && !plan) continue;
         if (x.excludeNodes && x.excludeNodes.has(v) && v !== zId) continue;
-        const w = (l.kind === 'fiber' ? +l.p.len : 0.01 + patchKm(l)) + 0.01 + extra + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0), vk = v + '#' + inId;
+        const w = (l.kind === 'fiber' ? +l.p.len : 0.01 + patchKm(l)) + 0.01 + extra + (cut && !plan ? 1e6 : 0) + (dead && !plan ? 1e6 : 0), vk = x.anyPort ? v : v + '#' + inId;
         if (dist[vk] == null || dist[u] + w < dist[vk]) { dist[vk] = dist[u] + w; prev[vk] = { u, l: l.id }; }
       }
     }
