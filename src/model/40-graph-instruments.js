@@ -123,14 +123,25 @@
   // splitters and switches have no such filter and block it.
   const OSC = { name: 'Supervisory channel (1510 nm, 1.25 Gb/s)', nm: 1510, att: 0.25, tx: -3, rxMin: -28, rxMax: -8, filter: 1.0 };
   const optic1310 = k => PHY_.CLIENT_OPTICS[k];
+  // What drives a unit's 1310 nm port: a host cabled into it (its grey optic, plus the patch cord), or else the unit's own o1310 setting (older labs).
+  function port1310(S, u, node) {
+    const c = S.links.find(l => l.kind === 'patch' && (l.a === u.id || l.b === u.id) && greyEnds(node(l.a), node(l.b)));
+    if (!c) return { key: u.p.o1310, host: null, cable: null };
+    const h = node(c.a === u.id ? c.b : c.a);
+    return { key: c.p.optic, host: h, cable: c };
+  }
   function band1310(S) {
-    const { node, link } = mkGraph(S), out = [], seen = new Set(), has1310 = n => (n.type === 'oadm' || n.type === 'mux') && n.p.p1310, ends = S.nodes.filter(has1310);
+    const { node, link } = mkGraph(S), out = [], seen = new Set(), has1310 = n => isUnit1310(n) && n.p.p1310, ends = S.nodes.filter(has1310);
     const sideOf = (l, id) => (l.a === id ? l.p.sa : l.p.sb);
+    // a host cabled into a mux or OADM that has no 1310 nm port: its light goes nowhere
+    for (const l of S.links) { const g = l.kind === 'patch' ? greyEnds(node(l.a), node(l.b)) : null; if (g && !g.u.p.p1310) out.push({ a: g.u.id, b: null, aName: g.u.name, bName: '', aHost: g.h.name, bHost: '', status: 'blocked', why: `${g.u.name} has no 1310 nm port: turn it on in its settings`, km: patchKm(l), hops: [g.h.name, g.u.name], optic: l.p.optic, opticName: optic1310(l.p.optic).name }); }
     for (const a of ends) {
       if (isDead(a)) continue;
+      const pa = port1310(S, a, node);
       for (const l0 of S.links) {
-        // the line (common) cables of the unit, not the transponder cables on its channel ports
-        if ((l0.kind !== 'fiber' && l0.kind !== 'patch') || (l0.a !== a.id && l0.b !== a.id) || isEnd(node(l0.a === a.id ? l0.b : l0.a))) continue;
+        // the line (common) cables of the unit, not the transponder cables on its channel ports or the host cable on its 1310 nm port
+        if ((l0.kind !== 'fiber' && l0.kind !== 'patch') || (l0.a !== a.id && l0.b !== a.id) || l0 === pa.cable) { continue; }
+        { const o = node(l0.a === a.id ? l0.b : l0.a); if (isEnd(o) || (o && o.type === 'host')) continue; }
         let l = l0, cur = a.id, km = 0, extra = +a.p.il1310, why = '', hops = [a.name], b = null;
         for (let guard = 0; guard < 40; guard++) {
           if (isCut(S, l)) { why = `the fiber ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; break; }
@@ -149,19 +160,28 @@
             : n.type === 'edfa' ? `${n.name} (EDFA) blocks 1310 nm: erbium has no gain there, and its input filter and isolators reject it`
             : `${n.name} (${(TYPES[n.type] || {}).label || n.type}) does not pass 1310 nm light`; break;
         }
+        const hn = p => (p.host ? p.host.name : '');
         if (b) {
           const key = [a.id, b.id].sort().join('|') + '|' + [l0.id, l.id].sort().join('|'); if (seen.has(key)) continue; seen.add(key);
-          const oa = optic1310(a.p.o1310), ob = optic1310(b.p.o1310);
-          if (a.p.o1310 !== b.p.o1310) { out.push({ a: a.id, b: b.id, aName: a.name, bName: b.name, status: 'down', why: `${a.name} has ${oa.name} and ${b.name} has ${ob.name}: the ends do not match`, km, loss: null, hops }); continue; }
+          const pb = port1310(S, b, node), oa = optic1310(pa.key), ob = optic1310(pb.key);
+          // a host's patch cord into the 1310 nm port counts like any other: its connector loss and length
+          for (const p of [pa, pb]) if (p.cable) { km += patchKm(p.cable); extra += +p.cable.p.il || 0; }
+          const row = { a: a.id, b: b.id, aName: a.name, bName: b.name, aHost: hn(pa), bHost: hn(pb), hostA: pa.host && pa.host.id, hostB: pb.host && pb.host.id, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops, ...(pb.host ? [pb.host.name] : [])] };
+          if (pa.key !== pb.key) { out.push({ ...row, status: 'down', why: `${pa.host ? pa.host.name : a.name} has ${oa.name} and ${pb.host ? pb.host.name : b.name} has ${ob.name}: the ends do not match`, loss: null }); continue; }
+          const cut = [pa, pb].find(p => p.cable && isCut(S, p.cable));
+          if (cut) { out.push({ ...row, optic: pa.key, opticName: oa.name, status: 'down', why: `the cable from ${cut.host.name} is cut`, loss: null }); continue; }
+          const slow = [pa, pb].find(p => p.host && +p.host.p.speed !== oa.rate);
           const loss = oa.att * km + extra, rx = oa.tx - loss, margin = rx - oa.rxMin; let status = 'up', w = '';
-          if (margin < 0) { status = 'down'; w = `Rx ${f1(rx)} dBm is below the ${oa.rxMin} dBm sensitivity`; }
+          if (slow) { status = 'down'; w = `${slow.host.name}'s port is ${slow.host.p.speed}G but ${oa.name} is ${oa.rate}G`; }
+          else if (margin < 0) { status = 'down'; w = `Rx ${f1(rx)} dBm is below the ${oa.rxMin} dBm sensitivity`; }
           else if (rx > oa.rxMax + 3) { status = 'down'; w = `Rx ${f1(rx)} dBm overloads the receiver (limit ${oa.rxMax} dBm): add a ${Math.ceil(rx - oa.rxMax)} dB pad`; }
           else if (rx > oa.rxMax) { status = 'warn'; w = `Rx ${f1(rx)} dBm is above the ${oa.rxMax} dBm overload point: add a ${Math.ceil(rx - oa.rxMax)} dB pad`; }
           else if (margin < 3) { status = 'warn'; w = `only ${f1(margin)} dB of margin`; }
-          out.push({ a: a.id, b: b.id, aName: a.name, bName: b.name, optic: a.p.o1310, opticName: oa.name, km, loss, tx: oa.tx, rx, margin, rxMin: oa.rxMin, status, why: w, hops });
+          else if (oa.reach && km > oa.reach) { status = 'warn'; w = `${f1(km)} km is beyond the ${oa.reach} km ${oa.name} is rated for: the power budget closes, but dispersion is not guaranteed`; }
+          out.push({ ...row, optic: pa.key, opticName: oa.name, rate: oa.rate, loss, tx: oa.tx, rx, margin, rxMin: oa.rxMin, status, why: w });
         } else if (why) {
           const key = a.id + '|' + l0.id; if (seen.has(key)) continue; seen.add(key);
-          out.push({ a: a.id, b: null, aName: a.name, bName: '', status: 'blocked', why, km, hops, optic: a.p.o1310, opticName: optic1310(a.p.o1310).name });
+          out.push({ a: a.id, b: null, aName: a.name, bName: '', aHost: hn(pa), bHost: '', hostA: pa.host && pa.host.id, status: 'blocked', why, km, hops: [...(pa.host ? [pa.host.name] : []), ...hops], optic: pa.key, opticName: optic1310(pa.key).name });
         }
       }
     }

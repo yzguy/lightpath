@@ -255,11 +255,12 @@ function renderCanvas() {
         t.textContent = text; g.append(t); };
       if (pl && l.p.mport != null) { const sd = sideOf(l, pl.m); labelAt(pl.m, pl.t, portChText(pl.m, l.p.mport, sd, pl.t)); }
       for (const n of [a, b]) if ((isTri(n) || n.type === 'panel') && sideOf2(l, n)) labelAt(n, n === a ? b : a, sideOf2(l, n).toUpperCase());
-      if (clientLink(l)) { const h = a.type === 'host' ? a : b, e = h === a ? b : a; labelAt(h, e, `eth${(l.p.hport ?? 0) + 1}`); if (e.type === 'mxp') labelAt(e, h, `C${(l.p.cport ?? 0) + 1}`); }
+      if (clientLink(l) || greyLink(l)) { const h = a.type === 'host' ? a : b, e = h === a ? b : a; labelAt(h, e, `eth${(l.p.hport ?? 0) + 1}`); if (e.type === 'mxp') labelAt(e, h, `C${(l.p.cport ?? 0) + 1}`); }
       for (const n of [a, b]) if ((n.type === 'oadm' || n.type === 'roadm') && !(pl && pl.m.id === n.id) && sideOf(l, n)) labelAt(n, n === a ? b : a, n.type === 'roadm' ? 'D' + sideOf(l, n) : SIDE[sideOf(l, n)]);
       // devices whose ports are fixed: an amplifier's in and out follow the light along the service (forward) path
       const fp = lastRes && lastRes.path, at = fp ? fp.links.indexOf(l.id) : -1;
       const fixed = (n, o) => isEnd(n) ? (clientLink(l) ? null : 'LINE')
+        : (n.type === 'mux' || n.type === 'oadm') && o.type === 'host' ? '1310'
         : n.type === 'mux' ? (isEnd(o) ? (l.p.mport == null ? 'A/D' : null) : 'LINE')
         : n.type === 'roadm' && isEnd(o) && l.p.mport == null ? 'A/D'
         : (n.type === 'edfa' || n.type === 'dcm' || n.type === 'voa') && at >= 0 ? (fp.nodes[at] === n.id ? 'OUT' : 'IN')
@@ -550,6 +551,7 @@ document.addEventListener('keydown', e => {
 window.addEventListener('blur', closeCtx); window.addEventListener('scroll', closeCtx);
 
 // a transponder or muxponder plugged into a passive mux: the cable's `mport` is the mux port it uses (port k passes slot first+k)
+const greyLink = l => !!MODEL.greyEnds(node(l.a), node(l.b)) && l.kind === 'patch'; // a host's grey optic into the 1310 nm port of a mux or OADM
 const clientLink = l => { const a = node(l.a), b = node(l.b); return !!a && !!b && l.kind === 'patch' && ((isEnd(a) && b.type === 'host') || (isEnd(b) && a.type === 'host')); }; // host port to transponder or muxponder client port
 const clientCount = e => (e.type === 'mxp' ? e.p.clients.length : 1);
 const fmtUs = us => (us < 1000 ? `${us.toFixed(0)} µs` : `${(us / 1000).toFixed(2)} ms`);
@@ -594,21 +596,28 @@ function connect(a, b, kind) {
   if (S.links.some(l => (l.a === a.id && l.b === b.id) || (l.a === b.id && l.b === a.id))) return toast('Those two are already connected.');
   const inst = x => x.type === 'meter' || x.type === 'otdr', test = x => x.type === 'panel' || x.type === 'splitter' || x.type === 'switch';
   if ((inst(a) || inst(b)) && !((inst(a) && test(b)) || (inst(b) && test(a)))) return toast('An instrument plugs into a test point: a patch panel port, or a splitter or switch port.');
-  const cli = (isEnd(a) && b.type === 'host') || (isEnd(b) && a.type === 'host');
-  if (!cli && (a.type === 'host' || b.type === 'host')) return toast('A host connects to a transponder or muxponder client port, nothing else.');
+  const cli = (isEnd(a) && b.type === 'host') || (isEnd(b) && a.type === 'host'), gr = MODEL.greyEnds(a, b);
+  if (!cli && !gr && (a.type === 'host' || b.type === 'host')) return toast('A host connects to a transponder or muxponder client port, or with a grey optic to the 1310 nm port of a mux or OADM.');
   let hp = null, cp = null;
+  if (gr) { // a host's grey optic into the one 1310 nm port of a mux or OADM
+    if (S.links.some(x => greyLink(x) && (x.a === gr.u.id || x.b === gr.u.id))) return toast(`${gr.u.name}'s 1310 nm port is already in use.`);
+    const usedH = new Set(S.links.filter(x => (clientLink(x) || greyLink(x)) && (x.a === gr.h.id || x.b === gr.h.id)).map(x => x.p.hport));
+    for (let k = 0; k < gr.h.p.ports && hp == null; k++) if (!usedH.has(k)) hp = k;
+    if (hp == null) return toast(`${gr.h.name} has no free port (it has ${gr.h.p.ports}). Raise the port count in its inspector.`);
+  }
   if (cli) {
     const h = a.type === 'host' ? a : b, e = a.type === 'host' ? b : a, mine = S.links.filter(clientLink);
-    const usedH = new Set(mine.filter(x => x.a === h.id || x.b === h.id).map(x => x.p.hport)), usedC = new Set(mine.filter(x => x.a === e.id || x.b === e.id).map(x => x.p.cport));
+    const usedH = new Set(S.links.filter(x => (clientLink(x) || greyLink(x)) && (x.a === h.id || x.b === h.id)).map(x => x.p.hport)), usedC = new Set(mine.filter(x => x.a === e.id || x.b === e.id).map(x => x.p.cport));
     for (let k = 0; k < h.p.ports && hp == null; k++) if (!usedH.has(k)) hp = k;
     for (let k = 0; k < clientCount(e) && cp == null; k++) if (!usedC.has(k)) cp = k;
     if (hp == null) return toast(`${h.name} has no free port (it has ${h.p.ports}). Raise the port count in its inspector.`);
     if (cp == null) return toast(`${e.name} has no free client port.`);
   }
-  else for (const n of [a, b]) if (S.links.filter(x => !clientLink(x) && (x.a === n.id || x.b === n.id)).length >= (n.type === 'panel' ? 2 * n.p.ports : TYPES[n.type].maxLinks)) return toast(`${n.name} has no free port. ${TYPES[n.type].label}s have ${isEnd(n) ? 'two line ports: the second is for dual-homing' : TYPES[n.type].maxLinks === 1 ? 'one line port' : 'an input and an output'}.`);
+  else if (!gr) for (const n of [a, b]) if (S.links.filter(x => !clientLink(x) && !greyLink(x) && (x.a === n.id || x.b === n.id)).length >= (n.type === 'panel' ? 2 * n.p.ports : TYPES[n.type].maxLinks)) return toast(`${n.name} has no free port. ${TYPES[n.type].label}s have ${isEnd(n) ? 'two line ports: the second is for dual-homing' : TYPES[n.type].maxLinks === 1 ? 'one line port' : 'an input and an output'}.`);
   for (const [n, o] of [[a, b], [b, a]]) if (n.type === 'roadm' && !isEnd(o) && S.links.filter(x => !portLink(x) && (x.a === n.id || x.b === n.id)).length >= n.p.degrees) return toast(`${n.name} has no free degree (it has ${n.p.degrees}). Raise the degree count in its inspector.`);
   const l = { id: uid('l'), a: a.id, b: b.id, kind, p: linkDefaults(kind) };
   if (cli) { l.p.hport = hp; l.p.cport = cp; }
+  if (gr) { l.p.hport = hp; l.p.optic = MODEL.greyFor(gr.h.p.speed); if (!gr.u.p.p1310) { gr.u.p.p1310 = true; toast(`${gr.u.name}: 1310 nm port turned on`); } }
   S.links.push(l);
   for (const n of [a, b]) {
     const o = n === a ? b : a;
@@ -662,7 +671,7 @@ function portSummary(n) {
     return `add/drop ${used} of ${tot} in use` + (n.type === 'roadm' ? `, degrees ${mine.filter(l => !portLink(l)).length} of ${n.p.degrees}` : '');
   }
   if (n.type === 'panel') return `${new Set(mine.map(l => sideOf2(l, n).slice(1)).filter(Boolean)).size} of ${n.p.ports} patched`;
-  if (n.type === 'host') return `eth ${mine.filter(clientLink).length} of ${n.p.ports} in use`;
+  if (n.type === 'host') return `eth ${mine.filter(l => clientLink(l) || greyLink(l)).length} of ${n.p.ports} in use`;
   if (n.type === 'mxp') return `clients ${mine.filter(clientLink).length} of ${clientCount(n)} in use`;
   if (isTri(n)) return ['c', 'a', 'b'].map(k => `${TRI_NAME[k]} ${mine.some(l => sideOf2(l, n) === k) ? '●' : '○'}`).join(', ');
   return '';

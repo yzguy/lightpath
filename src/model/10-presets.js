@@ -280,12 +280,15 @@
     },
     mux1310: {
       name: 'Passive muxes with a 1310 nm port over dark fiber', build() {
-        // Two passive DWDM muxes with a 1310 nm upgrade port, as on many CWDM/DWDM filter units: 10G DWDM switch optics on channel ports, and a 10GBASE-LR
-        // client on the 1310 nm port of each mux, all over one 12 km pair of dark fiber. The 1310 nm light skips the channel filters and pays only the fiber
-        // (0.35 dB/km at 1310 nm) and the 1310 nm port loss at each end; the filter on the common port costs the DWDM channels 0.6 dB more per mux.
-        const a = N('trx', 'SW-A', 80, 220, { mode: 'dwdm10f' }), ma = N('mux', 'MUX-A', 260, 220, { ports: 8, first: 28, il: 3.5, p1310: true });
-        const mb = N('mux', 'MUX-B', 700, 220, { ports: 8, first: 28, il: 3.5, p1310: true }), z = N('trx', 'SW-B', 880, 220, { mode: 'dwdm10f' });
-        return { nodes: [a, ma, mb, z], links: [L(a, ma, 'patch', { mport: 3 }), L(ma, mb, 'fiber', { len: 12 }), L(mb, z, 'patch', { mport: 3 })], g: { nch: 1, df: 100, launch: 0 }, svc: { a: a.id, z: z.id } };
+        // Two passive DWDM muxes with a 1310 nm upgrade port, as on many CWDM/DWDM filter units: 10G DWDM switch optics on channel ports, and a router at
+        // each end with a 400GBASE-LR4-10 patched into the 1310 nm port, all over one 8 km pair of dark fiber. The 1310 nm light skips the channel filters
+        // and pays only the patch cords, the fiber (0.35 dB/km at 1310 nm) and the 1310 nm port loss at each end; the filter on the common port costs the
+        // DWDM channels 0.6 dB more per mux. Neither end is amplified: an EDFA would block the 1310 nm light.
+        const a = N('trx', 'SW-A', 80, 160, { mode: 'dwdm10f' }), ma = N('mux', 'MUX-A', 260, 220, { ports: 8, first: 28, il: 3.5, p1310: true });
+        const mb = N('mux', 'MUX-B', 700, 220, { ports: 8, first: 28, il: 3.5, p1310: true }), z = N('trx', 'SW-B', 880, 160, { mode: 'dwdm10f' });
+        const ra = N('host', 'RTR-A', 80, 300, { ip: '10.0.0.1/31', speed: 400 }), rb = N('host', 'RTR-B', 880, 300, { ip: '10.0.0.0/31', speed: 400 });
+        return { nodes: [a, ma, mb, z, ra, rb], links: [L(a, ma, 'patch', { mport: 3 }), L(ma, mb, 'fiber', { len: 8 }), L(mb, z, 'patch', { mport: 3 }),
+          L(ra, ma, 'patch', { hport: 0, optic: '400g-lr4' }), L(rb, mb, 'patch', { hport: 0, optic: '400g-lr4' })], g: { nch: 1, df: 100, launch: 0 }, svc: { a: a.id, z: z.id }, flows: [{ a: ra.id, z: rb.id, gbps: 300 }] };
       }
     },
     dark: {

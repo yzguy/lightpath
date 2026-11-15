@@ -2458,11 +2458,14 @@ test('txPower is the launch the simulation uses: the mode default or the set pow
 });
 
 test('a passive mux can have a 1310 nm port: grey client beside the DWDM channels, blocked by amplifiers', () => {
-  const S = M.sanitize(build('mux1310')), nm = (X, n) => X.nodes.find(x => x.name === n), r = M.simulate(S);
+  // the scenario's routers are cabled in; take them out to test the port's own optic setting (older labs)
+  const S = M.sanitize(build('mux1310')), nm = (X, n) => X.nodes.find(x => x.name === n);
+  S.nodes = S.nodes.filter(n => n.type !== 'host'); S.links = S.links.filter(l => S.nodes.some(n => n.id === l.a) && S.nodes.some(n => n.id === l.b)); S.flows = [];
+  const r = M.simulate(S);
   assert.equal(r.status, 'up');
-  // 12 km at 0.35 dB/km plus the 1.0 dB 1310 nm port loss at each mux
+  // 8 km at 0.35 dB/km plus the 1.0 dB 1310 nm port loss at each mux
   const l = r.b1310.links.find(x => x.aName === 'MUX-A' && x.bName === 'MUX-B');
-  assert.ok(Math.abs(l.loss - (12 * 0.35 + 2)) < 1e-9); assert.equal(l.status, 'up'); assert.equal(l.opticName, '10GBASE-LR');
+  assert.ok(Math.abs(l.loss - (8 * 0.35 + 2)) < 1e-9); assert.equal(l.status, 'up'); assert.equal(l.opticName, '10GBASE-LR');
   assert.ok(r.b1310.links.every(x => x.status !== 'blocked'), 'the transponder cables on channel ports are not 1310 nm paths');
   // the per-device 1310 nm port loss counts at each end
   const il = clone(S); nm(il, 'MUX-B').p.il1310 = 1.5; assert.ok(Math.abs(M.simulate(il).b1310.links[0].loss - (l.loss + 0.5)) < 1e-9);
@@ -2471,12 +2474,14 @@ test('a passive mux can have a 1310 nm port: grey client beside the DWDM channel
   const off = clone(S); nm(off, 'MUX-A').p.p1310 = false; const ro = M.simulate(off);
   assert.ok(Math.abs(hopMux(r) - (hopMux(ro) - 0.6)) < 1e-9);
   assert.ok(ro.b1310.links.some(x => x.aName === 'MUX-B' && x.status === 'blocked' && /MUX-A has no 1310 nm port/.test(x.why)));
-  // too long for 10GBASE-LR
+  // past the optic's rated reach the budget may close but it warns; much further it is down
+  const mid = clone(S); mid.links.find(x => x.kind === 'fiber').p.len = 12; const rm = M.simulate(mid).b1310.links[0];
+  assert.equal(rm.status, 'warn'); assert.match(rm.why, /beyond the 10 km/);
   const far = clone(S); far.links.find(x => x.kind === 'fiber').p.len = 40; const rf = M.simulate(far);
   assert.equal(rf.b1310.links[0].status, 'down'); assert.ok(rf.alarms.some(a => /1310 nm link MUX-A to MUX-B is down/.test(a.text)));
   // an EDFA between the muxes: the DWDM channel is amplified, the 1310 nm client is blocked (not amplified)
   const amp = clone(S), f = amp.links.find(x => x.kind === 'fiber'), e = { id: 'amp1', type: 'edfa', name: 'BST-A', x: 400, y: 220, p: { ...M.TYPES.edfa.def(), gmin: 0 } };
-  amp.nodes.push(e); amp.links.push({ id: 'lamp', a: e.id, b: f.b, kind: 'fiber', p: { ...M.linkDefaults('fiber'), len: 12 } }); f.b = e.id; f.kind = 'patch'; f.p = M.linkDefaults('patch');
+  amp.nodes.push(e); amp.links.push({ id: 'lamp', a: e.id, b: f.b, kind: 'fiber', p: { ...M.linkDefaults('fiber'), len: 8 } }); f.b = e.id; f.kind = 'patch'; f.p = M.linkDefaults('patch');
   const ra = M.simulate(M.sanitize(amp));
   assert.ok(ra.b1310.links.length && ra.b1310.links.every(x => x.status === 'blocked' && /BST-A \(EDFA\) blocks 1310 nm/.test(x.why)));
   assert.ok(!ra.b1310.links.some(x => x.rx != null));
@@ -2485,6 +2490,35 @@ test('a passive mux can have a 1310 nm port: grey client beside the DWDM channel
   assert.equal(b.o1310, '10g-lr'); assert.equal(b.il1310, 5); assert.equal(b.p1310, false);
   // an older lab without the fields gets the defaults
   const old = clone(S); delete nm(old, 'MUX-A').p.p1310; delete nm(old, 'MUX-A').p.il1310; const o = nm(M.sanitize(old), 'MUX-A').p; assert.equal(o.p1310, false); assert.equal(o.il1310, 1);
+});
+
+test('routers with grey optics cabled into the 1310 nm ports reach each other: router, patch, port, fiber, port, patch, router', () => {
+  const S = M.sanitize(build('mux1310')), nm = (X, n) => X.nodes.find(x => x.name === n), by = (X, id) => X.nodes.find(n => n.id === id), grey = X => X.links.filter(l => M.greyEnds(by(X, l.a), by(X, l.b))).sort((p, q) => (by(X, p.a).name + by(X, p.b).name).localeCompare(by(X, q.a).name + by(X, q.b).name));
+  const r = M.simulate(S), l = r.b1310.links.find(x => x.b);
+  assert.equal(r.b1310.links.length, 1);
+  assert.equal(l.aHost && l.bHost && [l.aHost, l.bHost].sort().join(), 'RTR-A,RTR-B'); assert.equal(l.opticName, '400GBASE-LR4-10');
+  // 8 km of fiber plus two 3 m patch cords at 0.35 dB/km, two 1.0 dB ports and two 0.5 dB patch cords; 400GBASE-LR4-10 launches +1 dBm
+  assert.ok(Math.abs(l.km - 8.006) < 1e-9); assert.ok(Math.abs(l.loss - (8.006 * 0.35 + 2 + 1)) < 1e-9); assert.ok(Math.abs(l.rx - (1 - l.loss)) < 1e-9); assert.equal(l.status, 'up');
+  assert.deepEqual(l.hops[0] === 'RTR-A' ? l.hops : [...l.hops].reverse(), ['RTR-A', 'MUX-A', 'MUX-B', 'RTR-B']);
+  // the cable's optic drives the port; the unit's own o1310 setting no longer matters
+  const o = clone(S); nm(o, 'MUX-A').p.o1310 = '25g-lr'; assert.equal(M.simulate(o).b1310.links[0].status, 'up');
+  // the hosts reach each other over it, and the traffic rides the 400G link
+  const R = M.reach(S, r); assert.equal(R.length, 1); assert.ok(R[0].ok, R[0].why); assert.equal(R[0].rate, 400); assert.ok(R[0].latencyUs > 8 * 4.9);
+  const T = M.traffic(S, r); assert.equal(T.flows[0].delivered, 300); assert.equal(T.channels[0].cap, 400); assert.match(T.channels[0].label, /1310 nm link/);
+  // mismatched optics, a port speed that does not match the optic, a cut patch cord
+  const mm = clone(S); grey(mm)[0].p.optic = '100g-lr4'; const rmm = M.simulate(mm); assert.match(rmm.b1310.links[0].why, /do not match/); assert.equal(M.reach(mm, rmm)[0].ok, false);
+  const sp = clone(S); nm(sp, 'RTR-B').p.speed = 100; const rsp = M.simulate(sp); assert.match(rsp.b1310.links[0].why, /RTR-B's port is 100G but 400GBASE-LR4-10 is 400G/);
+  const ct = clone(S); grey(ct)[1].p.cut = true; assert.match(M.simulate(ct).b1310.links[0].why, /cable from RTR-B is cut/);
+  // an amplifier in the way: blocked, and the reachability names it
+  const amp = clone(S), f = amp.links.find(x => x.kind === 'fiber'), e = { id: 'amp1', type: 'edfa', name: 'BST-A', x: 400, y: 220, p: { ...M.TYPES.edfa.def(), gmin: 0 } };
+  amp.nodes.push(e); amp.links.push({ id: 'lamp', a: e.id, b: f.b, kind: 'fiber', p: { ...M.linkDefaults('fiber'), len: 8 } }); f.b = e.id; f.kind = 'patch'; f.p = M.linkDefaults('patch');
+  const A2 = M.sanitize(amp), ra = M.simulate(A2), R2 = M.reach(A2, ra);
+  assert.equal(R2[0].ok, false); assert.match(R2[0].why, /BST-A \(EDFA\) blocks 1310 nm/);
+  // a host cabled into a mux without a 1310 nm port goes nowhere
+  const np = clone(S); nm(np, 'MUX-A').p.p1310 = false; assert.ok(M.simulate(np).b1310.links.some(x => x.status === 'blocked' && /MUX-A has no 1310 nm port: turn it on/.test(x.why)));
+  // sanitize: a non-1310 optic on a grey cable falls back to the one for the host's speed; a host-to-transponder cable carries no optic
+  const bo = clone(S); grey(bo)[0].p.optic = '10g-er'; assert.equal(grey(M.sanitize(bo))[0].p.optic, '400g-lr4');
+  assert.ok(M.sanitize(build('reach')).links.every(x => x.p.optic === '' || x.kind === 'fiber'));
 });
 
 test('a 1310 nm port on an OADM reaches a mux with one', () => {
