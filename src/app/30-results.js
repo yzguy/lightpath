@@ -180,7 +180,7 @@ const tabAvailable = k => {
   const has = t => S.nodes.some(n => n.type === t);
   switch (k) {
     case 'clients': return has('mxp');
-    case 'reach': return has('host') || S.nodes.some(n => n.type === 'oadm' && (n.p.osc || n.p.p1310));
+    case 'reach': return has('host') || S.nodes.some(n => (n.type === 'oadm' && (n.p.osc || n.p.p1310)) || (n.type === 'mux' && n.p.p1310));
     case 'otdr': return has('otdr');
     case 'raman': return expert || S.links.some(l => +l.p.raman > 0 || +l.p.ramanRev > 0);
     case 'resil': return expert || !!chal.active || has('switch') || S.links.some(l => l.p.srlg) || S.nodes.some(n => isEnd(n) && (n.p.prot || n.p.spare)) || !!(S.g.plan && S.g.plan.some(c => c.prot));

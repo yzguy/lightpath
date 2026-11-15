@@ -143,6 +143,7 @@ function nodeShape(n) {
     g.append(sv('path', { d: 'M-30,-30 L30,-14 L30,14 L-30,30 Z', class: 'body' }));
     for (let i = -2; i <= 2; i++) g.append(sv('line', { x1: -30, y1: i * 10, x2: -14, y2: i * 4, class: 'thin' }));
     g.append(sv('line', { x1: 0, y1: 0, x2: 30, y2: 0, class: 'thin' }));
+    if (n.p.p1310) { g.append(sv('line', { x1: 14, y1: 0, x2: 14, y2: 30, class: 'thin' }), sv('circle', { cx: 14, cy: 32, r: 2.5, class: 'led' })); const e = sv('text', { x: 20, y: 36, class: 'glyph small' }); e.textContent = '1310'; g.append(e); }
   } else if (n.type === 'panel') {
     g.append(sv('rect', { x: -40, y: -16, width: 80, height: 32, rx: 3, class: 'body' }));
     const t = sv('text', { x: -34, y: -4, class: 'glyph small' }); t.textContent = `ODF ${n.p.ports}`; g.append(t);

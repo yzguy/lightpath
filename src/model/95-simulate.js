@@ -194,11 +194,12 @@
       const tv = pd(nxt.p, 'target'), target = tv === '' || tv == null ? +g.launch : +tv;
       if (t === 'mux') {
         const joins = isEnd(prv), drops = isEnd(nnext);
-        const b = snap(); loss(+nxt.p.il + degOf(nxt));
+        // a 1310 nm port puts a wideband filter on the common port, which costs the C-band channels a little more loss
+        const il = +nxt.p.il + (nxt.p.p1310 ? P1310_LOSS : 0), b = snap(); loss(il + degOf(nxt));
         if (joins) nch = nchLine;
         if (drops) nch = 1;
         if (planOn) { if (!drops) nch = litCount(i + 1); curAct = maskAt(i + 1); }
-        rec(nxt.name, 'mux', b, { gain: -nxt.p.il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
+        rec(nxt.name, 'mux', b, { gain: -il, note: joins ? 'mux: channel joins the line' : drops ? 'demux: channel dropped' : '' });
       } else if (t === 'oadm') {
         // Passive add/drop filter: through channels take the small pass-through loss with no equalisation; channels added or dropped take the add/drop
         // loss (a transponder plugged into a port, or a plan channel that starts or ends here); added ones join at their own transmit power less the
@@ -268,7 +269,7 @@
     if (isEnd(Z) && spareLoss(Z)) loss(spareLoss(Z)); // the switch or y-cable in front of the receiver
     for (const f of failovers) alarms.push({ sev: 'info', text: `${f.name} moved from port ${f.from.toUpperCase()} to port ${f.to.toUpperCase()}: the light is on the protection path. ${f.revertive ? `It goes back to port ${f.from.toUpperCase()} after the repair and ${f.wtrMin} min of stable light (wait-to-restore), with a second short hit.` : `It stays on port ${f.to.toUpperCase()} after the repair (non-revertive), and port ${f.from.toUpperCase()} becomes the standby.`}` });
     const res = { failovers, mode, modeKey, A, Z, path, raman: ramanViews, hops, alarms, km, cd, dgd: Math.sqrt(dgd2), passes, g, rerouteCut, txDbm };
-    if (!eol && !rv && !W && S.nodes.some(n => n.type === 'oadm' && (n.p.p1310 || n.p.osc))) {
+    if (!eol && !rv && !W && S.nodes.some(n => (n.type === 'oadm' && (n.p.p1310 || n.p.osc)) || (n.type === 'mux' && n.p.p1310))) {
       res.b1310 = band1310(S); res.osc = oscSpans(S);
       for (const r of res.b1310.links) if (r.status === 'down' || (r.status === 'warn' && /overload/.test(r.why))) alarms.push({ sev: 'warn', text: `The 1310 nm link ${r.aName} to ${r.bName} ${r.status === 'down' ? 'is down' : 'is overloaded'}: ${r.why}.` });
       if (res.osc) {

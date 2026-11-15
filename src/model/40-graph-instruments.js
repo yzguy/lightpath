@@ -114,27 +114,30 @@
   }
 
   // ---------- 1310 nm ports and the 1510 nm supervisory channel ----------
-  // An OADM's 1310 nm port carries a legacy grey client optic. That light bypasses the C-band filters, so it only sees fiber (about 0.35 dB/km), patch
-  // panel ports and the couplers of the OADMs at both ends; amplifiers, ROADMs, muxes and every other active or filtered device block it.
+  // A passive mux or OADM can have a 1310 nm port (the 1310 "upgrade" or pass port of CWDM/DWDM filter units): a wideband filter on the common/line port
+  // that adds a legacy grey 1310 nm client beside the C-band channels. That light bypasses the channel filters, so it only sees fiber (about 0.35 dB/km),
+  // patch panel ports and the 1310 nm port insertion loss (il1310) of the units at both ends. It has to reach another mux or OADM with a 1310 nm port:
+  // an EDFA blocks it (erbium gives no gain at 1310 nm, and its WDM couplers and isolators reject it), and so do ROADMs and muxes or OADMs without the port.
   // The optical supervisory channel (OSC) is different: it sits at 1510 nm, outside the C band, and every amplifier and ROADM on the line has a filter that
   // drops it, regenerates it and adds it again, so it is judged span by span and the chain of sites carries management traffic end to end. Passive muxes,
   // splitters and switches have no such filter and block it.
   const OSC = { name: 'Supervisory channel (1510 nm, 1.25 Gb/s)', nm: 1510, att: 0.25, tx: -3, rxMin: -28, rxMax: -8, filter: 1.0 };
   const optic1310 = k => PHY_.CLIENT_OPTICS[k];
   function band1310(S) {
-    const { node, link } = mkGraph(S), out = [], seen = new Set(), ends = S.nodes.filter(n => n.type === 'oadm' && n.p.p1310);
+    const { node, link } = mkGraph(S), out = [], seen = new Set(), has1310 = n => (n.type === 'oadm' || n.type === 'mux') && n.p.p1310, ends = S.nodes.filter(has1310);
     const sideOf = (l, id) => (l.a === id ? l.p.sa : l.p.sb);
     for (const a of ends) {
       if (isDead(a)) continue;
       for (const l0 of S.links) {
-        if (l0.kind !== 'fiber' || (l0.a !== a.id && l0.b !== a.id)) continue;
-        let l = l0, cur = a.id, km = 0, extra = P1310_LOSS, why = '', hops = [a.name], b = null;
+        // the line (common) cables of the unit, not the transponder cables on its channel ports
+        if ((l0.kind !== 'fiber' && l0.kind !== 'patch') || (l0.a !== a.id && l0.b !== a.id) || isEnd(node(l0.a === a.id ? l0.b : l0.a))) continue;
+        let l = l0, cur = a.id, km = 0, extra = +a.p.il1310, why = '', hops = [a.name], b = null;
         for (let guard = 0; guard < 40; guard++) {
           if (isCut(S, l)) { why = `the fiber ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; break; }
           km += l.kind === 'fiber' ? +l.p.len : patchKm(l);
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid); hops.push(n.name);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
-          if (n.type === 'oadm' && n.p.p1310) { b = n; extra += P1310_LOSS; break; }
+          if (has1310(n)) { b = n; extra += +n.p.il1310; break; }
           if (n.type === 'panel') {
             const m = /^([rf])(\d+)$/.exec(arr || ''); if (!m) { why = `${n.name}: the cable does not name a port`; break; }
             const outSide = (m[1] === 'r' ? 'f' : 'r') + m[2], nx = S.links.find(x => x !== l && (x.a === nid || x.b === nid) && sideOf(x, nid) === outSide);
@@ -142,7 +145,9 @@
             if (!nx) { why = `nothing is cabled to ${n.name} ${outSide.toUpperCase()}`; break; }
             cur = nid; l = nx; continue;
           }
-          why = n.type === 'oadm' ? `${n.name} has no 1310 nm port` : `${n.name} (${(TYPES[n.type] || {}).label || n.type}) does not pass 1310 nm light`; break;
+          why = n.type === 'oadm' || n.type === 'mux' ? `${n.name} has no 1310 nm port`
+            : n.type === 'edfa' ? `${n.name} (EDFA) blocks 1310 nm: erbium has no gain there, and its input filter and isolators reject it`
+            : `${n.name} (${(TYPES[n.type] || {}).label || n.type}) does not pass 1310 nm light`; break;
         }
         if (b) {
           const key = [a.id, b.id].sort().join('|') + '|' + [l0.id, l.id].sort().join('|'); if (seen.has(key)) continue; seen.add(key);

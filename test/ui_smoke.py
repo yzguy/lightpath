@@ -236,6 +236,22 @@ class UI(unittest.TestCase):
         table.locator('tr.on').first.click()
         self.assertEqual(pg.locator('#f-name').input_value(), 'TRX-A1')
 
+    def test_mux_1310_port(self):
+        pg = self.page
+        self.explore('ports')
+        self.node('MUX-A').click()
+        self.assertEqual(pg.locator('#f-o1310').count(), 0, 'the optic picker shows only when the port is on')
+        pg.select_option('#f-p1310', 'true')
+        pg.select_option('#f-o1310', '100g-lr4')
+        pg.fill('#f-il1310', '0.8')
+        pg.locator('#f-il1310').dispatch_event('input')
+        self.assertIn('1310', self.node('MUX-A').text_content())
+        self.open_tab('Results', 'Reachability')
+        body = pg.locator('#tabbody').inner_text()
+        self.assertIn('1310 nm ports', body)
+        self.assertIn('BLOCKED', body)  # the booster between the muxes blocks it
+        self.assertIn('EDFA', body)
+
     def test_port_labels_clear_the_devices(self):
         self.explore()
         for preset in self.page.evaluate("[...document.querySelectorAll('#preset option')].map(o => o.value).filter(Boolean)"):

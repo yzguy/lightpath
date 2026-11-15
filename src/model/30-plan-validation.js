@@ -134,7 +134,12 @@
           p.sides = ['ew', 'e', 'w'].includes(raw.sides) ? raw.sides : 'ew';
           if (legacy && legacy.length) { p.eFirst = p.wFirst = legacy[0]; p.ePorts = p.wPorts = Math.min(64, legacy[legacy.length - 1] - legacy[0] + 1); }
           else { p.eFirst = num(raw.eFirst, 24, 0, 127); p.ePorts = num(raw.ePorts, 4, 0, 64); p.wFirst = num(raw.wFirst, 24, 0, 127); p.wPorts = num(raw.wPorts, 4, 0, 64); }
-          p.osc = raw.osc === true || (raw.p1310 === true && raw.o1310 === 'osc'); p.p1310 = raw.p1310 === true && raw.o1310 !== 'osc'; p.o1310 = PHY_.CLIENT_OPTICS[raw.o1310] && PHY_.CLIENT_OPTICS[raw.o1310].nm === 1310 ? raw.o1310 : '10g-lr'; delete p.slots;
+          p.osc = raw.osc === true || (raw.p1310 === true && raw.o1310 === 'osc'); p.p1310 = raw.p1310 === true && raw.o1310 !== 'osc'; delete p.slots;
+        }
+        if (n.type === 'mux' || n.type === 'oadm') { // the optional 1310 nm port: a grey 1310 nm optic only, and its own insertion loss
+          const raw = n.p || {}; if (n.type === 'mux') p.p1310 = raw.p1310 === true;
+          p.o1310 = PHY_.CLIENT_OPTICS[raw.o1310] && PHY_.CLIENT_OPTICS[raw.o1310].nm === 1310 ? raw.o1310 : '10g-lr';
+          p.il1310 = Math.min(5, Math.max(0, +p.il1310));
         }
       }
       if (isEnd(n)) {
