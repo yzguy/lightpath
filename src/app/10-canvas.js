@@ -179,10 +179,11 @@ function nodeShape(n) {
     for (let k = 0; k < n.p.ports; k++) g.append(sv('circle', { cx: 30 - k * 9, cy: -14, r: 2.2, class: 'led' }));
   } else if (n.type === 'oadm') {
     g.append(sv('rect', { x: -34, y: -20, width: 68, height: 40, rx: 4, class: 'body' }));
-    g.append(sv('line', { x1: -34, y1: 0, x2: 34, y2: 0, class: 'thin' }));
-    g.append(sv('path', { d: 'M-8,0 L-8,-20 M8,0 L8,20', class: 'thin' }));
+    // three boxes: OADM across the top, then W and E below. A side with no add/drop filter is shaded and its letter dimmed.
+    for (const sd of ['w', 'e']) if (!n.p.sides.includes(sd)) g.append(sv('path', { d: sd === 'w' ? 'M-34,0 H0 V20 H-30 A4,4 0 0 1 -34,16 Z' : 'M0,0 H34 V16 A4,4 0 0 1 30,20 H0 Z', class: 'oside-off' }));
+    g.append(sv('path', { d: 'M-34,0 H34 M0,0 V20', class: 'thin' }));
     const t = sv('text', { x: 0, y: -6, class: 'glyph small', 'text-anchor': 'middle' }); t.textContent = 'OADM'; g.append(t);
-    for (const [sd, x] of [['w', -26], ['e', 26]]) if (n.p.sides.includes(sd)) { const e = sv('text', { x, y: 14, class: 'glyph small', 'text-anchor': 'middle' }); e.textContent = sd.toUpperCase(); g.append(e); }
+    for (const [sd, x] of [['w', -17], ['e', 17]]) { const e = sv('text', { x, y: 14, class: 'glyph small' + (n.p.sides.includes(sd) ? '' : ' oside-dim'), 'text-anchor': 'middle' }); e.textContent = sd.toUpperCase(); g.append(e); }
     if (n.p.p1310 || n.p.osc) { g.append(sv('line', { x1: 0, y1: 20, x2: 0, y2: 30, class: 'thin' }), sv('circle', { cx: 0, cy: 32, r: 2.5, class: 'led' })); const e = sv('text', { x: 8, y: 36, class: 'glyph small' }); e.textContent = n.p.osc && n.p.p1310 ? 'OSC 1310' : n.p.osc ? 'OSC' : '1310'; g.append(e); }
   } else if (n.type === 'edfa') {
     if (oneWayAmp(n)) { g.append(sv('path', { d: 'M-26,-26 L30,0 L-26,26 Z', class: 'body' })); const t = sv('text', { x: -18, y: 4, class: 'glyph small' }); t.textContent = 'EDFA'; g.append(t); }
