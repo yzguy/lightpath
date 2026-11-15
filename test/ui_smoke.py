@@ -67,12 +67,13 @@ class UI(unittest.TestCase):
         return self.page.locator('.node', has=self.page.get_by_text(name, exact=True)).first  # exact: a status tooltip can name other devices
 
     def handle_drag(self, frm, to):
+        """Pick the cable tool the two ends call for (patch or fiber), then drag from one device to the other."""
         pg = self.page
-        n = self.node(frm)
-        n.hover()
-        h = n.locator('.chandle').bounding_box()
+        kind = pg.evaluate("([a, b]) => { const S = JSON.parse(localStorage.getItem('lightpath-v1')), f = n => S.nodes.find(x => x.name === n); return MODEL.cableKind(f(a), f(b)); }", [frm, to])
+        pg.click(f'.tool[data-tool="{kind}"]')
+        f = self.node(frm).bounding_box()
         t = self.node(to).bounding_box()
-        pg.mouse.move(h['x'] + h['width'] / 2, h['y'] + h['height'] / 2)
+        pg.mouse.move(f['x'] + f['width'] / 2, f['y'] + f['height'] / 2)
         pg.mouse.down()
         pg.mouse.move(t['x'] + t['width'] / 2, t['y'] + t['height'] / 2, steps=6)
         pg.mouse.up()
@@ -88,6 +89,7 @@ class UI(unittest.TestCase):
             sel.select_option(want if want else sel.evaluate("s => [...s.options].find(o => o.value && !o.disabled).value"))
         pick.locator('button', has_text='Connect').click()
         pg.wait_for_timeout(100)
+        pg.click('.tool[data-tool="select"]')
 
     def add(self, kind):
         self.page.locator(f'.pal-item[data-type={kind}]').click()
@@ -265,6 +267,15 @@ class UI(unittest.TestCase):
         self.assertIn('1310 nm ports', body)
         self.assertIn('BLOCKED', body)  # the booster between the muxes blocks it
         self.assertIn('EDFA', body)
+
+    def test_no_cable_handle_and_hosts_have_no_address(self):
+        pg = self.page
+        self.explore('reach')
+        self.assertEqual(pg.locator('.chandle').count(), 0, 'devices are cabled with the Patch and Fiber tools, not a + handle')
+        self.assertNotIn('no address', pg.locator('#cv').text_content())
+        self.assertIn('1 × 100G', pg.locator('#cv').text_content())
+        self.node('HOST-A1').click()
+        self.assertEqual(pg.locator('#f-ip').count(), 0, 'no address field')
 
     def test_router_cabled_into_1310_port(self):
         pg = self.page

@@ -146,7 +146,7 @@
       for (const l0 of S.links) {
         // the line (common) cables of the unit, not the transponder cables on its channel ports or the host cable on its 1310 nm port
         if ((l0.kind !== 'fiber' && l0.kind !== 'patch') || (l0.a !== a.id && l0.b !== a.id) || l0 === pa.cable) { continue; }
-        { const o = node(l0.a === a.id ? l0.b : l0.a), k = portKind(a, endPort(S, l0, a)); if (!o || (k !== 'com' && k !== 'oline')) continue; } // only the line side (COM, or an OADM's Line W/E) carries the 1310 nm band
+        if (!node(l0.a === a.id ? l0.b : l0.a) || endPort(S, l0, a) !== line1310(a)) continue; // only the line port the 1310 nm filter sits on carries the band: COM, or one of an OADM's Line W/E (the other line is express and never sees it)
         let l = l0, cur = a.id, km = 0, extra = +a.p.il1310, why = '', hops = [a.name], b = null;
         const rl = [l0.id], rn = [a.id]; // the cables and devices the light goes through, in order, for the canvas
         for (let guard = 0; guard < 40; guard++) {
@@ -154,7 +154,7 @@
           km += l.kind === 'fiber' ? +l.p.len : patchKm(l);
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid); hops.push(n.name); rn.push(nid);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
-          if (has1310(n)) { b = n; extra += +n.p.il1310; break; }
+          if (has1310(n)) { const ip = endPort(S, l, n); if (n.type === 'oadm' && ip !== line1310(n)) { why = `${n.name}'s 1310 nm port is on Line ${line1310(n)[1]}, but this fiber arrives on ${ip ? 'Line ' + ip[1] : 'another port'}`; break; } b = n; extra += +n.p.il1310; break; }
           if (n.type === 'panel') {
             const m = /^([rf])(\d+)$/.exec(arr || ''); if (!m) { why = `${n.name}: the cable does not name a port`; break; }
             const outSide = (m[1] === 'r' ? 'f' : 'r') + m[2], nx = S.links.find(x => x !== l && (x.a === nid || x.b === nid) && sideOf(x, nid) === outSide);

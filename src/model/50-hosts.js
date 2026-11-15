@@ -1,13 +1,6 @@
   // ---------- hosts: reachability and traffic over the optical network ----------
   const HOST_SPEEDS = [1, 10, 25, 40, 50, 100, 200, 400, 800];
   const LAT = { fiberUsPerKm: 4.9, coherentUs: 10, directUs: 1 }; // propagation in glass, and the DSP/FEC delay of one coherent (or one direct-detect) transceiver; representative
-  function parseIp(str) {
-    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(String(str || '').trim()); if (!m) return null;
-    const o = m.slice(1, 5).map(Number), pl = +m[5]; if (o.some(x => x > 255) || pl > 32) return null;
-    const addr = (((o[0] << 24) >>> 0) + (o[1] << 16) + (o[2] << 8) + o[3]) >>> 0, mask = pl === 0 ? 0 : (0xFFFFFFFF << (32 - pl)) >>> 0;
-    return { addr, mask, net: (addr & mask) >>> 0, pl, text: `${o.join('.')}/${pl}` };
-  }
-  const fmtNet = x => [24, 16, 8, 0].map(sh => (x.net >>> sh) & 255).join('.') + '/' + x.pl;
   // the lit channels that could carry host traffic: one entry per plan channel (or the service alone), with the two transponders at its ends
   function channelTable(S, res) {
     const E = effective(S), plan = E.g.plan, a = S.svc && S.svc.a, z = S.svc && S.svc.z, out = [];
@@ -24,7 +17,7 @@
     return { us, km };
   }
   // Can host A reach host Z? Every step the packet needs is checked in order, so the first one that fails says what is wrong:
-  // the client cable and optic at each end, the transponders, the channel between them, its optical status, and the addresses.
+  // the client cable and optic at each end, the transponders, the channel between them, and its optical status. Only the links matter: there are no IP addresses.
   function reach(S, res) {
     useGrid(S);
     const { node } = mkGraph(S), hosts = S.nodes.filter(n => n.type === 'host'), tbl = channelTable(S, res), out = [];
@@ -32,10 +25,6 @@
     // hosts patched into the 1310 nm port of a mux or OADM reach each other over the grey 1310 nm link between the two units, with no transponder
     const greyOf = h => S.links.some(l => (l.a === h.id || l.b === h.id) && cableRole(S, l).role === 'grey');
     const G = S.links.some(l => cableRole(S, l).role === 'grey') ? ((res && res.b1310) || band1310(S)).links : [];
-    const addrs = (A, Z, steps) => { const ia = parseIp(A.p.ip), iz = parseIp(Z.p.ip);
-      if (ia && iz && ia.addr === iz.addr) return `both hosts use the address ${ia.text.split('/')[0]}`;
-      if (ia && iz && (ia.net !== iz.net || ia.pl !== iz.pl)) return `${A.name} is on ${fmtNet(ia)} and ${Z.name} on ${fmtNet(iz)}: different subnets need a router, and a host cannot reach across them`;
-      if (ia && iz) steps.push({ ok: true, text: `Both hosts are on ${fmtNet(ia)}` }); return ''; };
     const viaGrey = (A, Z) => {
       const steps = [], fail = text => { steps.push({ ok: false, text }); return { steps, ok: false }; };
       const r = G.find(x => x.b && ((x.hostA === A.id && x.hostB === Z.id) || (x.hostA === Z.id && x.hostB === A.id)));
@@ -43,7 +32,6 @@
       steps.push({ ok: true, text: `${A.name} and ${Z.name} are patched into the 1310 nm ports of ${r.aName} and ${r.bName}${r.opticName ? ` (${r.opticName})` : ''}` });
       if (r.status === 'down') return fail(`the 1310 nm link is DOWN: ${r.why}`);
       steps.push({ ok: true, text: `The 1310 nm link ${r.aName}–${r.bName} is ${r.status === 'warn' ? 'up with a warning' : 'UP'}: ${f1(r.margin)} dB of margin${r.why ? ' (' + r.why + ')' : ''}` });
-      const bad = addrs(A, Z, steps); if (bad) return fail(bad);
       return { steps, ok: true, entry: { i: 'g:' + [r.a, r.b].sort().join('-'), slot: null, label: `1310 nm link ${r.aName}–${r.bName}`, ch: { status: r.status === 'warn' ? 'degraded' : 'up', rate: r.rate } }, rate: r.rate, latencyUs: r.km * LAT.fiberUsPerKm + 2 * LAT.directUs, km: r.km, degraded: r.status === 'warn', cp: 0 };
     };
     const cables = h => S.links.filter(l => l.kind === 'patch' && (l.a === h.id || l.b === h.id)).map(l => ({ l, end: node(l.a === h.id ? l.b : l.a) })).filter(x => x.end && isEnd(x.end) && cableRole(S, x.l).role === 'client'); // a host cable into a transponder's line port is not a client connection: the fault list says why
@@ -88,12 +76,8 @@
             else if (['down', 'los', 'blocked', 'nopath', 'standby', 'unreachable'].includes(en.ch.status)) { steps.push({ ok: true, text: `Channel ${en.slot != null ? 'in slot ' + (en.slot + 1) : 'of the service'} joins ${sa.e.name} and ${sz.e.name}` }); r = fail(`the channel is ${en.ch.status.toUpperCase()}: ${(en.ch.notes && en.ch.notes[0]) || 'no light reaches the far end'}`); }
             else {
               steps.push({ ok: true, text: `Channel ${en.slot != null ? 'in slot ' + (en.slot + 1) : 'of the service'} joins ${sa.e.name} and ${sz.e.name} and is ${en.ch.status.toUpperCase()}${en.ch.qMargin != null ? ` (${en.ch.qMargin.toFixed(1)} dB Q margin)` : ''}` });
-              const bad = addrs(A, Z, steps);
-              if (bad) r = fail(bad);
-              else {
-                const lt = latencyUs(S, en);
-                r = { steps, ok: true, entry: en, rate: Math.min(sa.rate, sz.rate), latencyUs: lt.us, km: lt.km, degraded: en.ch.status === 'degraded', cp: sa.cp };
-              }
+              const lt = latencyUs(S, en);
+              r = { steps, ok: true, entry: en, rate: Math.min(sa.rate, sz.rate), latencyUs: lt.us, km: lt.km, degraded: en.ch.status === 'degraded', cp: sa.cp };
             }
           }
         }

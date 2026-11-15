@@ -1767,9 +1767,9 @@ test('reachability: each thing that can be wrong says so, in the order a packet 
   assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /100GBASE-LR4 \(100G\) but HOST-B1's port is 10G/);
   S = M.sanitize(build('reach')); S.links.find(l => l.kind === 'fiber').p.cut = true;
   assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /channel is LOS/);
-  S = M.sanitize(build('reach')); S.nodes.find(n => n.name === 'HOST-B1').p.ip = '10.0.1.2/24';
-  assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /different subnets/);
-  S.nodes.find(n => n.name === 'HOST-B1').p.ip = '10.0.0.1/24'; assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /both hosts use the address/);
+  // only links count: hosts have no addresses, so anything an older lab put there does not matter
+  S = M.sanitize(build('reach')); Object.assign(S.nodes.find(n => n.name === 'HOST-B1').p, { ip: '10.0.1.2/24' });
+  assert.equal(hostPair(S, 'HOST-A1', 'HOST-B1').ok, true);
   S = M.sanitize(build('reach')); S.nodes.find(n => n.name === 'MXP-B').p.mode = 'zr400';
   assert.match(hostPair(S, 'HOST-A1', 'HOST-B1').why, /will never lock/);
   S = M.sanitize(build('reach')); S.links = S.links.filter(l => !(l.p.hport != null && S.nodes.find(n => n.id === (l.a === S.nodes.find(x => x.name === 'HOST-A1').id ? l.a : l.b)).name === 'HOST-A1'));
@@ -1788,12 +1788,12 @@ test('traffic: flows are capped by the host port and share the channel, with the
   assert.equal(M.traffic(S, M.simulate(S)).flows.every(x => x.delivered === 0 && !x.ok), true);
 });
 
-test('hosts: sanitize keeps valid addresses, speeds, ports and flows, and drops junk', () => {
+test('hosts: sanitize drops addresses, keeps valid speeds, ports and flows, and drops junk', () => {
   const S = build('reach'), h = S.nodes.find(n => n.name === 'HOST-A1');
   Object.assign(h.p, { ip: '999.1.1.1/24', speed: 77, ports: 99 }); S.flows.push({ a: h.id, z: h.id, gbps: 5 }, { a: 'x', z: h.id, gbps: 5 }, { a: h.id, z: S.nodes.find(n => n.name === 'HOST-B1').id, gbps: 'lots' });
   S.links.find(l => l.p.hport === 0).p.cport = 9;
   const c = M.sanitize(clone(S)), ch = c.nodes.find(n => n.name === 'HOST-A1');
-  assert.equal(ch.p.ip, ''); assert.equal(ch.p.speed, 100); assert.equal(ch.p.ports, 8); assert.equal(c.flows.length, 3, 'the three good flows survive');
+  assert.ok(!('ip' in ch.p), 'an older lab loses its addresses'); assert.equal(ch.p.speed, 100); assert.equal(ch.p.ports, 8); assert.equal(c.flows.length, 3, 'the three good flows survive');
   assert.equal(c.links.filter(l => l.p.cport === 9).length, 0);
   assert.equal(c.links.find(l => l.kind === 'fiber').p.hport, null);
   assert.ok(M.route(c, c.svc.a, c.svc.z, true), 'hosts never become part of the light path');
@@ -2543,8 +2543,24 @@ test('routers with grey optics cabled into the 1310 nm ports reach each other: r
 
 test('a 1310 nm port on an OADM reaches a mux with one', () => {
   const S = M.sanitize(build('osc')), nm = n => S.nodes.find(x => x.name === n);
-  nm('MUX-Z').p.p1310 = true; const r = M.simulate(S), l = r.b1310.links.find(x => [x.aName, x.bName].sort().join() === 'MUX-Z,OADM-3');
+  nm('MUX-Z').p.p1310 = true; const pair = X => X.b1310.links.find(x => [x.aName, x.bName].sort().join() === 'MUX-Z,OADM-3');
+  // MUX-Z is on OADM-3's Line E, but its 1310 nm port is on Line W (the default): the light arriving there is blocked
+  const r0 = M.simulate(S); assert.ok(!pair(r0)); assert.ok(r0.b1310.links.some(x => x.aName === 'MUX-Z' && x.status === 'blocked' && /OADM-3's 1310 nm port is on Line W, but this fiber arrives on Line E/.test(x.why)));
+  nm('OADM-3').p.side1310 = 'e'; const r = M.simulate(S), l = pair(r);
   assert.ok(l && l.status === 'up'); assert.ok(Math.abs(l.loss - (0.6 + 1 + 0.35 * l.km)) < 1e-9);
+});
+
+test('an OADM\'s 1310 nm port goes out one line only: a host on it is not drawn down the express side too', () => {
+  // OADM-2 is East and West with its 1310 nm port on Line W toward OADM-1; Line E goes to an amplifier. Only the W route exists, so no blocked row runs down the host cable.
+  const S = M.sanitize(build('osc')), nm = n => S.nodes.find(x => x.name === n), rows = X => M.simulate(X).b1310.links.filter(x => x.a === nm('OADM-2').id || x.b === nm('OADM-2').id);
+  assert.deepEqual(rows(S).map(x => [x.aName, x.bName, x.status]), [['OADM-1', 'OADM-2', 'warn']]);
+  // a single-sided OADM always has the port on Line W, whatever side1310 says; sanitize enforces it
+  const one = clone(S); Object.assign(one.nodes.find(x => x.name === 'OADM-2').p, { sides: 'w', side1310: 'e' }); const o = M.sanitize(one);
+  assert.equal(o.nodes.find(x => x.name === 'OADM-2').p.side1310, 'w'); assert.equal(rows(o).length, 1);
+  // flipped to Line E: the route toward OADM-1 goes, and the one toward the amplifier is blocked by it
+  const e = clone(S); e.nodes.find(x => x.name === 'OADM-2').p.side1310 = 'e';
+  const re = M.simulate(e).b1310.links; assert.ok(!re.some(x => x.b && [x.aName, x.bName].includes('OADM-2'))); assert.ok(re.some(x => x.aName === 'OADM-2' && x.status === 'blocked' && /AMP-C/.test(x.why)));
+  assert.match(M.portsOf(S, nm('OADM-2')).find(p => p.id === '1310').label, /on Line W/);
 });
 
 test('ports: every device has a fixed list of duplex ports, and an older lab gets the ports its cabling implies', () => {
