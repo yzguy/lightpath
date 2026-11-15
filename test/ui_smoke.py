@@ -363,6 +363,19 @@ class UI(unittest.TestCase):
         types = pg.eval_on_selector_all('#f-sides option', 'os => os.map(o => [o.value, o.textContent])')
         self.assertEqual(types, [['ew', 'East and West'], ['w', 'East or West']], 'two OADM types, a single-sided one has its channels on West')
 
+    def test_parallel_cables_do_not_overlap(self):
+        """Two cables between the same devices, one drawn each way, sit side by side instead of on top of each other."""
+        pg = self.page
+        pg.click('#w-blank')
+        o, pn = self.add('oadm'), self.add('panel')
+        self.cable(pn, o, 'f2', 'LW')
+        self.cable(o, pn, 'LE', 'f3')
+        self.assertEqual(self.links(), 2)
+        mids = pg.eval_on_selector_all('.link .wire', "ws => ws.map(w => [(+w.getAttribute('x1') + +w.getAttribute('x2')) / 2, (+w.getAttribute('y1') + +w.getAttribute('y2')) / 2])")
+        self.assertEqual(len(mids), 2)
+        (x0, y0), (x1, y1) = mids
+        self.assertGreater(((x0 - x1) ** 2 + (y0 - y1) ** 2) ** 0.5, 10, 'the two cables are drawn apart')
+
     def test_oadm_has_a_1310_port_per_side(self):
         pg = self.page
         pg.click('#w-blank')
