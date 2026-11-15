@@ -6,16 +6,19 @@
   --accent: #b88400; --accent-text: #8a6200; --accent-ink: #1a1400; --jacket: #e2b100;
   --sig: #087a72; --ase: #c2413a; --nli: #6b4fbf; --mpi: #a8742b;
   --good: #1d8048; --warn: #956000; --bad: #c0352b; --gap: rgba(8,122,114,.10);
+  --svc: #087a72; --svc-edge: #ffffff; --svc-glow: 0%;
   --f-ui: 'Archivo', system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; --f-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
   --bg: #0c1311; --panel: #121b19; --raised: #18231f; --ink: #e2ebe7; --muted: #8b9d97; --line: #26332f; --grid: #1b2622;
   --accent: #f0c23a; --accent-text: #f0c23a; --accent-ink: #1a1400; --jacket: #f0c23a;
-  --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --mpi: #e0a35c; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10); color-scheme: dark } }
+  --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --mpi: #e0a35c; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10);
+  --svc: #5ff5e3; --svc-edge: #0c1311; --svc-glow: 55%; color-scheme: dark } }
 :root[data-theme="dark"] {
   --bg: #0c1311; --panel: #121b19; --raised: #18231f; --ink: #e2ebe7; --muted: #8b9d97; --line: #26332f; --grid: #1b2622;
   --accent: #f0c23a; --accent-text: #f0c23a; --accent-ink: #1a1400; --jacket: #f0c23a;
-  --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --mpi: #e0a35c; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10); color-scheme: dark }
+  --sig: #3fd2c4; --ase: #ff7b70; --nli: #ad93ff; --mpi: #e0a35c; --good: #4cc98a; --warn: #f0b03a; --bad: #ff6b5e; --gap: rgba(63,210,196,.10);
+  --svc: #5ff5e3; --svc-edge: #0c1311; --svc-glow: 55%; color-scheme: dark }
 * { box-sizing: border-box }
 [hidden] { display: none !important }
 body { background: var(--bg); color: var(--ink); font-family: var(--f-ui); font-size: 14px; padding: 12px 16px 32px }
@@ -154,9 +157,11 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1 } /*
 .llabel { font-family: var(--f-mono); font-size: calc(11px * var(--lf2, 1)); fill: var(--ink); paint-order: stroke; stroke: var(--panel); stroke-width: calc(4px * var(--lf2, 1)); pointer-events: none }
 .llabel.lbg { fill: var(--muted); font-size: calc(10px * var(--lf2, 1)) }
 .cutmark { font-size: 20px; fill: var(--bad); font-weight: 700 }
-.lightpath { stroke: var(--sig); stroke-width: 2.5; stroke-dasharray: 3 9; stroke-linecap: round; fill: none; pointer-events: none; animation: flow 0.9s linear infinite }
-.lightpath.down, .lightpath.los { stroke: var(--bad) }
-.lightpath.degraded { stroke: var(--warn) }
+/* service lines: a dark (light theme: white) edge keeps them readable on the yellow fiber jacket, and each state has its own dash so it does not rest on color alone */
+.lightpath { --glow: color-mix(in srgb, var(--svc) var(--svc-glow), transparent); stroke: var(--svc); stroke-width: 3.5; stroke-dasharray: 8 4; stroke-linecap: butt; fill: none; pointer-events: none; animation: flow 0.9s linear infinite;
+  filter: drop-shadow(0 0 1px var(--svc-edge)) drop-shadow(0 0 1px var(--svc-edge)) drop-shadow(0 0 3px var(--glow)) }
+.lightpath.degraded { stroke: var(--warn); stroke-dasharray: 3 3; --glow: color-mix(in srgb, var(--warn) var(--svc-glow), transparent) }
+.lightpath.down, .lightpath.los { stroke: var(--bad); stroke-dasharray: 0 7; stroke-linecap: round; stroke-width: 4.5; animation: none; --glow: color-mix(in srgb, var(--bad) var(--svc-glow), transparent) } /* no light: dotted and still */
 .node.failed .body, .node.failed circle:first-child, .node.failed path { stroke: var(--bad) !important; opacity: .55 }
 .node.degraded .body, .node.degraded circle:first-child, .node.degraded path { stroke: var(--warn) !important; stroke-width: 3 }
 .failmark { fill: var(--bad); font: 700 26px var(--f-mono); pointer-events: none }
