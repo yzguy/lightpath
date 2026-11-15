@@ -303,6 +303,9 @@ class UI(unittest.TestCase):
         labels = sorted(pg.eval_on_selector_all('.plabel', 'ts => ts.map(t => t.textContent)'))
         self.assertIn('Line E', labels)
         self.assertIn('Line W', labels)
+        self.node(o).click()
+        types = pg.eval_on_selector_all('select:has(option[value="ew"]) option', 'os => os.map(o => [o.value, o.textContent])')
+        self.assertEqual(types, [['ew', 'East and West'], ['w', 'East or West']], 'two OADM types, a single-sided one has its channels on West')
 
     def test_port_labels_clear_the_devices(self):
         self.explore()

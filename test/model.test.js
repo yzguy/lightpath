@@ -1636,12 +1636,29 @@ test('passive OADM: sides, port counts and old slot lists survive sanitize', () 
   ob.p = { thru: 1.5, ad: 3, tx: 0, slots: [24, 25, 26, 27] }; // an older lab
   c = M.sanitize(clone(S)).nodes.find(n => n.name === 'OADM-B');
   assert.deepEqual([c.p.eFirst, c.p.ePorts, c.p.wFirst, c.p.wPorts], [24, 4, 24, 4]); assert.equal(c.p.slots, undefined);
-  ob.p = { ...M.TYPES.oadm.def(), sides: 'e' }; // add/drop filters facing east only: its transponders are on east ports, but it keeps both line ports (express passes through)
+  ob.p = { ...M.TYPES.oadm.def(), sides: 'w' }; // East or West: one set of filters, its channels on West, but it keeps both line ports (express passes through)
   const C = M.sanitize(clone(S)), id = C.nodes.find(n => n.name === 'OADM-B').id, mine = C.links.filter(l => l.a === id || l.b === id), far = l => C.nodes.find(n => n.id === (l.a === id ? l.b : l.a));
-  assert.ok(mine.filter(l => far(l).type === 'trx').every(l => (l.a === id ? l.p.sa : l.p.sb) === 'e'));
+  assert.ok(mine.filter(l => far(l).type === 'trx').every(l => (l.a === id ? l.p.sa : l.p.sb) === 'w'));
   assert.deepEqual(mine.filter(l => far(l).type !== 'trx').map(l => (l.a === id ? l.p.pa : l.p.pb)).sort(), ['LE', 'LW']);
   assert.deepEqual(M.portsOf(C, C.nodes.find(n => n.id === id)).filter(p => p.kind === 'oline').map(p => p.label), ['Line W', 'Line E']);
   assert.equal(M.sanitize(clone(S)).nodes.find(n => n.name === 'MUX-A').p.sides, undefined);
+});
+
+test('passive OADM: an older east-only OADM becomes East or West, turned round so its channels and cables are on West', () => {
+  const S = M.sanitize(build('oadm')), ob = S.nodes.find(n => n.name === 'OADM-B'), at = l => (l.a === ob.id ? 'pa' : 'pb');
+  const mine = () => S.links.filter(l => l.a === ob.id || l.b === ob.id);
+  for (const l of mine()) { const k = at(l); if (/^W\d+$/.test(l.p[k])) l.p[k] = 'E' + (+l.p[k].slice(1) + 10); } // move its west add/drops out of the way
+  Object.assign(ob.p, { sides: 'e', eFirst: 40, ePorts: 3, eRole: 'high', wFirst: 10, wPorts: 1 });
+  const before = new Map(mine().map(l => [l.id, l.p[at(l)]]));
+  const C = M.sanitize(clone(S)), c = C.nodes.find(n => n.id === ob.id);
+  assert.equal(c.p.sides, 'w'); assert.deepEqual([c.p.wFirst, c.p.wPorts, c.p.wRole], [40, 3, 'high']);
+  const flip = { LE: 'LW', LW: 'LE' };
+  for (const l of C.links.filter(l => l.a === ob.id || l.b === ob.id)) {
+    const was = before.get(l.id), now = l.p[l.a === ob.id ? 'pa' : 'pb'];
+    if (flip[was]) assert.equal(now, flip[was], 'line cables swap sides');
+    else if (/^E[1-3]$/.test(was)) assert.equal(now, 'W' + was.slice(1), 'an east add/drop port becomes the same west port');
+  }
+  assert.ok(M.portsOf(C, c).every(p => !/^E\d/.test(p.id)), 'no east add/drop ports remain');
 });
 
 test('passive OADM: a failed port at an OADM takes down only that channel', () => {
