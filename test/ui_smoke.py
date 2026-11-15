@@ -297,8 +297,8 @@ class UI(unittest.TestCase):
         pg = self.page
         pg.click('#w-blank')
         o, a1, a2 = self.add('oadm'), self.add('edfa'), self.add('edfa')
-        self.cable(a1, o, 'E', 'LW')
-        self.cable(a2, o, 'W', 'LE')
+        self.cable(a1, o, 'OUT', 'LW')
+        self.cable(a2, o, 'IN', 'LE')
         self.assertEqual(self.links(), 2)
         labels = sorted(pg.eval_on_selector_all('.plabel', 'ts => ts.map(t => t.textContent)'))
         self.assertIn('Line E', labels)

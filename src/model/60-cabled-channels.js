@@ -15,7 +15,7 @@
     const dirText = a => (a.m.type === 'oadm' ? sideName(a.side) + ' ' : a.m.type === 'roadm' && a.side ? `degree ${a.side} ` : '');
     const portName = a => `${a.m.name} ${dirText(a)}port ${a.port + 1}`;
     const colored = a => a.m.type !== 'roadm' || !a.m.p.colorless; // a colorless ROADM port passes any slot
-    const firstOf = a => (a.m.type === 'oadm' ? oadmRange(a.m, a.side)[0] : Math.round(+a.m.p.first) || 0), capOf = a => (a.m.type === 'oadm' ? Math.round(+a.m.p[a.side + 'Ports']) || 0 : Math.round(+a.m.p.ports));
+    const firstOf = a => (a.m.type === 'oadm' ? oadmRange(a.m, a.side)[0] : Math.round(+a.m.p.first) || 0), capOf = a => (a.m.type === 'oadm' ? (String(a.m.p.sides || '').includes(a.side) ? Math.round(+a.m.p[a.side + 'Ports']) || 0 : 0) : Math.round(+a.m.p.ports)); // filters that do not face this side: no ports on it
     const isBidi = a => a.m.type !== 'roadm' && a.m.p.bidi === true;
     const dark = new Map(), mark = (id, why) => { if (!dark.has(id)) dark.set(id, why); }, ok = [], byPort = new Map(), seenT = new Set(), bySlot = new Map();
     for (const a of atts) {
@@ -26,6 +26,7 @@
       // a BiDi (single-fiber) port passes a pair of slots: the low band and the high band, one for each direction; the role says which is transmit
       a.bidi = isBidi(a);
       if (a.bidi) { const n = capOf(a), role = a.m.type === 'oadm' ? a.m.p[a.side + 'Role'] : a.m.p.role, low = firstOf(a) + a.port, high = firstOf(a) + n + a.port; a.ptx = role === 'low' ? low : high; a.prx = role === 'low' ? high : low; } else a.ptx = a.prx = pslot;
+      if (a.m.type === 'oadm' && !capOf(a)) { mark(a.t.id, `${a.t.name} is on ${portName(a)}, but ${a.m.name}'s add/drop filters do not face ${sideName(a.side)}: it has no ${sideName(a.side)} ports. Move it to a ${sideName(a.side === 'e' ? 'w' : 'e')} port or set the filters to face both ways.`); continue; }
       if (a.port >= capOf(a) || (colored(a) && Math.max(a.ptx, a.prx) >= slotsN)) { mark(a.t.id, `${a.m.name} has no ${dirText(a)}port ${a.port + 1} on this grid (it has ${capOf(a)}${colored(a) ? ` from ${slotLbl(firstOf(a))}${a.bidi ? ' in each of its two bands' : ''}, the grid has ${slotsN} slots` : ''})`); continue; }
       a.tuned = Number.isInteger(a.t.p.slot) ? a.t.p.slot : a.ptx;
       a.slot = colored(a) ? a.ptx : a.tuned; // a colored port passes its own slot; a colorless one passes whatever the transponder is tuned to

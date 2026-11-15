@@ -497,6 +497,7 @@
     if (Z.p.mode !== modeKey) bad.push(`Mode mismatch: ${A.name} is ${mode.short}, ${Z.name} is ${PHY_.MODES[Z.p.mode].short}. The ends will never lock.`);
     if (Math.abs(cd) > mode.cdTol) bad.push(`Chromatic dispersion ${Math.round(cd)} ps/nm exceeds the ${mode.short} ${mode.coh === false ? 'dispersion tolerance' : 'DSP range'} of ${mode.cdTol} ps/nm.`);
     if (ber > mode.berThr) bad.push(`Pre-FEC BER ${ber.toExponential(2)} is above the ${mode.fec} limit ${mode.berThr.toExponential(2)}: uncorrectable errors, link down.`);
+    if (!eol && !rv && !W) path.nodes.forEach((id, i) => { const n = node(id); if (i > 0 && n && n.type === 'edfa' && endPort(S, link(path.links[i - 1]), n) === 'OUT') bad.push(`${n.name} is cabled backwards: the service light reaches its Line Out port, and an EDFA's isolators pass light only from Line In to Line Out. Swap its two cables.`); });
     bad.push(...clientFatal);
     bad.forEach(t => alarms.unshift({ sev: 'bad', text: t }));
     if (prx < mode.rxMin) { const sp = ampSpot(S, path); alarms.push({ sev: 'warn', text: `Rx power ${f1(prx)} dBm is below the ${mode.rxMin} dBm sensitivity spec (Rx LOW alarm). Receiver noise is now eating SNR.`, fix: sp && !W ? fixAmp(S, sp) : null }); }

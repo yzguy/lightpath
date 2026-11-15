@@ -81,10 +81,10 @@
   function sideFor(me, other, given, usedDeg) {
     if (!me) return '';
     if (me.type === 'oadm') {
-      let d = ['e', 'w'].includes(given) && me.p.sides.includes(given) ? given : me.p.sides.length === 1 ? me.p.sides : other.x < me.x ? 'w' : 'e';
+      let d = ['e', 'w'].includes(given) && (!isEnd(other) || me.p.sides.includes(given)) ? given : isEnd(other) && me.p.sides.length === 1 ? me.p.sides : other.x < me.x ? 'w' : 'e'; // both line ports always exist; an add/drop port is on a side its filters face
       if (!other || isEnd(other) || other.type === 'host') return d; // an add/drop or 1310 nm cable: the side its port is on
       const u = usedDeg.get(me.id) || new Set(); usedDeg.set(me.id, u); // a line cable: one per side, so a second one on a taken side moves to the free side
-      if (u.has(d)) d = me.p.sides.split('').find(s => !u.has(s)) || d;
+      if (u.has(d)) d = ['w', 'e'].find(s => !u.has(s)) || d;
       u.add(d); return d;
     }
     if (me.type === 'panel') { // a port of a patch panel: 'r3' is the rear of port 3, 'f3' its front; light enters one side and leaves the other
@@ -187,7 +187,7 @@
       if (kind === 'fiber' && !PHY_.FIBERS[p.fiber]) p.fiber = 'smf';
       if (kind === 'patch') { const v = l.p && l.p.len; p.len = Number.isFinite(+v) && v !== '' && v !== null && typeof v !== 'boolean' && +v >= 0 ? Math.min(+v, 2000) : 3; } // metres
       p.cutAt = kind === 'fiber' && p.cutAt !== '' && p.cutAt !== null && typeof p.cutAt !== 'boolean' && Number.isFinite(+p.cutAt) && +p.cutAt >= 0 ? Math.min(+p.cutAt, 300) : '';
-      { const A0 = nodes.find(n => n.id === l.a), B0 = nodes.find(n => n.id === l.b), inst = x => x && (x.type === 'meter' || x.type === 'otdr'), test = x => x && (x.type === 'panel' || x.type === 'splitter' || x.type === 'switch');
+      { const A0 = nodes.find(n => n.id === l.a), B0 = nodes.find(n => n.id === l.b), inst = x => x && (x.type === 'meter' || x.type === 'otdr'), test = x => x && (x.type === 'panel' || x.type === 'splitter' || x.type === 'switch' || (x.type === 'edfa' && (inst(A0) ? A0 : B0).type === 'meter'));
         if ((inst(A0) || inst(B0)) && !((inst(A0) && test(B0)) || (inst(B0) && test(A0)))) continue; // an instrument plugs into a patch panel, splitter or switch port and nothing else
         if ((inst(A0) || inst(B0)) && links.some(q => [q.a, q.b].some(id => id === (inst(A0) ? A0 : B0).id))) continue; }
       for (const k of ['pa', 'pb']) p[k] = typeof p[k] === 'string' && /^[A-Za-z0-9]{1,8}$/.test(p[k]) ? p[k] : ''; // the port at each end; ensurePorts checks it against the device

@@ -1636,9 +1636,11 @@ test('passive OADM: sides, port counts and old slot lists survive sanitize', () 
   ob.p = { thru: 1.5, ad: 3, tx: 0, slots: [24, 25, 26, 27] }; // an older lab
   c = M.sanitize(clone(S)).nodes.find(n => n.name === 'OADM-B');
   assert.deepEqual([c.p.eFirst, c.p.ePorts, c.p.wFirst, c.p.wPorts], [24, 4, 24, 4]); assert.equal(c.p.slots, undefined);
-  ob.p = { ...M.TYPES.oadm.def(), sides: 'e' }; // a one-sided OADM: every cable end is on its east side
-  const C = M.sanitize(clone(S)), id = C.nodes.find(n => n.name === 'OADM-B').id;
-  assert.ok(C.links.filter(l => l.a === id || l.b === id).every(l => (l.a === id ? l.p.sa : l.p.sb) === 'e'));
+  ob.p = { ...M.TYPES.oadm.def(), sides: 'e' }; // add/drop filters facing east only: its transponders are on east ports, but it keeps both line ports (express passes through)
+  const C = M.sanitize(clone(S)), id = C.nodes.find(n => n.name === 'OADM-B').id, mine = C.links.filter(l => l.a === id || l.b === id), far = l => C.nodes.find(n => n.id === (l.a === id ? l.b : l.a));
+  assert.ok(mine.filter(l => far(l).type === 'trx').every(l => (l.a === id ? l.p.sa : l.p.sb) === 'e'));
+  assert.deepEqual(mine.filter(l => far(l).type !== 'trx').map(l => (l.a === id ? l.p.pa : l.p.pb)).sort(), ['LE', 'LW']);
+  assert.deepEqual(M.portsOf(C, C.nodes.find(n => n.id === id)).filter(p => p.kind === 'oline').map(p => p.label), ['Line W', 'Line E']);
   assert.equal(M.sanitize(clone(S)).nodes.find(n => n.name === 'MUX-A').p.sides, undefined);
 });
 
@@ -2536,7 +2538,9 @@ test('ports: every device has a fixed list of duplex ports, and an older lab get
   // the older mport 7 is port P8; the line cable is on COM; the amplifier on its W and E sides
   assert.equal(port(cab('MXP-A', 'MUX-A'), nm('MXP-A')), 'L'); assert.equal(port(cab('MXP-A', 'MUX-A'), nm('MUX-A')), 'P8'); assert.equal(cab('MXP-A', 'MUX-A').p.mport, 7);
   assert.equal(port(cab('MUX-A', 'BST-A'), nm('MUX-A')), 'COM');
-  assert.deepEqual([port(cab('MUX-A', 'BST-A'), nm('BST-A')), port(cab('BST-A', 'PRE-B'), nm('BST-A'))], ['W', 'E']);
+  assert.deepEqual([port(cab('MUX-A', 'BST-A'), nm('BST-A')), port(cab('BST-A', 'PRE-B'), nm('BST-A'))], ['IN', 'OUT']); // the service's light comes in from the A end
+  assert.deepEqual([port(cab('BST-A', 'PRE-B'), nm('PRE-B')), port(cab('PRE-B', 'MUX-B'), nm('PRE-B'))], ['IN', 'OUT']);
+  assert.deepEqual(M.portsOf(S, nm('BST-A')).map(p => p.label), ['Line In', 'Line Out', 'Monitor (1% tap)']);
   // an OADM has Line W, Line E and channel ports named by channel and side; a protected transponder gets a second line port (the OLP)
   const o = M.sanitize(build('oadm')), ob = o.nodes.find(n => n.name === 'OADM-B');
   assert.deepEqual(M.portsOf(o, ob).filter(p => p.kind === 'oline').map(p => p.label), ['Line W', 'Line E']);
@@ -2545,11 +2549,15 @@ test('ports: every device has a fixed list of duplex ports, and an older lab get
   // a lab that never numbered its mux ports keeps running on its channel table
   assert.equal(M.sanitize(build('mesh')).g.table, true); assert.notEqual(S.g.table, true);
   // one cable per port: a second cable recorded on a taken port moves to a free one; a device with no free port refuses a new cable
-  const T = clone(S); T.links.find(l => l.kind === 'fiber').p.pa = 'W'; const T2 = M.sanitize(T), f = T2.links.find(l => l.kind === 'fiber');
-  assert.equal(f.p.pa, 'E');
+  const T = clone(S); T.links.find(l => l.kind === 'fiber').p.pa = 'IN'; const T2 = M.sanitize(T), f = T2.links.find(l => l.kind === 'fiber');
+  assert.equal(f.p.pa, 'OUT');
   const h = { id: 'h', type: 'host', name: 'H', x: 0, y: 0, p: M.TYPES.host.def() }; S.nodes.push(h);
-  assert.equal(M.cableFits(S, h, nm('BST-A')), 'BST-A has no free port: all 2 are in use.');
-  assert.equal(M.cableFits(S, h, nm('MUX-A')), '');
+  assert.equal(M.cableFits(S, h, nm('BST-A')), ''); // its monitor port is free
+  S.links.push({ id: 'mon', a: h.id, b: nm('BST-A').id, kind: 'patch', p: { ...M.linkDefaults('patch'), pa: 'eth1', pb: 'MON' } });
+  const h2 = { ...h, id: 'h2', name: 'H2' }; S.nodes.push(h2); assert.equal(M.cableFits(S, h2, nm('BST-A')), 'BST-A has no free port: all 3 are in use.');
+  assert.equal(M.cableFits(S, h, h2), 'H has no free port: its one port is in use.');
+  assert.match(M.cablingFaults(S).find(f => f.link === 'mon').text, /monitor port is a 1% tap/);
+  assert.equal(M.cableFits(S, h2, nm('MUX-A')), '');
 });
 
 test('cabling anything into any port: the wrong port has the consequence it would have', () => {
@@ -2562,7 +2570,7 @@ test('cabling anything into any port: the wrong port has the consequence it woul
   // into the mux's common port: the line side; its light would only come back out of the channel ports
   S = clone(base); const ba = cab(S, 'MUX-A', 'BST-A'); setPort(S, ba, 'MUX-A', 'P1'); setPort(S, cab(S, 'MXP-A', 'MUX-A'), 'MUX-A', 'COM'); r = M.simulate(S);
   assert.notEqual(r.status, 'up'); assert.ok(M.cablingFaults(S).some(f => /MXP-A Line is cabled into MUX-A COM, the line side/.test(f.text)));
-  assert.ok(M.cablingFaults(S).some(f => /BST-A W is cabled into MUX-A CH\d+, a channel port: only that one channel/.test(f.text)));
+  assert.ok(M.cablingFaults(S).some(f => /BST-A Line In is cabled into MUX-A CH\d+, a channel port: only that one channel/.test(f.text)));
   // a client port on the mux: nothing optical leaves by a client port
   S = clone(base); setPort(S, cab(S, 'MXP-A', 'MUX-A'), 'MXP-A', 'C2'); r = M.simulate(S);
   assert.notEqual(r.status, 'up'); assert.match(r.headline, /MXP-A Client 2 is cabled to MUX-A CH\d+: a client port carries the grey client signal/);
@@ -2590,4 +2598,17 @@ test('an OADM line cable takes a free side: two cables from the west (an older s
   // with no side given, the second still goes to the free side
   const S2 = M.sanitize({ nodes: [o, a, b], links: [L('l1', a, ''), L('l2', b, '')], g: {}, svc: {} });
   assert.deepEqual(S2.links.map(l => l.p.sb), ['w', 'e']);
+});
+
+test('an amplifier has Line In, Line Out and a monitor tap: cabled backwards it passes nothing, and a meter on the tap reads 20 dB below the output', () => {
+  const S = M.sanitize(build('mxp')), nm = n => S.nodes.find(x => x.name === n), b = nm('BST-A');
+  const mine = S.links.filter(l => l.a === b.id || l.b === b.id), set = (l, v) => { if (l.a === b.id) l.p.pa = v; else l.p.pb = v; };
+  const inC = mine.find(l => M.endPort(S, l, b) === 'IN'), outC = mine.find(l => M.endPort(S, l, b) === 'OUT');
+  set(inC, 'OUT'); set(outC, 'IN'); M.assignSides(S);
+  const r = M.simulate(S); assert.equal(r.status, 'down'); assert.match(r.headline, /BST-A is cabled backwards.*Line Out.*isolators/);
+  set(inC, 'IN'); set(outC, 'OUT'); M.assignSides(S); const ok = M.simulate(S); assert.equal(ok.status, 'up');
+  const pm = { id: 'pm', type: 'meter', name: 'PM', x: 0, y: 0, p: {} }; S.nodes.push(pm);
+  S.links.push({ id: 'pml', a: pm.id, b: b.id, kind: 'patch', p: { ...M.linkDefaults('patch'), pa: 'P', pb: 'MON' } });
+  const T = M.sanitize(S), r2 = M.simulate(T), h = r2.hops.find(x => x.name === 'BST-A' && x.kind === 'amp'), m = r2.meters.pm;
+  assert.ok(m && Math.abs(m.dbm - (h.out.sig + 10 * Math.log10(h.nch) - 20)) < 1e-9, JSON.stringify(m)); assert.match(m.why, /monitor tap/);
 });

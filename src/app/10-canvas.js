@@ -253,12 +253,11 @@ function renderCanvas() {
         const dx = o.x - m.x, dy = o.y - m.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
         const t = sv('text', { class: 'llabel plabel' + (fixedPort ? ' pfixed' : ''), 'text-anchor': 'middle', 'dominant-baseline': 'central', 'data-x0': m.x, 'data-y0': m.y, 'data-ux': ux, 'data-uy': uy, 'data-edge': edgeDist(m, ux, uy), 'data-len': d, 'data-n': text.length });
         t.textContent = text; g.append(t); };
-      // every cable end is labelled with its port; an amplifier's two sides read IN and OUT along the service (forward) path
-      const fp = lastRes && lastRes.path, at = fp ? fp.links.indexOf(l.id) : -1;
+      // every cable end is labelled with its port
       for (const [n, o] of [[a, b], [b, a]]) {
         if (n.type === 'meter' || n.type === 'otdr') { labelAt(n, o, n.type === 'meter' ? 'IN' : 'OTDR', true); continue; }
         const id = MODEL.endPort(S, l, n), k = MODEL.portKind(n, id);
-        const t = k === 'amp' && at >= 0 ? (fp.nodes[at] === n.id ? 'OUT' : 'IN') : pl && pl.m === n && l.p.mport != null ? portChText(n, l.p.mport, sideOf(l, n), pl.t) : MODEL.shortLabel(S, n, id);
+        const t = pl && pl.m === n && l.p.mport != null ? portChText(n, l.p.mport, sideOf(l, n), pl.t) : MODEL.shortLabel(S, n, id);
         if (t) labelAt(n, o, t, k !== 'ad');
       } }
     lg.append(g);
@@ -591,8 +590,8 @@ const portSlotText = (m, k, side) => { const b = portSlots(m, k, side), lab = si
 function slotBox(obj, key, id) { const i = el('input', { type: 'number', step: 1, min: 1, max: 64, value: (Math.round(+obj[key]) || 0) + 1, id }); i.addEventListener('input', () => { if (i.value !== '' && isFinite(+i.value)) { obj[key] = Math.min(63, Math.max(0, Math.round(+i.value) - 1)); recompute(); } }); return i; }
 // Cabling asks which port at each end, like EVE-NG asks for the interfaces. Any free port will do, even a wrong one: the simulation then shows what that does.
 function connect(a, b, kind) {
-  const inst = x => x.type === 'meter' || x.type === 'otdr', test = x => x.type === 'panel' || x.type === 'splitter' || x.type === 'switch';
-  if ((inst(a) || inst(b)) && !((inst(a) && test(b)) || (inst(b) && test(a)))) return toast('An instrument plugs into a test point: a patch panel port, or a splitter or switch port.');
+  const inst = x => x.type === 'meter' || x.type === 'otdr', test = (x, i) => x.type === 'panel' || x.type === 'splitter' || x.type === 'switch' || (x.type === 'edfa' && i.type === 'meter');
+  if ((inst(a) || inst(b)) && !((inst(a) && test(b, a)) || (inst(b) && test(a, b)))) return toast('An instrument plugs into a test point: a patch panel port, a splitter or switch port, or (a power meter) an amplifier\'s monitor port.');
   if (!inst(a) && !inst(b)) { const why = MODEL.cableFits(S, a, b); if (why) return toast(why); } // one cable per port: a full device takes no more
   pickPorts(a, b, kind);
 }
