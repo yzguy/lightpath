@@ -173,7 +173,7 @@
         const ta = N('trx', 'TRX-A', 60, 300, { mode: 'zrp400' }), tz = N('trx', 'TRX-Z', 1330, 300, { mode: 'zrp400' });
         const ma = N('mux', 'MUX-A', 200, 300, { ports: 16, first: 24 }), mz = N('mux', 'MUX-Z', 1200, 300, { ports: 16, first: 24 }), ba = N('edfa', 'BST-A', 330, 300, { gmin: 5 });
         const sd = { wFirst: 24, wPorts: 2, eFirst: 24, ePorts: 2, osc: true };
-        const o1 = N('oadm', 'OADM-1', 470, 300, { ...sd, p1310: true }), od = N('panel', 'ODF-1', 620, 300, { ports: 12, dirty: { 1: 1.5 } });
+        const o1 = N('oadm', 'OADM-1', 470, 300, { ...sd, p1310: true, side1310: 'e' }), od = N('panel', 'ODF-1', 620, 300, { ports: 12, dirty: { 1: 1.5 } });
         const o2 = N('oadm', 'OADM-2', 770, 300, { ...sd, p1310: true }), ac = N('edfa', 'AMP-C', 910, 300, { gmin: 5 });
         const o3 = N('oadm', 'OADM-3', 1050, 300, { ...sd, p1310: true });
         // TRX-A to TRX-Z is the service in slot 32, passing all three OADMs. Each OADM has the supervisory channel (1510 nm) on, so the amplifiers and the OADMs form one
@@ -194,8 +194,8 @@
     },
     reach: {
       name: 'Hosts reaching each other over a muxponder link', build() {
-        const H = (nm, x, y, ip) => N('host', nm, x, y, { ip, speed: 100 });
-        const ha1 = H('HOST-A1', 60, 140, '10.0.0.1/24'), ha2 = H('HOST-A2', 60, 300, '10.0.0.3/24'), hb1 = H('HOST-B1', 1230, 140, '10.0.0.2/24'), hb2 = H('HOST-B2', 1230, 300, '10.0.0.4/24');
+        const H = (nm, x, y) => N('host', nm, x, y, { speed: 100 });
+        const ha1 = H('HOST-A1', 60, 140), ha2 = H('HOST-A2', 60, 300), hb1 = H('HOST-B1', 1230, 140), hb2 = H('HOST-B2', 1230, 300);
         const a = N('mxp', 'MXP-A', 220, 220), ma = N('mux', 'MUX-A', 380, 220), ba = N('edfa', 'BST-A', 510, 220, { gmin: 5 });
         const pb = N('edfa', 'PRE-B', 780, 220, { gmin: 5 }), mb = N('mux', 'MUX-B', 910, 220), z = N('mxp', 'MXP-B', 1060, 220);
         const cli = (h, m, k) => L(h, m, 'patch', { hport: 0, cport: k });
@@ -286,7 +286,7 @@
         // DWDM channels 0.6 dB more per mux. Neither end is amplified: an EDFA would block the 1310 nm light.
         const a = N('trx', 'SW-A', 80, 160, { mode: 'dwdm10f' }), ma = N('mux', 'MUX-A', 260, 220, { ports: 8, first: 28, il: 3.5, p1310: true });
         const mb = N('mux', 'MUX-B', 700, 220, { ports: 8, first: 28, il: 3.5, p1310: true }), z = N('trx', 'SW-B', 880, 160, { mode: 'dwdm10f' });
-        const ra = N('host', 'RTR-A', 80, 300, { ip: '10.0.0.1/31', speed: 400 }), rb = N('host', 'RTR-B', 880, 300, { ip: '10.0.0.0/31', speed: 400 });
+        const ra = N('host', 'RTR-A', 80, 300, { speed: 400 }), rb = N('host', 'RTR-B', 880, 300, { speed: 400 });
         return { nodes: [a, ma, mb, z, ra, rb], links: [L(a, ma, 'patch', { mport: 3 }), L(ma, mb, 'fiber', { len: 8 }), L(mb, z, 'patch', { mport: 3 }),
           L(ra, ma, 'patch', { hport: 0, optic: '400g-lr4' }), L(rb, mb, 'patch', { hport: 0, optic: '400g-lr4' })], g: { nch: 1, df: 100, launch: 0 }, svc: { a: a.id, z: z.id }, flows: [{ a: ra.id, z: rb.id, gbps: 300 }] };
       }

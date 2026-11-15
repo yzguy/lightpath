@@ -48,8 +48,6 @@ body:not(.expert) .adv { display: none }
 #hovtip { position: absolute; z-index: 4; pointer-events: none; max-width: 360px; background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font-size: 12px; line-height: 1.45; box-shadow: 0 4px 14px rgba(0,0,0,.12) }
 #hovtip b { font-weight: 700 } #hovtip .tsub { color: var(--muted) } #hovtip .muted { display: block; margin-top: 4px }
 #hovtip .tgrid { display: grid; grid-template-columns: auto auto; gap: 2px 18px; margin-top: 5px } #hovtip .tk { color: var(--muted); white-space: nowrap } #hovtip .hv { font-family: var(--f-mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap } #hovtip .hv.words { font-family: var(--f-ui) }
-.chandle { opacity: 0; cursor: crosshair; transition: opacity .12s } .chandle circle { fill: var(--jacket); stroke: var(--ink); stroke-width: 1.2 } .chandle path { stroke: var(--ink); stroke-width: 1.6; pointer-events: none }
-.node:hover .chandle, .node.sel .chandle, .chandle:focus { opacity: 1 }
 .headbtns { display: inline-flex; gap: 6px; align-items: center; margin-left: 8px } .headbtns .btn { align-self: center; padding: 4px 10px; font-size: 13px }
 #welcome { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(480px, calc(100% - 32px)); padding: 18px 20px; display: grid; gap: 10px; z-index: 6; background: var(--raised); box-shadow: 0 10px 40px rgba(0,0,0,.18) }
 #welcome h2 { font-size: 18px } #welcome p { margin: 0; line-height: 1.5 }
@@ -370,7 +368,7 @@ table.hops { border-collapse: collapse; width: 100%; font-size: 12.5px; min-widt
     <h3 class="palgrp">Test gear</h3>
     <div class="pal-item" draggable="true" data-type="meter" role="button" tabindex="0" title="Power meter: Reads the light at a test point"><svg viewBox="0 0 34 26"><rect x="3" y="4" width="28" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="7" y="8" width="20" height="6" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span><b>Power meter</b></span></div>
     <div class="pal-item" draggable="true" data-type="otdr" role="button" tabindex="0" title="OTDR: Traces a fiber: loss, events, breaks"><svg viewBox="0 0 34 26"><rect x="3" y="4" width="28" height="18" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6 9 H12 V13 H20 V16 H24 V10 H26 V18 H29" fill="none" stroke="currentColor" stroke-width="1.2"/></svg><span><b>OTDR</b></span></div>
-    <p class="muted small" style="margin:6px 2px 0">Drag devices onto the bench (or click to add). To cable two devices, drag the <b>+</b> beside one onto the other: the cable type is chosen for you. The Patch and Fiber tools force a patch cord or a fiber.</p>
+    <p class="muted small" style="margin:6px 2px 0">Drag devices onto the bench (or click to add). To cable two devices, pick the Patch or Fiber tool and drag from one device to the other.</p>
     </div>
   </aside>
   <div class="panel canvaswrap">

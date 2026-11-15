@@ -142,6 +142,7 @@
           if (legacy && legacy.length) { p.eFirst = p.wFirst = legacy[0]; p.ePorts = p.wPorts = Math.min(64, legacy[legacy.length - 1] - legacy[0] + 1); }
           else { p.eFirst = num(raw.eFirst, 24, 0, 127); p.ePorts = num(raw.ePorts, 4, 0, 64); p.wFirst = num(raw.wFirst, 24, 0, 127); p.wPorts = num(raw.wPorts, 4, 0, 64); }
           if (raw.sides === 'e') { p.wFirst = p.eFirst; p.wPorts = p.ePorts; p.wRole = raw.eRole === 'high' ? 'high' : 'low'; flipped.add(n.id); } // an older east-only OADM: turned round, so its channels and its line cable are on West
+          p.side1310 = p.sides === 'ew' && raw.side1310 === 'e' ? 'e' : 'w'; // the line the 1310 nm filter sits on
           p.osc = raw.osc === true || (raw.p1310 === true && raw.o1310 === 'osc'); p.p1310 = raw.p1310 === true && raw.o1310 !== 'osc'; delete p.slots;
         }
         if (n.type === 'mux' || n.type === 'oadm') { // the optional 1310 nm port: a grey 1310 nm optic only, and its own insertion loss
@@ -164,7 +165,7 @@
       if (n.type === 'splitter') { p.ratio = SPLIT[p.ratio] ? p.ratio : '50/50'; p.excess = Math.min(3, Math.max(0, Number.isFinite(+p.excess) && p.excess !== '' && p.excess !== null ? +p.excess : 0.3)); }
       if (n.type === 'switch') { p.il = Math.min(10, Math.max(0, Number.isFinite(+p.il) && p.il !== '' && p.il !== null ? +p.il : 1)); p.pos = p.pos === 'b' ? 'b' : 'a'; p.auto = p.auto !== false; p.revertive = p.revertive !== false; p.wtrMin = Math.min(120, Math.max(0, Number.isFinite(+p.wtrMin) && p.wtrMin !== '' && p.wtrMin !== null ? +p.wtrMin : 5)); p.switchMs = Math.min(1000, Math.max(1, Number.isFinite(+p.switchMs) && p.switchMs !== '' && p.switchMs !== null ? +p.switchMs : 20)); }
       if (n.type === 'otdr') p.pulse = OTDR_PULSES.includes(+p.pulse) ? +p.pulse : 100;
-      if (n.type === 'host') { p.ip = parseIp(p.ip) ? String(p.ip).trim() : ''; p.ports = Math.min(8, Math.max(1, Math.round(+p.ports) || 1)); p.speed = HOST_SPEEDS.includes(+p.speed) ? +p.speed : 100; }
+      if (n.type === 'host') { delete p.ip; /* addresses are gone: the lab is about link reachability, not IP */ p.ports = Math.min(8, Math.max(1, Math.round(+p.ports) || 1)); p.speed = HOST_SPEEDS.includes(+p.speed) ? +p.speed : 100; }
       if (n.type === 'roadm') { p.degrees = Math.min(9, Math.max(1, Math.round(+p.degrees) || 4)); p.ports = Math.min(64, Math.max(1, Math.round(+p.ports) || 16)); p.first = Math.min(63, Math.max(0, Math.round(+p.first) || 0)); }
       if (n.type === 'mux') { p.bidi = p.bidi === true; p.role = p.role === 'high' ? 'high' : 'low'; }
       if (n.type === 'oadm') { p.bidi = p.bidi === true; p.eRole = p.eRole === 'high' ? 'high' : 'low'; if (!flipped.has(n.id)) p.wRole = p.wRole === 'low' ? 'low' : 'high'; }

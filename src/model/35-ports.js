@@ -42,7 +42,7 @@
         // both line ports are always there (traffic it does not add or drop passes Line W to Line E); `sides` says which way its add/drop filters face
         const sides = String(n.p.sides || '').split('').filter(s => s === 'e' || s === 'w').sort().reverse(), out = ['w', 'e'].map(s => P('L' + s.toUpperCase(), 'Line ' + s.toUpperCase(), 'oline', { side: s }));
         for (const s of sides) range1(iOf(n.p[s + 'Ports'], 0)).forEach(i => out.push(P(s.toUpperCase() + i, adLabel(S, n, s, i - 1), 'ad', { side: s, k: i - 1 })));
-        out.push(P('1310', '1310 nm' + (n.p.p1310 ? '' : ' (module off)'), '1310'));
+        out.push(P('1310', '1310 nm' + (n.p.p1310 ? ` (on Line ${line1310(n)[1]})` : ' (module off)'), '1310'));
         return out;
       }
       case 'roadm': {

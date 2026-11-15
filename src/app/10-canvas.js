@@ -177,7 +177,7 @@ function nodeShape(n) {
     g.append(sv('rect', { x: -38, y: -20, width: 76, height: 40, rx: 4, class: 'body' }));
     g.append(sv('line', { x1: -38, y1: -7, x2: 38, y2: -7, class: 'thin' }));
     const t = sv('text', { x: -30, y: -11, class: 'glyph small' }); t.textContent = 'HOST'; g.append(t);
-    const ip = sv('text', { x: 0, y: 9, class: 'glyph small', 'text-anchor': 'middle' }); ip.textContent = (n.p.ip || '').split('/')[0] || 'no address'; g.append(ip);
+    const sp = sv('text', { x: 0, y: 9, class: 'glyph small', 'text-anchor': 'middle' }); sp.textContent = `${n.p.ports} × ${n.p.speed}G`; g.append(sp);
     for (let k = 0; k < n.p.ports; k++) g.append(sv('circle', { cx: 30 - k * 9, cy: -14, r: 2.2, class: 'led' }));
   } else if (n.type === 'oadm') {
     g.append(sv('rect', { x: -34, y: -20, width: 68, height: 40, rx: 4, class: 'body' }));
@@ -186,7 +186,7 @@ function nodeShape(n) {
     g.append(sv('path', { d: 'M-34,0 H34 M0,0 V20', class: 'thin' }));
     const t = sv('text', { x: 0, y: -6, class: 'glyph small', 'text-anchor': 'middle' }); t.textContent = 'OADM'; g.append(t);
     for (const [sd, x] of [['w', -17], ['e', 17]]) { const e = sv('text', { x, y: 14, class: 'glyph small' + (n.p.sides.includes(sd) ? '' : ' oside-dim'), 'text-anchor': 'middle' }); e.textContent = sd.toUpperCase(); g.append(e); }
-    if (n.p.p1310 || n.p.osc) { g.append(sv('line', { x1: 0, y1: 20, x2: 0, y2: 30, class: 'thin' }), sv('circle', { cx: 0, cy: 32, r: 2.5, class: 'led' })); const e = sv('text', { x: 8, y: 36, class: 'glyph small' }); e.textContent = n.p.osc && n.p.p1310 ? 'OSC 1310' : n.p.osc ? 'OSC' : '1310'; g.append(e); }
+    if (n.p.p1310 || n.p.osc) { const x = n.p.p1310 && !n.p.osc ? (MODEL.line1310(n) === 'LE' ? 17 : -17) : 0; /* the 1310 nm port hangs under the line it sits on */ g.append(sv('line', { x1: x, y1: 20, x2: x, y2: 30, class: 'thin' }), sv('circle', { cx: x, cy: 32, r: 2.5, class: 'led' })); const e = sv('text', { x: x + 8, y: 36, class: 'glyph small' }); e.textContent = n.p.osc && n.p.p1310 ? 'OSC 1310' : n.p.osc ? 'OSC' : '1310'; g.append(e); }
   } else if (n.type === 'edfa') {
     if (oneWayAmp(n)) { g.append(sv('path', { d: 'M-26,-26 L30,0 L-26,26 Z', class: 'body' })); const t = sv('text', { x: -18, y: 4, class: 'glyph small' }); t.textContent = 'EDFA'; g.append(t); }
     else { // two amplifiers, one per direction: the top one points right, each named by its role in the direction it points
@@ -279,9 +279,6 @@ function renderCanvas() {
   gRoot.append(lg, og, ng);
   for (const [n, sh] of badged) {
     const body = sh.querySelector('.body') || sh.querySelector('path, circle, rect') || sh, fb = faultBadge(n, body); if (fb) ng.append(fb);
-    const bb = body.getBBox(), h = sv('g', { class: 'chandle', transform: `translate(${bb.x + bb.width + 10},${bb.y + bb.height / 2})` }); // drag from here to another device to cable them
-    h.append(sv('circle', { r: 7 }), sv('path', { d: 'M-3.5,0 H3.5 M0,-3.5 V3.5' }), sv('title', {})); h.lastChild.textContent = `Drag to another device to cable ${n.name}`;
-    sh.append(h);
   }
   const rb = sv('line', { id: 'rubber', class: 'rubber', x1: 0, y1: 0, x2: 0, y2: 0, visibility: 'hidden' });
   gRoot.append(rb);
@@ -418,11 +415,6 @@ svg.addEventListener('pointerdown', e => {
   const nEl = e.target.closest('.node'), lEl = e.target.closest('.link');
   const w = toWorld(e.clientX, e.clientY);
   hideTip();
-  if (nEl && e.target.closest('.chandle')) { // the handle beside a device starts a cable whose type is chosen from the two ends
-    const n = node(nEl.dataset.id); drag = { kind: 'cable', from: n, moved: false, auto: true };
-    const rb = $('#rubber'); rb.setAttribute('x1', n.x); rb.setAttribute('y1', n.y); rb.setAttribute('x2', w.x); rb.setAttribute('y2', w.y); rb.setAttribute('visibility', 'visible'); rb.setAttribute('class', 'rubber');
-    svg.setPointerCapture(e.pointerId); return;
-  }
   if (nEl) {
     const n = node(nEl.dataset.id);
     if (tool === 'patch' || tool === 'fiber') { drag = { kind: 'cable', from: n, moved: false }; const rb = $('#rubber'); rb.setAttribute('x1', n.x); rb.setAttribute('y1', n.y); rb.setAttribute('x2', w.x); rb.setAttribute('y2', w.y); rb.setAttribute('visibility', 'visible'); rb.setAttribute('class', 'rubber ' + tool); }
@@ -468,7 +460,6 @@ svg.addEventListener('pointerup', e => {
   if (d.kind === 'cable') {
     $('#rubber').setAttribute('visibility', 'hidden');
     const t = document.elementFromPoint(e.clientX, e.clientY), nEl = t && t.closest && t.closest('.node');
-    if (d.auto) { if (nEl && nEl.dataset.id !== d.from.id) { const to = node(nEl.dataset.id); connect(d.from, to, cableKind(d.from, to)); } return; }
     if (nEl && nEl.dataset.id !== d.from.id) { pendingCable = null; connect(d.from, node(nEl.dataset.id), tool); }
     else if (!d.moved || !nEl) { if (!pendingCable) { pendingCable = d.from; toast(`Now click the second device to connect ${d.from.name}`); } else { const a = pendingCable; pendingCable = null; if (a.id !== d.from.id) connect(a, d.from, tool); } }
   } else if (d.kind === 'pan' && !d.moved && !d.quiet) select(null);
@@ -655,7 +646,6 @@ function portSummary(n) {
   if (n.type === 'meter' || n.type === 'otdr') return '';
   return `ports ${list.filter(p => u.has(p.id)).length} of ${list.length} in use`;
 }
-const cableKind = MODEL.cableKind;
 // A new device goes in the first free place near the middle of what you are looking at (not on top of another device), then outwards in a spiral
 function freeSpot() {
   const r = svg.getBoundingClientRect(), c = toWorld(r.left + r.width / 2, r.top + r.height / 2), sx = 150, sy = 110;
