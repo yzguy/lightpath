@@ -29,7 +29,7 @@
       const md = PHY_.MODES[c.modeKey] || null, rxMax = md ? md.rxMax : null, prxSurge = c.prx + cum;
       return { slot: c.slot, fTHz: c.fTHz, svc: !!c.svc, modeShort: c.short, prx: c.prx, surgeDb: cum, prxSurge, overloadDb: rxMax != null ? Math.max(0, prxSurge - rxMax) : 0, rxMax, hits, route: c.route };
     });
-    const worst = rows.reduce((a, x) => (!a || x.surgeDb > a.surgeDb ? x : a), null), nameOf = id => { const l = link(id); return `${node(l.a).name}–${node(l.b).name}`; };
+    const worst = rows.reduce((a, x) => (!a || x.surgeDb > a.surgeDb ? x : a), null), nameOf = id => { const l = link(id); return `${node(l.a).name}–${node(l.b).name}${circuitTag(l)}`; };
     return { cut, cutName: nameOf(cut), fibers: [...fibers].map(([id, n]) => ({ id, n, name: nameOf(id) })), rows, lost, worst };
   }
 

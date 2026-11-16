@@ -243,7 +243,7 @@ function renderCanvas() {
     const a = { ...a0, x: a0.x + nx, y: a0.y + ny }, b = { ...b0, x: b0.x + nx, y: b0.y + ny };
     const cutNow = MODEL.isCut(S, l);
     const g = sv('g', { class: 'link k-' + l.kind + (cutNow ? ' cut' : '') + (sel && sel.id === l.id ? ' sel' : ''), 'data-id': l.id, tabindex: 0, role: 'button', 'aria-pressed': sel && sel.id === l.id ? 'true' : 'false',
-      'aria-label': `${l.kind === 'fiber' ? `Fiber span, ${l.p.len} km` : 'Patch cord'}: ${a0.name} to ${b0.name}${cutNow ? ', cut' : ''}` });
+      'aria-label': `${l.kind === 'fiber' ? `Fiber span, ${l.p.len} km` : 'Patch cord'}${l.p.circuit ? ` ${l.p.circuit}` : ''}: ${a0.name} to ${b0.name}${cutNow ? ', cut' : ''}` });
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'hit' }));
     g.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'wire' }));
     if (vr && vr.restored && vr.restored.links.includes(l.id)) og.append(sv('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: 'ghost' })); // the route the service had before the cut
@@ -259,6 +259,9 @@ function renderCanvas() {
       const rev = (gr.from !== a.id) !== (dir === 'rev'), o = onPath.has(l.id) || k ? 5 * (k + 1) : 0, ox = -dyn / dn * o, oy = dxn / dn * o;
       const p = rev ? [b, a] : [a, b];
       og.append(sv('line', { x1: p[0].x + ox, y1: p[0].y + oy, x2: p[1].x + ox, y2: p[1].y + oy, class: 'lightpath l1310 ' + gr.cls }));
+    }
+    if (l.p.circuit) { // the circuit name, when the cable has one: above the span label (or on its own on a patch cord)
+      const c = sv('text', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - (l.kind === 'fiber' || cutNow ? 24 : 10), class: 'llabel lcirc', 'text-anchor': 'middle' }); c.textContent = l.p.circuit; g.append(c);
     }
     if (l.kind === 'fiber' || cutNow) {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
@@ -357,7 +360,7 @@ function tipFor(kind, id) {
   } else {
     const l = link(id); if (!l) return null;
     const fb = PHY.FIBERS[l.p.fiber];
-    head.push(el('b', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('span', { class: 'tsub', text: l.kind === 'fiber' ? ` · ${l.p.len} km ${fb.name.split(' (')[0]}` : '' }));
+    head.push(el('b', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('span', { class: 'tsub', text: (l.p.circuit ? ` · ${l.p.circuit}` : '') + (l.kind === 'fiber' ? ` · ${l.p.len} km ${fb.name.split(' (')[0]}` : '') }));
     if (MODEL.isCut(S, l)) note('Cut. Right-click it and choose Splice it back.');
     const hs = hopsOfLink(r, l), k = r && r.path ? r.path.links.indexOf(l.id) : -1;
     if (hs.length) { const a = hs[0], z = hs[hs.length - 1], up = node(r.path.nodes[k]), dn = node(r.path.nodes[k + 1]); row(`Leaves ${up.name}`, pw(a.in.sig)); row(`Reaches ${dn.name}`, pw(z.out.sig)); lossRow(a.in.sig, z.out.sig); tail(z); }

@@ -204,6 +204,7 @@
       for (const [k, id] of [['pa', l.a], ['pb', l.b]]) if (p[k] === '1310') { const u = nodes.find(n => n.id === id); if (u && u.type === 'oadm') p[k] = u.p.side1310 === 'e' ? '1310E' : '1310W'; } // an older OADM had one port named 1310, on the line side1310 named
       if (!['both', 'ab', 'ba'].includes(p.dir)) p.dir = 'both';
       p.ramanFull = p.ramanFull === true; p.single = kind === 'fiber' && p.single === true; // one fiber carrying both directions
+      p.circuit = cleanCircuit(l.p && l.p.circuit); // an optional circuit name; an older lab has none
       p.srlg = typeof p.srlg === 'string' && /^[\w-]{0,24}$/.test(p.srlg) ? p.srlg : '';
       if (kind === 'fiber') for (const k of ['extraRev', 'ramanRev']) if (!(p[k] === '' || (Number.isFinite(+p[k]) && p[k] !== null && +p[k] >= 0))) p[k] = '';
       if (kind === 'fiber') { if (!['back', 'fwd', 'both'].includes(p.ramanDir)) p.ramanDir = 'back'; p.ramanPumps = Math.min(3, Math.max(1, Math.round(+p.ramanPumps || 1))); }
