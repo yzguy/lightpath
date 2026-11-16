@@ -26,8 +26,17 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', panel: 'ODF', splitter: 'SPL', switch: 'SW', host: 'HOST', meter: 'PM', otdr: 'OTDR', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, circuit: '', dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', pa: '', pb: '', single: false } : { il: 0.5, len: 3, circuit: '', dir: 'both', cut: false, mport: null, sa: '', sb: '', pa: '', pb: '', cport: null, hport: null, optic: '' });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', loss: '', lossRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, circuit: '', dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', pa: '', pb: '', single: false } : { il: 0.5, len: 3, circuit: '', dir: 'both', cut: false, mport: null, sa: '', sb: '', pa: '', pb: '', cport: null, hport: null, optic: '' });
   // A cable's optional circuit name (a carrier circuit ID or a route name), as a suffix after the A–B device names; '' when unnamed
+  // Span loss of a fiber at 1550 nm. The estimate is length x attenuation + connector/splice loss; a measured loss (OTDR or a
+  // light-source/power-meter test), when entered, replaces it everywhere. rev = the Z to A fiber: its own values, blank = same as forward.
+  const setNum = v => v !== '' && v != null && typeof v !== 'boolean' && Number.isFinite(+v);
+  const spanEst = (p, rev) => (PHY_.FIBERS[p.fiber] || PHY_.FIBERS.smf).att * (+p.len || 0) + +(rev && setNum(p.extraRev) ? p.extraRev : p.extra || 0);
+  const spanMeas = (p, rev) => (rev && setNum(p.lossRev) ? +p.lossRev : setNum(p.loss) ? +p.loss : null);
+  const spanLoss = (p, rev) => { const m = spanMeas(p, rev); return m != null ? m : spanEst(p, rev); };
+  // what a measured loss adds on top of the fiber's own attenuation at 1550 nm (joints, bends, repairs; negative if the glass is better
+  // than its datasheet); the 1310 nm, OSC and OTDR budgets, which use their own attenuation, add this. 0 when nothing is measured.
+  const spanExcess = (p, rev) => { const m = spanMeas(p, rev); return m == null ? 0 : m - (PHY_.FIBERS[p.fiber] || PHY_.FIBERS.smf).att * (+p.len || 0); };
   const circuitTag = l => (l && l.p && l.p.circuit ? ` (${l.p.circuit})` : '');
   const cleanCircuit = v => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 48) : '');
   // A grey cable: a host / router port with a grey 1310 nm optic, patched into the 1310 nm port of a passive mux or OADM. The optic is the cable's (p.optic).

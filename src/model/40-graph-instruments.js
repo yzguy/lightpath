@@ -98,7 +98,7 @@
       if (!nx) { ev('end', 'end of fiber', 0, -14, `nothing is cabled to ${n.name} ${outSide.toUpperCase()}: an open connector reflects`); return finish(`nothing is cabled to ${n.name} ${outSide.toUpperCase()}`), out; }
       const nid = nx.a === cur ? nx.b : nx.a;
       if (nx.kind === 'fiber') {
-        const len = +nx.p.len || 0, a = (PHY_.FIBERS[nx.p.fiber] || PHY_.FIBERS.smf).att * att1625;
+        const len = +nx.p.len || 0, rvO = nx.b === cur, a = Math.max(0, (PHY_.FIBERS[nx.p.fiber] || PHY_.FIBERS.smf).att * att1625 + (len > 0 && spanMeas(nx.p, rvO) != null ? (spanMeas(nx.p, rvO) - spanEst(nx.p, rvO)) / len : 0)); // a measured loss above or below the estimate shows in the slope
         if (isCut(S, nx)) {
           const at = nx.p.cutAt !== '' && Number.isFinite(+nx.p.cutAt) ? Math.min(len, +nx.p.cutAt) : len / 2, d = nx.a === cur ? at : len - at;
           km += d; loss += a * d; out.points.push({ km, db: -loss }); ev('break', `fiber ${node(nx.a).name}–${node(nx.b).name}${circuitTag(nx)}`, 0, -14, `a break ${f1(d)} km into the span`); return finish(`the fiber is cut ${f1(d)} km into ${node(nx.a).name}–${node(nx.b).name}`), out;
@@ -156,6 +156,7 @@
         for (let guard = 0; guard < 40; guard++) {
           if (isCut(S, l)) { why = `the fiber ${link(l.id) ? node(l.a).name + '–' + node(l.b).name : ''} is cut`; rn.push(l.a === cur ? l.b : l.a); break; }
           km += l.kind === 'fiber' ? +l.p.len : patchKm(l);
+          if (l.kind === 'fiber') extra += spanExcess(l.p, l.b === cur); // a measured span loss: what it adds over the fiber attenuation
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid); hops.push(n.name); rn.push(nid);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
           if (has1310(n)) { // it drops at the 1310 nm port whose filter sits on the line port it arrives on; an OADM line without one is express, and blocks it
@@ -216,6 +217,7 @@
         for (let guard = 0; guard < 40; guard++) {
           if (isCut(S, l)) { why = `the fiber ${node(l.a).name}–${node(l.b).name}${circuitTag(l)} is cut`; break; }
           km += l.kind === 'fiber' ? +l.p.len : patchKm(l);
+          if (l.kind === 'fiber') extra += spanExcess(l.p, l.b === cur);
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid);
           if (isDead(n)) { why = `${n.name} has failed`; break; }
           if (site(n)) { b = n; break; }
