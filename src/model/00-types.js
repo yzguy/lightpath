@@ -26,7 +26,10 @@ const MODEL = (() => {
   const newClient = (optic = '100g-lr4') => ({ optic, len: 0.1, extra: 1 });
   const isEnd = n => !!n && (n.type === 'trx' || n.type === 'mxp'); // service end: a coherent line port that light never passes through
   const PREFIX = { dcm: 'DCM', mxp: 'MXP', trx: 'TRX', mux: 'MUX', panel: 'ODF', splitter: 'SPL', switch: 'SW', host: 'HOST', meter: 'PM', otdr: 'OTDR', oadm: 'OADM', edfa: 'AMP', roadm: 'ROADM', voa: 'VOA' };
-  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', pa: '', pb: '', single: false } : { il: 0.5, len: 3, dir: 'both', cut: false, mport: null, sa: '', sb: '', pa: '', pb: '', cport: null, hport: null, optic: '' });
+  const linkDefaults = kind => (kind === 'fiber' ? { len: 80, fiber: 'smf', extra: 1, extraRev: '', nch: '', raman: 0, ramanRev: '', ramanDir: 'back', ramanPumps: 1, ramanFull: false, circuit: '', dir: 'both', cut: false, cutAt: '', srlg: '', sa: '', sb: '', pa: '', pb: '', single: false } : { il: 0.5, len: 3, circuit: '', dir: 'both', cut: false, mport: null, sa: '', sb: '', pa: '', pb: '', cport: null, hport: null, optic: '' });
+  // A cable's optional circuit name (a carrier circuit ID or a route name), as a suffix after the A–B device names; '' when unnamed
+  const circuitTag = l => (l && l.p && l.p.circuit ? ` (${l.p.circuit})` : '');
+  const cleanCircuit = v => (typeof v === 'string' ? v.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 48) : '');
   // A grey cable: a host / router port with a grey 1310 nm optic, patched into the 1310 nm port of a passive mux or OADM. The optic is the cable's (p.optic).
   const isUnit1310 = n => !!n && (n.type === 'mux' || n.type === 'oadm');
   // The 1310 nm ports a unit has, each with the line port its filter sits on: a mux has one (1310, on COM). An East and West OADM has one per direction,

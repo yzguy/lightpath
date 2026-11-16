@@ -4,7 +4,7 @@
     const link = id => S.links.find(l => l.id === id);
     const linksOf = id => S.links.filter(l => l.a === id || l.b === id);
     const other = (l, id) => (l.a === id ? l.b : l.a);
-    const linkName = l => { const a = node(l.a), b = node(l.b); return `${a ? a.name : '?'}–${b ? b.name : '?'}`; };
+    const linkName = l => { const a = node(l.a), b = node(l.b); return `${a ? a.name : '?'}–${b ? b.name : '?'}${circuitTag(l)}`; };
     return { node, link, linksOf, other, linkName };
   };
 
@@ -101,7 +101,7 @@
         const len = +nx.p.len || 0, a = (PHY_.FIBERS[nx.p.fiber] || PHY_.FIBERS.smf).att * att1625;
         if (isCut(S, nx)) {
           const at = nx.p.cutAt !== '' && Number.isFinite(+nx.p.cutAt) ? Math.min(len, +nx.p.cutAt) : len / 2, d = nx.a === cur ? at : len - at;
-          km += d; loss += a * d; out.points.push({ km, db: -loss }); ev('break', `fiber ${node(nx.a).name}–${node(nx.b).name}`, 0, -14, `a break ${f1(d)} km into the span`); return finish(`the fiber is cut ${f1(d)} km into ${node(nx.a).name}–${node(nx.b).name}`), out;
+          km += d; loss += a * d; out.points.push({ km, db: -loss }); ev('break', `fiber ${node(nx.a).name}–${node(nx.b).name}${circuitTag(nx)}`, 0, -14, `a break ${f1(d)} km into the span`); return finish(`the fiber is cut ${f1(d)} km into ${node(nx.a).name}–${node(nx.b).name}`), out;
         }
         const room = DR - 1.5 - loss; // loss the trace can still take before it sinks into the noise
         if (a * len > room) { const d = Math.max(0, room / a); km += d; loss += a * d; out.points.push({ km, db: -loss }); ev('noise', 'noise floor', 0, -90, `the trace sinks into the noise (dynamic range ${DR} dB): use a longer pulse`); return finish('the trace sinks into the noise: use a longer pulse'), out; }
@@ -214,7 +214,7 @@
         if (l0.kind !== 'fiber' && l0.kind !== 'patch' || (l0.a !== a.id && l0.b !== a.id)) continue;
         let l = l0, cur = a.id, km = 0, extra = 2 * OSC.filter, why = '', b = null;
         for (let guard = 0; guard < 40; guard++) {
-          if (isCut(S, l)) { why = `the fiber ${node(l.a).name}–${node(l.b).name} is cut`; break; }
+          if (isCut(S, l)) { why = `the fiber ${node(l.a).name}–${node(l.b).name}${circuitTag(l)} is cut`; break; }
           km += l.kind === 'fiber' ? +l.p.len : patchKm(l);
           const nid = l.a === cur ? l.b : l.a, n = node(nid), arr = sideOf(l, nid);
           if (isDead(n)) { why = `${n.name} has failed`; break; }

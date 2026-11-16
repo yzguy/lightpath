@@ -309,6 +309,10 @@ function renderInspectorBody() {
     const head = el('div', { class: 'insp-head' }, [el('h2', { text: l.kind === 'fiber' ? 'Fiber span' : 'Patch cord' }), el('p', { class: 'muted', text: linkName(l) }),
       el('div', { class: 'row' }, [el('button', { class: 'btn ' + (l.p.cut ? '' : 'danger'), text: l.p.cut ? 'Splice it back' : l.kind === 'fiber' ? 'Cut this fiber' : 'Cut this cable', onclick: () => { l.p.cut = !l.p.cut; checkpoint(); renderAll(); toast(`${l.p.cut ? 'Cut' : 'Spliced'} ${linkName(l)}`, { label: 'Undo', fn: undo }); } }), el('button', { class: 'btn quiet delbtn', text: 'Delete cable', onclick: del })])]);
     box.append(head);
+    { const ci = el('input', { value: l.p.circuit || '', id: 'f-circuit', placeholder: l.kind === 'fiber' ? 'e.g. SFO2-SCZ1 span A' : 'optional', maxlength: 48, spellcheck: 'false' });
+      ci.addEventListener('input', () => { l.p.circuit = MODEL.cleanCircuit(ci.value); head.querySelector('p.muted').textContent = linkName(l); recompute(); });
+      ci.addEventListener('change', () => { ci.value = l.p.circuit; });
+      box.append(field('Circuit name', ci, 'Optional: a carrier circuit ID or a route name. It is shown along the cable and used in alarms and results. Leave it blank for none.')); }
     box.append(field('Cable type', selIn(l, 'kind', [['fiber', 'Fiber span (outside plant)'], ['patch', 'Patch cord (in the rack)']])));
     if (l.p.dir == null) l.p.dir = 'both';
     { const na = node(l.a), nb = node(l.b); box.append(field('Carries light', selIn(l.p, 'dir', [['both', 'Both ways (a fiber pair)'], ['ab', `${na ? na.name : 'a'} → ${nb ? nb.name : 'b'} only`], ['ba', `${nb ? nb.name : 'b'} → ${na ? na.name : 'a'} only`]]), 'A one-way fiber lets each direction take a different route.')); }

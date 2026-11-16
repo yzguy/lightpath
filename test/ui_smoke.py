@@ -376,6 +376,27 @@ class UI(unittest.TestCase):
         (x0, y0), (x1, y1) = mids
         self.assertGreater(((x0 - x1) ** 2 + (y0 - y1) ** 2) ** 0.5, 10, 'the two cables are drawn apart')
 
+    def test_fiber_circuit_name(self):
+        """A fiber can be given a circuit name: it is drawn along the span, kept in the saved lab, named in the cut alarm, and clearing it hides it."""
+        pg = self.page
+        self.explore('dci')
+        self.page.locator('.link.k-fiber .hit').first.click(force=True)
+        self.assertEqual(pg.locator('.link.k-fiber .lcirc').count(), 0, 'an unnamed fiber has no circuit label')
+        pg.fill('#f-circuit', 'SFO2-SCZ1 span A')
+        pg.locator('#f-circuit').press('Tab')
+        pg.wait_for_timeout(100)
+        self.assertEqual(pg.locator('.link.k-fiber .lcirc').first.text_content(), 'SFO2-SCZ1 span A')
+        self.assertIn('(SFO2-SCZ1 span A)', pg.locator('.insp-head p.muted').inner_text())
+        saved = pg.evaluate("JSON.parse(localStorage.getItem('lightpath-v1')).links.find(l => l.kind === 'fiber').p.circuit")
+        self.assertEqual(saved, 'SFO2-SCZ1 span A')
+        pg.get_by_role('button', name='Cut this fiber').click()
+        pg.wait_for_timeout(100)
+        self.assertIn('SFO2-SCZ1 span A', pg.locator('#headline').inner_text(), 'the LOS headline names the circuit')
+        pg.fill('#f-circuit', '')
+        pg.locator('#f-circuit').press('Tab')
+        pg.wait_for_timeout(100)
+        self.assertEqual(pg.locator('.link.k-fiber .lcirc').count(), 0, 'clearing the name hides the label')
+
     def test_oadm_has_a_1310_port_per_side(self):
         pg = self.page
         pg.click('#w-blank')

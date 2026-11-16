@@ -124,7 +124,7 @@
         if (tgt && last && last.status === 'placed' && ent) { last.availability = availOf(d, ent.prot, ent.via, ent.conv); last.meetsTarget = last.availability != null && last.availability >= tgt - 1e-12; } }
     }
     const n = k => results.filter(r => r.status === k).length, placed = n('placed'), blocked = n('blocked'), protectedN = results.filter(r => r.status === 'placed' && r.protRoute).length, unprotectedN = results.filter(r => r.unprotected).length, convertedN = results.filter(r => r.converted).length;
-    const fibers = [...loads].filter(([id]) => link(id).kind === 'fiber').map(([id, c]) => ({ id, name: `${node(link(id).a).name}–${node(link(id).b).name}`, n: c, util: c / slotsN }));
+    const fibers = [...loads].filter(([id]) => link(id).kind === 'fiber').map(([id, c]) => ({ id, name: `${node(link(id).a).name}–${node(link(id).b).name}${circuitTag(link(id))}`, n: c, util: c / slotsN }));
     return { entries, results, stats: { demands: results.length, placed, blocked, protected: protectedN, unprotected: unprotectedN, converted: convertedN, unreachable: n('unreachable') + n('no route'), missed: results.filter(r => r.status === 'placed' && r.target && r.meetsTarget === false).length, autoProt: results.filter(r => r.autoProt && r.protRoute).length, blocking: placed + blocked ? blocked / (placed + blocked) : 0,
       maxUtil: Math.max(0, ...fibers.map(f => f.util)), slotsUsed: used.filter(u => u.size).length, slots: slotsN, fibers, svcSlot } };
   }

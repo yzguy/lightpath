@@ -106,7 +106,7 @@
   // where an amplifier helps most: the longest fiber span on the route
   const ampSpot = (S, path) => (path ? path.links.map(id => S.links.find(l => l.id === id)).filter(l => l && l.kind === 'fiber').sort((a, b) => +b.p.len - +a.p.len)[0] : null);
   const fixBidi = n => ({ type: 'makeBidi', id: n.id, label: `Make ${n.name} a bidirectional (BiDi) amplifier` });
-  const fixAmp = (S, l) => ({ type: 'insertAmp', id: l.id, label: `Add an amplifier halfway along ${S.nodes.find(n => n.id === l.a).name}–${S.nodes.find(n => n.id === l.b).name}` });
+  const fixAmp = (S, l) => ({ type: 'insertAmp', id: l.id, label: `Add an amplifier halfway along ${S.nodes.find(n => n.id === l.a).name}–${S.nodes.find(n => n.id === l.b).name}${circuitTag(l)}` });
   const fixRepairPort = (n, slot) => ({ type: 'repairPort', id: n.id, slot, label: `Replace ${n.name} port for slot ${slot + 1}` });
   const fixClean = (n, port) => ({ type: 'clean', id: n.id, port, label: `Clean ${n.name} port ${port}` });
 
@@ -125,7 +125,7 @@
       const amp = { id: uid('n'), type: 'edfa', name, x: Math.round((a.x + b.x) / 20) * 10, y: Math.round((a.y + b.y) / 20) * 10, p: { ...TYPES.edfa.def(), role: 'ila', bidi: !!l.p.single } }, half = +(+l.p.len / 2).toFixed(2); // on a single fiber the amplifier has to pass both directions
       const tail = { id: uid('l'), a: amp.id, b: b.id, kind: 'fiber', p: { ...l.p, len: half, sa: '', sb: l.p.sb ?? '', pa: 'OUT', pb: l.p.pb || '', cut: false } };
       l.b = amp.id; l.p = { ...l.p, len: half, sb: '', pb: 'IN' }; S.nodes.push(amp); S.links.push(tail);
-      return `Added ${name} halfway along ${a.name}–${b.name}`;
+      return `Added ${name} halfway along ${a.name}–${b.name}${circuitTag(l)}`;
     }
     return '';
   }

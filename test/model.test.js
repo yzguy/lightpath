@@ -2748,3 +2748,31 @@ test('a saved lab from before the per-side 1310 nm ports keeps its one port, on 
   assert.deepEqual(['c0', 'c1', 'c2'].map(port), ['1310E', '1310W', '1310W']);
   const l = M.band1310(S).links.find(x => x.b); assert.equal([l.aHost, l.bHost].sort().join(), 'H1,H2'); assert.equal(l.status, 'up');
 });
+
+test('a cable can carry an optional circuit name: kept, cleaned, absent in older labs, and used in the alarms', () => {
+  const old = build('dci'); old.links.forEach(l => { delete l.p.circuit; });
+  const S0 = M.sanitize(clone(old));
+  assert.ok(S0.links.every(l => l.p.circuit === ''), 'an older lab loads with every cable unnamed');
+  const f0 = S0.links.find(l => l.kind === 'fiber'), name0 = M.mkGraph(S0).linkName(f0);
+  assert.ok(!/\(/.test(name0), 'an unnamed cable keeps its plain device-to-device name');
+  assert.equal(M.simulate(S0).status, M.simulate(build('dci')).status, 'the name changes nothing physical');
+
+  const T = clone(old), f = T.links.find(l => l.kind === 'fiber'), pc = T.links.find(l => l.kind === 'patch');
+  f.p.circuit = '  SFO2-SCZ1\n span   A  '; pc.p.circuit = 'X'.repeat(80);
+  const S = M.sanitize(T), fs = S.links.find(l => l.id === f.id);
+  assert.equal(fs.p.circuit, 'SFO2-SCZ1 span A', 'whitespace and control characters are cleaned');
+  assert.equal(S.links.find(l => l.id === pc.id).p.circuit.length, 48, 'a patch cord can be named too, up to 48 characters');
+  T.links.find(l => l.kind === 'patch').p.circuit = 42; assert.equal(M.sanitize(T).links.find(l => l.id === pc.id).p.circuit, '');
+  assert.equal(M.sanitize(clone(S)).links.find(l => l.id === f.id).p.circuit, 'SFO2-SCZ1 span A', 'a saved lab keeps the name');
+
+  assert.ok(M.mkGraph(S).linkName(fs).endsWith('(SFO2-SCZ1 span A)'));
+  fs.p.cut = true; const r = M.simulate(S);
+  assert.equal(r.status, 'los');
+  assert.match(r.headline, /SFO2-SCZ1 span A/, 'the LOS headline names the circuit');
+  assert.ok(r.alarms.some(a => /SFO2-SCZ1 span A/.test(a.text)), 'so does the alarm');
+  fs.p.cut = false; assert.ok(M.simulate(S).hops.some(h => h.kind === 'span' && /SFO2-SCZ1 span A/.test(h.name)), 'the span row in the power table carries it');
+
+  const before = S.links.length; M.applyFix(S, { type: 'insertAmp', id: fs.id });
+  assert.equal(S.links.length, before + 1);
+  assert.equal(S.links.filter(l => l.p.circuit === 'SFO2-SCZ1 span A').length, 2, 'both halves of a split span keep the circuit name');
+});
