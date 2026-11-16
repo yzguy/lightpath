@@ -18,11 +18,38 @@ const edgeDist = (n, ux, uy) => { const [w, h] = HALF[n.type] || [34, 20]; retur
 // tries the other side and slides along the cable (up to the middle) until it covers no device, name, fiber label or port label placed before it. Chosen ports go first, then the
 // fixed port names (LINE, IN/OUT); a label with no clear spot is hidden until zooming in makes room.
 let placedLf = null;
+const CIRC_MAX = 28, ellipsize = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+// Cable label blocks: the lines are spaced for the text size, then each block takes the first spot along its cable (the middle, then stepping out towards both ends, never
+// over a device) where it covers no device, name or block placed before it. With no clear spot it takes the one that overlaps least (covering another label counts
+// four times as much as covering a device, since two labels on top of each other cannot be read), so a label is never lost.
+function placeCableLabels(lf) {
+  const boxes = [], ov = (p, q) => Math.max(0, Math.min(p[0] + p[2], q[0] + q[2]) - Math.max(p[0] - p[2], q[0] - q[2])) * Math.max(0, Math.min(p[1] + p[3], q[1] + q[3]) - Math.max(p[1] - p[3], q[1] - q[3]));
+  for (const g of gRoot.querySelectorAll('.node')) { const m = g.transform.baseVal.consolidate(), e = m ? m.matrix.e : 0, f = m ? m.matrix.f : 0; for (const c of g.querySelectorAll('.body, .nlabel, .endtag')) { const bb = c.getBBox(); boxes.push([bb.x + e + bb.width / 2, bb.y + f + bb.height / 2, bb.width / 2 + 2, bb.height / 2 + 1]); } }
+  for (const blk of gRoot.querySelectorAll('.lblock')) {
+    const d = blk.dataset; // a block beside its cable needs no gap for the wire, so its background-channel line closes up under the others
+    for (const t of blk.children) { t.setAttribute('x', 0); t.setAttribute('y', (+d.par && t.classList.contains('lbg') ? 4 : +t.dataset.dy) * lf); }
+    const ax = +d.ax, ay = +d.ay, dx = +d.bx - ax, dy = +d.by - ay, len = Math.hypot(dx, dy) || 1, bb = blk.getBBox(), hw = bb.width / 2 + 3, hh = bb.height / 2 + 1;
+    // how far along the cable the block's middle can go before its corner reaches a device
+    const ext = (Math.abs(dx) * hw + Math.abs(dy) * hh) / len, lo = Math.min(0.5, (+d.ea + ext) / len), hi = Math.max(0.5, 1 - (+d.eb + ext) / len);
+    const ts = [0.5]; for (let k = 1, st = Math.max(0.03, 8 / len); ; k++) { const p = 0.5 - k * st, q = 0.5 + k * st; if (p < lo && q > hi) break; if (p >= lo) ts.push(p); if (q <= hi) ts.push(q); }
+    // A block normally straddles its cable. One of several cables between the same devices sits wholly on the outside of the group instead (the upper cable's label above
+    // the pair, the lower one's below), since straddling would cover its neighbour. Where sliding finds no room the block steps further off sideways.
+    const nx = +d.nx, ny = +d.ny, e = Math.abs(nx) * hw + Math.abs(ny) * hh, cn = (bb.x + bb.width / 2) * nx + (bb.y + bb.height / 2) * ny, out = 4 - cn + e, inn = -4 - cn - e;
+    const shifts = +d.par ? [out, inn, out + 2 * e + 2, inn - 2 * e - 2, 0] : [0, out, inn, out + 2 * e + 2, inn - 2 * e - 2], best = { o: Infinity };
+    // stepping away from the cable costs as much as covering a strip of device as wide as the label, so a label only leaves its cable to get off another label
+    found: for (const sh of shifts) for (const t of ts) {
+      const px = ax + dx * t + nx * sh, py = ay + dy * t + ny * sh, r = [px + bb.x + bb.width / 2, py + bb.y + bb.height / 2, hw, hh], hit = boxes.reduce((s, q) => s + ov(r, q) * (q[4] ? 4 : 1), 0) + Math.abs(sh - shifts[0]) * hw;
+      if (hit < best.o - 0.25) Object.assign(best, { o: hit, px, py, r });
+      if (!hit) break found;
+    }
+    blk.setAttribute('transform', `translate(${best.px},${best.py})`); boxes.push([...best.r, 1]);
+  }
+}
 function placePortLabels(lf) {
   placedLf = lf;
   const fs = 11 * lf, hh = fs * 0.6, boxes = [], box = (bb, e = 0, f = 0) => boxes.push([bb.x + e + bb.width / 2, bb.y + f + bb.height / 2, bb.width / 2, bb.height / 2]);
   for (const g of gRoot.querySelectorAll('.node')) { const m = g.transform.baseVal.consolidate(), e = m ? m.matrix.e : 0, f = m ? m.matrix.f : 0; for (const c of g.querySelectorAll('.body, .nlabel, .endtag')) box(c.getBBox(), e, f); }
-  for (const t of gRoot.querySelectorAll('.link .llabel:not(.plabel)')) if (t.textContent) box(t.getBBox());
+  for (const b of gRoot.querySelectorAll('.lblock')) { const m = b.transform.baseVal.consolidate(); for (const t of b.querySelectorAll('.llabel')) box(t.getBBox(), m ? m.matrix.e : 0, m ? m.matrix.f : 0); }
   const wires = [...gRoot.querySelectorAll('.link .wire')].map(w => [w.parentNode, ...['x1', 'y1', 'x2', 'y2'].map(k => +w.getAttribute(k))]);
   const crosses = ([x0, y0, x1, y1], cx, cy, hx, hy) => { // Liang-Barsky: does the segment enter the box?
     let lo = 0, hi = 1; const dx = x1 - x0, dy = y1 - y0;
@@ -46,7 +73,7 @@ function applyView() {
   gRoot.setAttribute('transform', `scale(${k}) translate(${-S.view.x},${-S.view.y})`);
   const lf2 = floorScale(9, k * 11);
   gRoot.style.setProperty('--lf1', floorScale(11, k * 11.5)); gRoot.style.setProperty('--lf2', lf2);
-  if (lf2 !== placedLf || gRoot.querySelector('.plabel:not([x])')) placePortLabels(lf2); gRoot.style.setProperty('--lf3', floorScale(9, k * 10));
+  if (lf2 !== placedLf || gRoot.querySelector('.plabel:not([x]), .lblock:not([transform])')) { placeCableLabels(lf2); placePortLabels(lf2); } gRoot.style.setProperty('--lf3', floorScale(9, k * 10));
   gRoot.querySelectorAll('.faultg').forEach(g => g.setAttribute('transform', `translate(${g.dataset.x},${g.dataset.y}) scale(${floorScale(9, k * 8)})`));
 }
 function toWorld(cx, cy) { const r = svg.getBoundingClientRect(); return { x: (cx - r.left) / S.view.k + S.view.x, y: (cy - r.top) / S.view.k + S.view.y }; }
@@ -226,7 +253,7 @@ const view = () => (dir === 'rev' && lastRes && lastRes.rev && lastRes.rev.mode 
 function renderCanvas() {
   gRoot.innerHTML = '';
   const vr = view(), onPath = new Set(vr && vr.path ? vr.path.links : []);
-  const lg = sv('g'), ng = sv('g'), og = sv('g');
+  const lg = sv('g'), ng = sv('g'), og = sv('g'), bg2 = sv('g', { class: 'lblocks' });
   const hplan = vr && vr.derived ? vr.derived.plan : S.g.plan, hc = hiChan && hplan && vr && vr.channels ? vr.channels[hplan.indexOf(hiChan)] : null, hiLinks = new Set(hc ? hc.routeLinks : []), hiNodes = new Set(hc ? hc.routeNodes : []), sb = hc && hc.protection ? (hc.protection.active === 'work' ? hc.protection.protect : hc.protection.work) : null, stbyLinks = new Set(sb ? sb.routeLinks : []);
   // each cable a 1310 nm link runs over, with the device the light leaves from and the link's state (a link that stops short is drawn down as far as it gets)
   // the moving service lines show only for what is selected (a device or cable on the route, or a box of devices); a down or degraded route stays drawn because it is an alarm
@@ -260,17 +287,21 @@ function renderCanvas() {
       const p = rev ? [b, a] : [a, b];
       og.append(sv('line', { x1: p[0].x + ox, y1: p[0].y + oy, x2: p[1].x + ox, y2: p[1].y + oy, class: 'lightpath l1310 ' + gr.cls }));
     }
-    if (l.p.circuit) { // the circuit name, when the cable has one: above the span label (or on its own on a patch cord)
-      const c = sv('text', { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 - (l.kind === 'fiber' || cutNow ? 24 : 10), class: 'llabel lcirc', 'text-anchor': 'middle' }); c.textContent = l.p.circuit; g.append(c);
+    // the cable's own labels (circuit name, span, background channels) are one block drawn above every cable, so no wire runs over them; applyView slides each block
+    // along its cable until it clears the devices and the blocks placed before it (two cables between the same devices would otherwise put theirs on the same spot)
+    const blk = sv('g', { class: 'lblock k-' + l.kind + (cutNow ? ' cut' : ''), 'data-id': l.id, 'data-ax': a.x, 'data-ay': a.y, 'data-bx': b.x, 'data-by': b.y,
+      'data-ea': edgeDist(a, dxn / dn, dyn / dn), 'data-eb': edgeDist(b, -dxn / dn, -dyn / dn), 'data-nx': -pdy / pd * (Math.sign(off) || 1), 'data-ny': pdx / pd * (Math.sign(off) || 1), 'data-par': grp.length > 1 ? 1 : 0 });
+    if (l.p.circuit) { // the circuit name, when the cable has one: above the span label (or on its own on a patch cord); a long one is cut short, the hover card has it whole
+      const c = sv('text', { 'data-dy': l.kind === 'fiber' || cutNow ? -24 : -10, class: 'llabel lcirc', 'text-anchor': 'middle' }); c.textContent = ellipsize(l.p.circuit, CIRC_MAX); blk.append(c);
     }
     if (l.kind === 'fiber' || cutNow) {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      const t = sv('text', { x: mx, y: my - 10, class: 'llabel', 'text-anchor': 'middle' });
+      const t = sv('text', { 'data-dy': -10, class: 'llabel', 'text-anchor': 'middle' });
       const arrow = l.p.dir === 'ab' || l.p.dir === 'ba' ? (() => { const dx = b.x - a.x, dy = b.y - a.y, f = l.p.dir === 'ab' ? 1 : -1; return ' ' + (Math.abs(dx) >= Math.abs(dy) ? (dx * f > 0 ? '→' : '←') : (dy * f > 0 ? '↓' : '↑')); })() : '';
       t.textContent = (l.kind === 'fiber' ? `${l.p.len} km · ${f1(MODEL.spanLoss(l.p))} dB${MODEL.spanMeas(l.p) != null ? ' measured' : ''}` + (+l.p.raman > 0 ? ` · Raman ${l.p.raman} mW` : '') + (l.p.srlg ? ` · ${l.p.srlg}` : '') + (l.p.single ? ' · single fiber' : '') : 'patch') + arrow;
-      g.append(t);
+      blk.append(t);
       const bg = l.kind === 'fiber' && !cutNow ? bgOn(l) : 0;
-      if (bg) { const u = sv('text', { x: mx, y: my + 16, class: 'llabel lbg', 'text-anchor': 'middle' }); u.textContent = `+${bg} background ch`; g.append(u); }
+      if (bg) { const u = sv('text', { 'data-dy': 16, class: 'llabel lbg', 'text-anchor': 'middle' }); u.textContent = `+${bg} background ch`; blk.append(u); }
       if (cutNow) { const x = sv('text', { x: mx, y: my + 7, class: 'cutmark', 'text-anchor': 'middle' }); x.textContent = '✕'; g.append(x); }
     }
     { const pl = portLink(l), labelAt = (m, o, text, fixedPort) => { // a port label on the cable just outside the device it names (applyView places it)
@@ -284,11 +315,11 @@ function renderCanvas() {
         const t = pl && pl.m === n && l.p.mport != null ? portChText(n, l.p.mport, sideOf(l, n), pl.t) : MODEL.shortLabel(S, n, id);
         if (t) labelAt(n, o, t, k !== 'ad');
       } }
-    lg.append(g);
+    lg.append(g); if (blk.childNodes.length) bg2.append(blk);
   }
   const badged = []; // fault badges need the devices in the document to be measured, so they are added after
   for (const n of S.nodes) { const sh = nodeShape(n); if (hiNodes.has(n.id)) sh.classList.add('chnode'); ng.append(sh); badged.push([n, sh]); }
-  gRoot.append(lg, og, ng);
+  gRoot.append(lg, og, bg2, ng);
   for (const [n, sh] of badged) {
     const body = sh.querySelector('.body') || sh.querySelector('path, circle, rect') || sh, fb = faultBadge(n, body); if (fb) ng.append(fb);
   }
