@@ -324,6 +324,25 @@ function renderInspectorBody() {
       box.append(field('Fiber type', selIn(l.p, 'fiber', Object.entries(PHY.FIBERS).map(([k, f]) => [k, f.name]))));
       box.append(field('Connector + splice loss (dB)', numIn(l.p, 'extra', 0.1, 0, 20), 'Dirty connector? Add 1–3 dB here'));
       box.append(adv(field('Same, return direction (dB)', numIn(l.p, 'extraRev', 0.1, 0, 20, true, String(l.p.extra)), 'Z to A. Blank = same as forward. Bidirectional lines have two fibers; a dirty connector on one hurts one direction.'), isSet(l.p.extraRev)));
+      // Measured span loss: blank = the estimate from length, attenuation and joints; a number (from an OTDR or a light source and power meter) replaces it everywhere
+      const lossIn = numIn(l.p, 'loss', 0.1, 0, 80, true, f1(MODEL.spanEst(l.p)));
+      const useEst = el('button', { type: 'button', class: 'btn', id: 'f-loss-clear', text: 'Use estimate', title: 'Clear the measured loss and go back to the estimate', onclick: () => { l.p.loss = ''; l.p.lossRev = ''; renderAll(); } });
+      useEst.hidden = !isSet(l.p.loss) && !isSet(l.p.lossRev);
+      box.append(field('Measured span loss (dB)', el('div', { class: 'crow' }, [lossIn, useEst]), 'Optional. Blank = estimated from the length, the fiber attenuation and the connector + splice loss. Enter the loss you measured (OTDR or light source and power meter, at 1550 nm) and it replaces the estimate in the power and OSNR budgets, the planner and the 1310 nm and OSC budgets. Changing the length later updates the estimate, not your measurement.'));
+      const lossRevIn = numIn(l.p, 'lossRev', 0.1, 0, 80, true, isSet(l.p.loss) ? String(l.p.loss) : f1(MODEL.spanEst(l.p, true)));
+      box.append(adv(field('Measured, return direction (dB)', lossRevIn, 'Z to A. Blank = same as forward (the measured value if there is one, else the estimate).'), isSet(l.p.lossRev)));
+      const lossInfo = el('p', { class: 'muted small', id: 'f-lossinfo' });
+      const updLoss = () => {
+        const fbx = PHY.FIBERS[l.p.fiber] || PHY.FIBERS.smf, est = MODEL.spanEst(l.p), m = MODEL.spanMeas(l.p), estR = MODEL.spanEst(l.p, true), mR = MODEL.spanMeas(l.p, true);
+        const why = `${+l.p.len || 0} km × ${fbx.att} dB/km + ${f1(+l.p.extra || 0)} dB joints`;
+        let t = m != null ? `Using the measured ${f1(m)} dB, ${m - est >= 0 ? '+' : '−'}${f1(Math.abs(m - est))} dB against the estimate of ${f1(est)} dB (${why}).` : `Estimated ${f1(est)} dB (${why}).`;
+        if (mR != null && mR !== m) t += ` Return direction measured ${f1(mR)} dB.`; else if (mR == null && Math.abs(estR - est) > 1e-9) t += ` Return direction estimated ${f1(estR)} dB.`;
+        lossInfo.textContent = t; lossIn.placeholder = f1(est); lossRevIn.placeholder = m != null ? String(m) : f1(estR);
+        useEst.hidden = m == null && mR == null;
+        const sp = box.querySelector('#spec-loss'); if (sp) sp.textContent = `${f1(MODEL.spanLoss(l.p))} dB ${m != null ? '(measured)' : '(estimated)'}`;
+      };
+      box.append(lossInfo);
+      for (const k of ['len', 'extra', 'extraRev', 'loss', 'lossRev']) box.querySelector('#f-' + k).addEventListener('input', updLoss);
       if (!(lastRes && lastRes.derived)) box.append(adv(field('Channels lit on this span', numIn(l.p, 'nch', 1, 1, PHY.cBandSlots(+S.g.df * 1e9), true, String(S.g.nch)), 'Blank = global. Applies from this span until a mux or ROADM changes it. Fewer neighbours means less nonlinearity.'), isSet(l.p.nch)));
       const fb = PHY.FIBERS[l.p.fiber];
       // the Raman pump is off on most spans: its settings fold away, and open on their own when a pump is on
@@ -336,9 +355,11 @@ function renderInspectorBody() {
       rd.append(field('Raman pumps (wavelengths)', selIn(l.p, 'ramanPumps', [['1', '1 pump: gain ripple across the band'], ['2', '2 pumps'], ['3', '3 pumps: flat gain']]), 'More pump wavelengths flatten the gain across C-band, which shows up as less tilt. Total pump power is shared.'));
       rd.append(adv(field('Raman pump, return direction (mW)', numIn(l.p, 'ramanRev', 50, 0, PHY.RAMAN.maxMw, true, String(l.p.raman)), 'Blank = same as forward.'), isSet(l.p.ramanRev)));
       const rn = el('p', { class: 'muted small' });
-      const upd = () => { const gr = PHY.ramanGain(fb, +l.p.len, Math.min(PHY.RAMAN.maxMw, +l.p.raman || 0)); rn.textContent = gr > 0 ? `On-off Raman gain about ${f1(gr)} dB, net span loss ${f1(fb.att * l.p.len + +l.p.extra - gr)} dB.` : ''; rn.hidden = !(gr > 0); };
+      const upd = () => { const gr = PHY.ramanGain(fb, +l.p.len, Math.min(PHY.RAMAN.maxMw, +l.p.raman || 0)); rn.textContent = gr > 0 ? `On-off Raman gain about ${f1(gr)} dB, net span loss ${f1(MODEL.spanLoss(l.p) - gr)} dB.` : ''; rn.hidden = !(gr > 0); };
       box.querySelector('#f-raman').addEventListener('input', upd); upd(); rd.append(rn);
-      box.append(el('div', { class: 'spec' }, [specRow('Attenuation', `${fb.att} dB/km`), specRow('Span loss', `${f1(fb.att * l.p.len + +l.p.extra)} dB`), specRow('Dispersion', `${fb.D} ps/nm/km → ${Math.round(fb.D * l.p.len)} ps/nm`), specRow('PMD', `${fb.pmd} ps/√km`), specRow('Nonlinear γ', `${fb.gamma} /W/km`)]));
+      box.append(el('div', { class: 'spec' }, [specRow('Attenuation', `${fb.att} dB/km`), specRow('Span loss', ''), specRow('Dispersion', `${fb.D} ps/nm/km → ${Math.round(fb.D * l.p.len)} ps/nm`), specRow('PMD', `${fb.pmd} ps/√km`), specRow('Nonlinear γ', `${fb.gamma} /W/km`)]));
+      { const sr = [...box.querySelectorAll('.spec > div')].find(d => d.firstChild.textContent === 'Span loss'); if (sr) sr.lastChild.id = 'spec-loss'; }
+      updLoss();
     } else {
       if (l.p.il == null) l.p.il = linkDefaults('patch').il;
       if (l.p.len == null) l.p.len = linkDefaults('patch').len;

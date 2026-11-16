@@ -397,6 +397,32 @@ class UI(unittest.TestCase):
         pg.wait_for_timeout(100)
         self.assertEqual(pg.locator('.link.k-fiber .lcirc').count(), 0, 'clearing the name hides the label')
 
+    def test_fiber_measured_loss_overrides_the_estimate(self):
+        pg = self.page
+        self.explore('dci')
+        pg.locator('.link.k-fiber .hit').first.click(force=True)
+        self.assertIn('Estimated', pg.locator('#f-lossinfo').inner_text())
+        self.assertTrue(pg.locator('#f-loss-clear').is_hidden(), 'nothing to clear yet')
+        est = pg.locator('#f-loss').get_attribute('placeholder')
+        margin0 = pg.locator('#headline').inner_text()
+        pg.fill('#f-loss', '25')
+        pg.wait_for_timeout(100)
+        self.assertIn('Using the measured 25.0 dB', pg.locator('#f-lossinfo').inner_text())
+        self.assertIn('25.0 dB measured', pg.locator('.link.k-fiber .llabel').first.text_content())
+        self.assertIn('(measured)', pg.locator('#spec-loss').inner_text())
+        self.assertEqual(pg.evaluate("JSON.parse(localStorage.getItem('lightpath-v1')).links.find(l => l.kind === 'fiber').p.loss"), 25)
+        # a new length moves the estimate, the measurement stays
+        pg.fill('#f-len', '60')
+        pg.wait_for_timeout(100)
+        self.assertEqual(pg.locator('#f-loss').input_value(), '25')
+        self.assertNotEqual(pg.locator('#f-loss').get_attribute('placeholder'), est)
+        self.assertIn('25.0 dB measured', pg.locator('.link.k-fiber .llabel').first.text_content())
+        pg.click('#f-loss-clear')
+        pg.wait_for_timeout(100)
+        self.assertEqual(pg.locator('#f-loss').input_value(), '')
+        self.assertIn('Estimated', pg.locator('#f-lossinfo').inner_text())
+        self.assertNotIn('measured', pg.locator('.link.k-fiber .llabel').first.text_content())
+
     def test_oadm_has_a_1310_port_per_side(self):
         pg = self.page
         pg.click('#w-blank')

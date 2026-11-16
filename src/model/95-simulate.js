@@ -95,7 +95,7 @@
         const l = link(path.links[j]);
         if (l.kind === 'fiber') {
           const fb = PHY_.FIBERS[l.p.fiber], Lk = +l.p.len, n = planOn ? litCount(j) : l.p.nch !== '' && l.p.nch != null ? Math.min(96, Math.max(1, Math.round(+l.p.nch))) : Math.max(1, nch);
-          return { dbm: PHY_.optLaunch(fb, Lk, Rs, n, df, +nf, fb.att * Lk + +pd(l.p, 'extra')), n };
+          return { dbm: PHY_.optLaunch(fb, Lk, Rs, n, df, +nf, spanLoss(l.p, rv)), n };
         }
         if (!['mux', 'voa', 'dcm'].includes((node(path.nodes[j + 1]) || {}).type)) return null; // another amplifier, ROADM or end sits between
       }
@@ -139,7 +139,7 @@
         if (planOn) { curAct = maskAt(i); nch = curAct.filter(Boolean).length; } // the plan decides which channels ride this span
         else if (l.p.nch !== '' && l.p.nch != null) nch = Math.min(96, Math.max(1, Math.round(+l.p.nch)));
         maxNch = Math.max(maxNch, nch);
-        const sl = fb.att * Lk + +pd(l.p, 'extra') + (eol ? eolSpan : 0);
+        const sl = spanLoss(l.p, rv) + (eol ? eolSpan : 0); // measured if entered, else length x attenuation + joints
         let nfDist = null; // the span's effective noise figure when the solver's distributed noise is used
         const pump = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +pd(l.p, 'raman') || 0));
         const rdir = ['back', 'fwd', 'both'].includes(l.p.ramanDir) ? l.p.ramanDir : 'back', npump = Math.min(3, Math.max(1, Math.round(+l.p.ramanPumps || 1)));
@@ -561,6 +561,6 @@
     return res;
   }
 
-  return { TYPES, PREFIX, cableKind, greyEnds, portsOf, portKind, portLabel, shortLabel, endPort, cableRole, ports1310, ensurePorts, syncPorts, cableFits, cablingFaults, lineProtected, greyFor, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, circuitTag, cleanCircuit, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
+  return { TYPES, PREFIX, cableKind, greyEnds, portsOf, portKind, portLabel, shortLabel, endPort, cableRole, ports1310, ensurePorts, syncPorts, cableFits, cablingFaults, lineProtected, greyFor, PORTS_PER_CARD, SPLIT, splitLossDb, otdrTrace, meterRead, OTDR_PULSES, OTDR_DR, METER, band1310, oscSpans, optic1310, reach, traffic, assignSides, oadmWhy, oadmRange, oadmSide, derive, effective, txPower, applyFix, PRESETS, CHALLENGES, challengeStatus, copySelection, pasteSelection, removeNodes, alignNodes, isEnd, newClient, uid, linkDefaults, circuitTag, spanLoss, spanEst, spanMeas, cleanCircuit, sanitize, sanitizePlan, planFromUniform, remapPlan, assignSlots, resilience, RESIL, isCut, candidateRoutes, estimateRoute, planDemands, blockingCurve, optimiseOffsets, channelTransients, fromSpans, mkGraph, route, simulate, reqOsnr };
 })();
 if (typeof module !== 'undefined') module.exports = MODEL;

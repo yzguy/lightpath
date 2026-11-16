@@ -265,10 +265,9 @@ function renderCanvas() {
     }
     if (l.kind === 'fiber' || cutNow) {
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-      const fb = PHY.FIBERS[l.p.fiber];
       const t = sv('text', { x: mx, y: my - 10, class: 'llabel', 'text-anchor': 'middle' });
       const arrow = l.p.dir === 'ab' || l.p.dir === 'ba' ? (() => { const dx = b.x - a.x, dy = b.y - a.y, f = l.p.dir === 'ab' ? 1 : -1; return ' ' + (Math.abs(dx) >= Math.abs(dy) ? (dx * f > 0 ? '→' : '←') : (dy * f > 0 ? '↓' : '↑')); })() : '';
-      t.textContent = (l.kind === 'fiber' ? `${l.p.len} km · ${f1(fb.att * l.p.len + +l.p.extra)} dB` + (+l.p.raman > 0 ? ` · Raman ${l.p.raman} mW` : '') + (l.p.srlg ? ` · ${l.p.srlg}` : '') + (l.p.single ? ' · single fiber' : '') : 'patch') + arrow;
+      t.textContent = (l.kind === 'fiber' ? `${l.p.len} km · ${f1(MODEL.spanLoss(l.p))} dB${MODEL.spanMeas(l.p) != null ? ' measured' : ''}` + (+l.p.raman > 0 ? ` · Raman ${l.p.raman} mW` : '') + (l.p.srlg ? ` · ${l.p.srlg}` : '') + (l.p.single ? ' · single fiber' : '') : 'patch') + arrow;
       g.append(t);
       const bg = l.kind === 'fiber' && !cutNow ? bgOn(l) : 0;
       if (bg) { const u = sv('text', { x: mx, y: my + 16, class: 'llabel lbg', 'text-anchor': 'middle' }); u.textContent = `+${bg} background ch`; g.append(u); }
@@ -364,7 +363,7 @@ function tipFor(kind, id) {
     if (MODEL.isCut(S, l)) note('Cut. Right-click it and choose Splice it back.');
     const hs = hopsOfLink(r, l), k = r && r.path ? r.path.links.indexOf(l.id) : -1;
     if (hs.length) { const a = hs[0], z = hs[hs.length - 1], up = node(r.path.nodes[k]), dn = node(r.path.nodes[k + 1]); row(`Leaves ${up.name}`, pw(a.in.sig)); row(`Reaches ${dn.name}`, pw(z.out.sig)); lossRow(a.in.sig, z.out.sig); tail(z); }
-    else { if (l.kind === 'fiber') row('Span loss', `${f1(fb.att * l.p.len + +l.p.extra)} dB`); note('Not on the service path.'); }
+    else { if (l.kind === 'fiber') row('Span loss', `${f1(MODEL.spanLoss(l.p))} dB${MODEL.spanMeas(l.p) != null ? ' (measured)' : ''}`); note('Not on the service path.'); }
   }
   return [el('div', { class: 'thead' }, head), rows.length ? el('div', { class: 'tgrid' }, rows) : null, ...notes].filter(Boolean);
 }

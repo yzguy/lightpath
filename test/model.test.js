@@ -2776,3 +2776,38 @@ test('a cable can carry an optional circuit name: kept, cleaned, absent in older
   assert.equal(S.links.length, before + 1);
   assert.equal(S.links.filter(l => l.p.circuit === 'SFO2-SCZ1 span A').length, 2, 'both halves of a split span keep the circuit name');
 });
+
+test('a measured span loss replaces the estimate, survives a length change, and old labs load unchanged', () => {
+  const S = M.sanitize(build('dci')), fib = S.links.find(l => l.kind === 'fiber'), att = PHY.FIBERS[fib.p.fiber].att;
+  // an older lab has no measured loss: it loads as blank and the estimate is length x attenuation + joints, as before
+  const old = clone(build('dci')); for (const l of old.links) { delete l.p.loss; delete l.p.lossRev; }
+  const so = M.sanitize(old), fo = so.links.find(l => l.kind === 'fiber');
+  assert.equal(fo.p.loss, ''); assert.equal(fo.p.lossRev, '');
+  assert.equal(M.spanMeas(fo.p), null); assert.ok(Math.abs(M.spanLoss(fo.p) - (att * fo.p.len + fo.p.extra)) < 1e-9);
+  assert.deepEqual(M.simulate(so).hops.map(h => h.out.sig), M.simulate(S).hops.map(h => h.out.sig));
+  const span = r => r.hops.find(h => h.kind === 'span');
+  const base = M.simulate(S), est = M.spanLoss(fib.p);
+  // 3 dB more than the estimate: the span loses 3 dB more, the margin drops
+  const m = clone(S), fm = m.links.find(l => l.id === fib.id); fm.p.loss = +(est + 3).toFixed(3);
+  const rm = M.simulate(m);
+  assert.ok(Math.abs((span(base).out.sig - span(rm).out.sig) - (fm.p.loss - est)) < 1e-6, 'the span loses the measured loss');
+  assert.ok(rm.qMargin < base.qMargin);
+  // editing the length changes the estimate, not the measurement
+  fm.p.len = +fm.p.len + 10; assert.equal(M.spanLoss(fm.p), fm.p.loss); assert.ok(M.spanEst(fm.p) > est);
+  // the return direction: blank = same as forward, its own value when entered
+  assert.equal(M.spanLoss(fm.p, true), fm.p.loss); fm.p.lossRev = 5; assert.equal(M.spanLoss(fm.p, true), 5); assert.equal(M.spanLoss(fm.p), fm.p.loss);
+  // sanitize keeps a number, drops junk, caps at 80 dB
+  const j = clone(m); const fj = j.links.find(l => l.id === fib.id); fj.p.loss = 'abc'; fj.p.lossRev = 120; const sj = M.sanitize(j).links.find(l => l.id === fib.id);
+  assert.equal(sj.p.loss, ''); assert.equal(sj.p.lossRev, 80);
+  assert.equal(M.sanitize(clone(m)).links.find(l => l.id === fib.id).p.loss, fm.p.loss);
+});
+
+test('a measured span loss reaches the 1310 nm budget and the OTDR trace', () => {
+  const S = M.sanitize(build('mux1310')), fib = S.links.find(l => l.kind === 'fiber'), r0 = M.band1310(S).links.find(x => x.b);
+  const att = PHY.FIBERS[fib.p.fiber].att, m = clone(S), fm = m.links.find(l => l.id === fib.id); fm.p.loss = att * fm.p.len + 4; // 4 dB above the fiber's own attenuation
+  const r1 = M.band1310(m).links.find(x => x.b);
+  assert.ok(Math.abs((r1.loss - r0.loss) - 4) < 1e-6, '1310 nm adds what the measurement shows beyond the 1550 nm attenuation');
+  const O = M.sanitize(build('otdr')), ot = O.nodes.find(n => n.type === 'otdr'), t0 = M.otdrTrace(O, ot.id);
+  const o2 = clone(O), f2 = o2.links.find(l => l.kind === 'fiber'); f2.p.loss = M.spanEst(f2.p) + 2;
+  assert.ok(Math.abs(M.otdrTrace(o2, ot.id).loss - t0.loss - 2) < 1e-6, 'the trace slope carries the extra 2 dB');
+});

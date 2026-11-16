@@ -16,7 +16,7 @@
     let ase = 0, nli = 0, cd = 0, passes = 0;
     for (const id of r.links) {
       const l = link(id); if (l.kind !== 'fiber') continue;
-      const fb = PHY_.FIBERS[l.p.fiber], L = +l.p.len, sl = fb.att * L + +l.p.extra, k = loads.get(id) || 0, n = Math.max(1, counted ? k : k + 1), ones = n - 1;
+      const fb = PHY_.FIBERS[l.p.fiber], L = +l.p.len, sl = spanLoss(l.p), k = loads.get(id) || 0, n = Math.max(1, counted ? k : k + 1), ones = n - 1;
       const avg = !pw2 || !ones ? 1 : Math.max(0, (pw2.get(id) || 0) - (counted ? lin(2 * o) : 0)) / ones;
       ase += lin(PHY_.ampNfEff(5.5, sl)) * PHY_.H * PHY_.NU * lin(sl) * PHY_.BREF; nli += PHY_.etaNLI(fb, L, Rs, n, df) * P * (P * P / n + P0 * P0 * avg * ones / n); cd += fb.D * L;
     }

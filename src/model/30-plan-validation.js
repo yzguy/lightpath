@@ -206,7 +206,8 @@
       p.ramanFull = p.ramanFull === true; p.single = kind === 'fiber' && p.single === true; // one fiber carrying both directions
       p.circuit = cleanCircuit(l.p && l.p.circuit); // an optional circuit name; an older lab has none
       p.srlg = typeof p.srlg === 'string' && /^[\w-]{0,24}$/.test(p.srlg) ? p.srlg : '';
-      if (kind === 'fiber') for (const k of ['extraRev', 'ramanRev']) if (!(p[k] === '' || (Number.isFinite(+p[k]) && p[k] !== null && +p[k] >= 0))) p[k] = '';
+      if (kind === 'fiber') for (const k of ['extraRev', 'ramanRev', 'loss', 'lossRev']) if (!(p[k] === '' || (Number.isFinite(+p[k]) && p[k] !== null && typeof p[k] !== 'boolean' && +p[k] >= 0))) p[k] = '';
+      if (kind === 'fiber') for (const k of ['loss', 'lossRev']) if (p[k] !== '') p[k] = Math.min(+p[k], 80); // a measured span loss (dB); blank = estimate it
       if (kind === 'fiber') { if (!['back', 'fwd', 'both'].includes(p.ramanDir)) p.ramanDir = 'back'; p.ramanPumps = Math.min(3, Math.max(1, Math.round(+p.ramanPumps || 1))); }
       if (kind === 'fiber') p.raman = Math.min(PHY_.RAMAN.maxMw, Math.max(0, +p.raman || 0));
       if (kind === 'fiber' && !(p.nch === '' || (Number.isFinite(+p.nch) && +p.nch >= 1))) p.nch = '';
