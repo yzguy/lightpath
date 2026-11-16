@@ -200,7 +200,8 @@ class UI(unittest.TestCase):
         self.assertEqual(self.status(), 'LOS')
         pg.locator('#toast .toast-act').click()
         self.assertEqual(self.status(), 'UP')
-        pg.locator('.link:has(.lbg) .hit').first.click(button='right', force=True)
+        lid = pg.locator('.lblock:has(.lbg)').first.get_attribute('data-id')
+        pg.locator(f'.link[data-id="{lid}"] .hit').click(button='right', force=True)
         pg.locator('#ctx .mi', has_text='Cut this fiber').click()
         self.assertEqual(self.status(), 'LOS')
         pg.keyboard.press('Escape')
@@ -376,16 +377,39 @@ class UI(unittest.TestCase):
         (x0, y0), (x1, y1) = mids
         self.assertGreater(((x0 - x1) ** 2 + (y0 - y1) ** 2) ** 0.5, 10, 'the two cables are drawn apart')
 
+    def test_cable_labels_do_not_overlap(self):
+        """Two named fibers between the same devices keep their labels apart (each beside its own cable), and no two cable labels overlap in any lab."""
+        pg = self.page
+        ov = """(() => { const ov = (r, b) => r.left < b.right - 1 && r.right > b.left + 1 && r.top < b.bottom - 1 && r.bottom > b.top + 1;
+          const B = [...document.querySelectorAll('.lblock')].map(b => [b.dataset.id, b.getBoundingClientRect()]), hit = [];
+          B.forEach(([i, r], k) => B.slice(k + 1).forEach(([j, q]) => { if (ov(r, q)) hit.push(i + '/' + j); })); return hit; })()"""
+        self.explore('dci')
+        pg.evaluate("""() => { const s = JSON.parse(localStorage.getItem('lightpath-v1')), f = s.links.find(l => l.kind === 'fiber');
+          f.p.circuit = 'FBDK/1069418/003/ZFS'; const d = JSON.parse(JSON.stringify(f)); d.id += 'x'; d.p.circuit = 'FBDK/1069418/004/ZFS'; d.p.len = 39.45; delete d.p.pa; delete d.p.pb;
+          s.links.push(d); localStorage.setItem('lightpath-v1', JSON.stringify(s)); }""")
+        pg.reload()
+        pg.wait_for_selector('.node')
+        self.assertEqual(pg.locator('.lblock .lcirc').count(), 2)
+        for k in (1.0, 0.4):
+            if k != 1.0:
+                pg.mouse.move(700, 400)
+                pg.mouse.wheel(0, 600)
+                pg.wait_for_timeout(150)
+            self.assertEqual(pg.evaluate(ov), [], 'parallel cable labels are apart')
+        for preset in pg.evaluate("[...document.querySelectorAll('#preset option')].map(o => o.value).filter(Boolean)"):
+            pg.select_option('#preset', preset)
+            self.assertEqual(pg.evaluate(ov), [], preset)
+
     def test_fiber_circuit_name(self):
         """A fiber can be given a circuit name: it is drawn along the span, kept in the saved lab, named in the cut alarm, and clearing it hides it."""
         pg = self.page
         self.explore('dci')
         self.page.locator('.link.k-fiber .hit').first.click(force=True)
-        self.assertEqual(pg.locator('.link.k-fiber .lcirc').count(), 0, 'an unnamed fiber has no circuit label')
+        self.assertEqual(pg.locator('.lblock.k-fiber .lcirc').count(), 0, 'an unnamed fiber has no circuit label')
         pg.fill('#f-circuit', 'SFO2-SCZ1 span A')
         pg.locator('#f-circuit').press('Tab')
         pg.wait_for_timeout(100)
-        self.assertEqual(pg.locator('.link.k-fiber .lcirc').first.text_content(), 'SFO2-SCZ1 span A')
+        self.assertEqual(pg.locator('.lblock.k-fiber .lcirc').first.text_content(), 'SFO2-SCZ1 span A')
         self.assertIn('(SFO2-SCZ1 span A)', pg.locator('.insp-head p.muted').inner_text())
         saved = pg.evaluate("JSON.parse(localStorage.getItem('lightpath-v1')).links.find(l => l.kind === 'fiber').p.circuit")
         self.assertEqual(saved, 'SFO2-SCZ1 span A')
@@ -395,7 +419,7 @@ class UI(unittest.TestCase):
         pg.fill('#f-circuit', '')
         pg.locator('#f-circuit').press('Tab')
         pg.wait_for_timeout(100)
-        self.assertEqual(pg.locator('.link.k-fiber .lcirc').count(), 0, 'clearing the name hides the label')
+        self.assertEqual(pg.locator('.lblock.k-fiber .lcirc').count(), 0, 'clearing the name hides the label')
 
     def test_fiber_measured_loss_overrides_the_estimate(self):
         pg = self.page
@@ -408,7 +432,7 @@ class UI(unittest.TestCase):
         pg.fill('#f-loss', '25')
         pg.wait_for_timeout(100)
         self.assertIn('Using the measured 25.0 dB', pg.locator('#f-lossinfo').inner_text())
-        self.assertIn('25.0 dB measured', pg.locator('.link.k-fiber .llabel').first.text_content())
+        self.assertIn('25.0 dB measured', pg.locator('.lblock.k-fiber .llabel').first.text_content())
         self.assertIn('(measured)', pg.locator('#spec-loss').inner_text())
         self.assertEqual(pg.evaluate("JSON.parse(localStorage.getItem('lightpath-v1')).links.find(l => l.kind === 'fiber').p.loss"), 25)
         # a new length moves the estimate, the measurement stays
@@ -416,12 +440,12 @@ class UI(unittest.TestCase):
         pg.wait_for_timeout(100)
         self.assertEqual(pg.locator('#f-loss').input_value(), '25')
         self.assertNotEqual(pg.locator('#f-loss').get_attribute('placeholder'), est)
-        self.assertIn('25.0 dB measured', pg.locator('.link.k-fiber .llabel').first.text_content())
+        self.assertIn('25.0 dB measured', pg.locator('.lblock.k-fiber .llabel').first.text_content())
         pg.click('#f-loss-clear')
         pg.wait_for_timeout(100)
         self.assertEqual(pg.locator('#f-loss').input_value(), '')
         self.assertIn('Estimated', pg.locator('#f-lossinfo').inner_text())
-        self.assertNotIn('measured', pg.locator('.link.k-fiber .llabel').first.text_content())
+        self.assertNotIn('measured', pg.locator('.lblock.k-fiber .llabel').first.text_content())
 
     def test_oadm_has_a_1310_port_per_side(self):
         pg = self.page
